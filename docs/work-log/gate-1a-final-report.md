@@ -1,118 +1,101 @@
-# Gate 1A final report
+# Gate 1A final report (remediation)
 
-## 1. Branch, commit, PR
+## Identity
 
 - Branch: `gate-1a-geometry-kernel`
-- Base: `25a9e72c73e33a13eda2f03819820b5492d09e43`
-- Tip: `c7dcc5b5562a6825bcd033503d589159dc9a48a3`
+- Evaluate commit: `1a1b8279d79d72ca790cfd389188acadb14393b5`
 - Draft PR: https://github.com/qwertyboy0325/blackhole-rust/pull/1
+- Local evaluate: **PASS** (`authoritative=true`, dirty=false)
+- Toolchain: `rustc 1.96.0 (ac68faa20 2026-05-25)` / `aarch64-apple-darwin`
 
-## 2. Files changed (summary)
+## Coordinate convention selected
 
-- Governance: `LICENSE-*`, `rust-toolchain.toml`, `.github/workflows/ci.yml`, `.gitignore`, `.cargo/config.toml`, workspace `Cargo.toml`
-- `crates/relativity-core/**`: Kerr params, stable oblate radius, KS metric/inverse/derivatives, BL↔KS maps, Hamiltonian RHS, ZAMO tetrad, ray init, corpus, tests
-- `xtask/**`: preset schema, inspect-point, inspect-initial-ray, evaluate
-- Docs: ADR 0005 (Proposed), DOP853 audit, research-sources, work-log, README/AGENTS
+**Ingoing Kerr–Schild** with explicit `PositionSphericalKs { T, r, θ, ψ }`:
 
-## 3. Equations and sources
-
-- Signature `(-,+,+,+)`; `g = η + 2H ℓ⊗ℓ`, `g^{-1} = η − 2H ℓ⊗ℓ`
-- `H = M r³/(r⁴+a²z²)`, `ℓ_μ = (1,(rx+ay)/(r²+a²),(ry−ax)/(r²+a²),z/r)`
-- Hamiltonian: `H=½ g^{μν}p_μp_ν`, RHS as ADR 0001 / Carter / MTW
-- ZAMO: BPT1972 LNRF formulas in BL, pushed to KS
-- Sources recorded in `docs/research-sources.md`
-
-## 4. Stable oblate radius
-
-- Direct: `r²=½(A+D)` when `A≥0`
-- Stable: `r²=2a²z²/(D−A)` when `A<0`
-- Evidence: naive collapses at `(0.05,0,1e-9)`, `a=0.999`; stable matches implicit spheroid
-- Domain: `r=0` → typed ring/excluded-disk error (never success)
-
-## 5. Metric / derivative strategy
-
-- Production: closed-form KS metric + analytic `∂_i g^{αβ}`
-- Oracles: Gauss–Jordan inverse of `g_μν`; test-only adaptive central FD of `g^{αβ}`
-- Paths do not share derivative code
-
-## 6. Worst residuals (evaluate PASS)
-
-| Quantity | Worst | Location |
-|---|---|---|
-| `g g^{-1} − I` | `1.9e-15` | inside-horizon corpus point |
-| analytic vs FD `∂g^{-1}` | `3.8e-3` abs | cancellation-prone `(0.1,0,1e-8)`, `a=0.999` |
-| tetrad orthonormality | `2.2e-16` | baseline ZAMO |
-| nullness / `|H|` | `1.8e-16` | baseline center ray |
-
-FD bound provenance: oracle comparison (provisional), not geodesic acceptance.
-
-## 7. Transforms / tetrad
-
-- BL↔KS position round-trip off-axis; axis → typed singular
-- Vector vs covector Jacobians independently tested
-- ZAMO: `g(u,u)=−1`, orthonormal, right-handed, future-directed
-
-## 8. Initial-ray orientation
-
-- Local past null `k̂=(−1,n̂)`; chart `H≈0`; future momentum `−p`
-- Sign-reversal test between backward init and radiometry momentum
-
-## 9. DOP853 audit recommendation
-
-Prefer `ode_solvers` (Apache-2.0) behind an adapter in Gate 1B; `ivp` backup;
-`diffsol` lacks DOP853. ADR 0005 **Proposed**. No ODE dep in Gate 1A.
-
-## 10. Commands run
-
-```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo xtask inspect-point --mass 1 --spin 0.999 --x 4 --y 1 --z 2 --format json
-cargo xtask inspect-initial-ray --preset presets/gargantua-baseline.toml --sensor-x 0 --sensor-y 0 --format json
-cargo xtask evaluate --preset presets/gargantua-baseline.toml --scope gate-1a
+```text
+x + i y = (r + i a) e^{iψ} sinθ
+z = r cosθ
+t = T
+dT = dt_BL + (2 M r / Δ) dr
+dψ = dφ_BL + (a / Δ) dr
 ```
 
-All PASS (evaluate `result: PASS`).
+Placement gauge: `T=t`, `ψ=φ` at the BL event. Jacobians keep `∂T/∂r`, `∂ψ/∂r`.
+Matched to project `ℓ_μ` signs (verified `η(ℓ,ℓ)=0` on the embedding).
 
-## 11. CI status
+Sources: GRay2 `ℓ_μ` form; BL Kerr metric [BoyerLindquist1967, Carter1968];
+owner remediation note; `docs/physics-assumptions.md`.
 
-Workflow `.github/workflows/ci.yml` added; remote Actions status depends on push.
+## Independent metric-pullback evidence
 
-## 12. Unresolved risks
+`tests/coordinate_pullback.rs`: independently coded `bl_metric` + full Jacobian;
+`‖Jᵀ g_KS J − g_BL‖_∞ < 1e-8` on stratified exterior points; explicit
+`∂T/∂r = 2Mr/Δ` check; vector/covector pairing and round trips.
 
-- Analytic `∂g^{-1}` vs FD disagreement grows in deep cancellation; deeper `|z|` validated by radius tests only
-- ZAMO currently refused for `Δ≤0` (exterior baseline only)
-- Component-scaled DOP853 adapter not yet spiked
-- Camera/disk/spectrum preset fields provisional
+## ZAMO zero-angular-momentum evidence
 
-## 13. Acceptance criteria evidence
+- BL `|u_φ| = 1.39e-17` (evaluate baseline)
+- `g_BL(u,u) ≈ −1` and KS pullback norm checked in pullback tests
+- Camera look (−e₃) has BL radial component `look_r ≈ −0.95` (toward BH)
 
-| Criterion | Evidence |
+## Corpus coverage (authoritative evaluate)
+
+| Metric | Value |
 |---|---|
-| Workspace + governance | licenses, toolchain, CI, gitignore |
-| Typed domain handling | `CoreError` / domain tests |
-| Stable radius | unit tests + work-log |
-| Metric/inverse corpus | `metric_corpus` + evaluate |
-| Analytic vs FD derivatives | `derivatives_oracle` + evaluate worst |
-| Hamiltonian RHS | unit tests; `dp_t=0` |
-| Transforms | coords tests |
-| ZAMO tetrad | observer + evaluate |
-| Null rays + orientation | ray_init tests + evaluate |
-| Diagnostics | inspect-* JSON |
-| evaluate PASS | `artifacts/gate-1a/evaluation.*` |
-| No renderer/integrator | dependency/audit only |
+| expected points | 24 |
+| evaluated valid | 22 |
+| expected failures | 2 |
+| unexpected failures | 0 |
+| unexplained skips | 0 |
+| derivative components | 1056 (= 22 × 3 × 16) |
+| by tag | WeakField 3, NearAxis 3, NearEquatorial 3, NearOuterHorizonExterior 3, InsideHorizon 3, NearExtremalSpin 3, CancellationProneOblate 4, ExpectedDomainFailure 2 |
 
-## 14. Recommended Gate 1B scope
+## Worst residuals (evaluate JSON)
 
-- Adopt ODE adapter per ADR 0005 after owner approval
-- Adaptive DOP853 stepping with domain `h` guards
-- Dense-output event localization (horizon/disk/sky)
-- Typed `RayOutcome` taxonomy
-- Invariant drift diagnostics (`H,E,L_z,Q`) without projection
-- Still no image renderer / GPU / egui
+| Quantity | Worst | Location / note |
+|---|---|---|
+| metric identity | `1.915e-15` | `(1.005, 0.05, 0.05)` |
+| raw inverse asymmetry | `4.441e-16` | corpus max |
+| η(ℓ,ℓ) | `3.331e-16` | corpus max |
+| g(ℓ,ℓ) | `9.307e-16` | corpus max |
+| \|det(g)+1\| | `3.220e-15` | corpus max |
+| derivative abs | `3.816e-3` | CancellationProneOblate `(0.1,0,1e-8)` axis=2 αβ=(2,2) |
+| derivative rel | `1.872e-1` | same site (abs still ≤ 5e-3 oracle bound) |
+| tetrad orthonormality | `2.220e-16` | baseline ZAMO |
+| ZAMO \|u_φ\| | `1.388e-17` | baseline |
+| nullness | `2.741e-16` | baseline center ray |
 
-## 15. Diff summary
+## Dirty-tree behavior
 
-Adds minimal Cargo workspace (`relativity-core`, `xtask`) implementing Gate 1A
-geometry kernel end-to-end with deterministic evaluation and Proposed DOP853 ADR.
+Porcelain including untracked files. Non-empty ⇒ `worktree_clean` FAIL ⇒ no
+authoritative PASS.
+
+## Symmetric-matrix handling
+
+- `from_lower_triangle`: mirrors lower only (no averaging)
+- `RawMatrix4` + `try_from_raw`: reject asymmetry
+- Inverse oracle reports `raw_asymmetry` before conversion
+
+## DOP853 recommendation
+
+ADR 0005 **Proposed**. No locked crate preference. Gate **1B0** spike required
+for both `ode_solvers` and `ivp` (vector tol, SolOut/callback, dense
+coefficients vs sampled interpolant, guards, stats). No ODE dep in tree.
+
+## Commands and CI
+
+```bash
+cargo fmt --all -- --check   # PASS
+cargo clippy --workspace --all-targets --all-features -- -D warnings  # PASS
+cargo test --workspace --all-features  # PASS
+cargo xtask evaluate --preset presets/gargantua-baseline.toml --scope gate-1a  # PASS
+```
+
+CI: re-check PR #1 Actions after push (API may be unavailable from this host).
+
+## Remaining risks
+
+- Local placement gauge vs globally integrated `T(r)`, `ψ(r)` from infinity
+- Derivative relative residual can be large when the component itself is tiny;
+  abs bound is the operative oracle check there
+- No Gate 1B scope introduced

@@ -30,3 +30,11 @@
 - First failure: orthonormality residual from wrong Gram–Schmidt projection on
   the timelike leg (`v ← v − g(v,u)u` instead of `v ← v + g(v,u)u` for
   `g(u,u)=−1`). Fixed; ZAMO + ray init tests pass.
+
+## Remediation (PR #1 owner review)
+
+- Replaced √(r²+a²) BL embedding with ingoing KS via `PositionSphericalKs` and
+  `dT/dt`, `dψ/dφ` radial terms; pullback tests added.
+- Corpus outcomes totalized; dirty porcelain blocks PASS.
+- `MetricTensor` no longer silently averages; KS `η(ℓ,ℓ)/g(ℓ,ℓ)/det` invariants.
+- DOP853 audit: no locked preference; ADR 0005 remains Proposed.
