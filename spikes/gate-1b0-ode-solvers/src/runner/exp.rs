@@ -126,17 +126,24 @@ pub fn run_a() -> ExperimentResult {
 
 fn sho_determinism() -> RepeatSummary {
     repeat_in_process(5, || {
+        let cap = CapturingSystem::new(ShoSys, SHO_X0, vec![SHO_Q0, SHO_P0]);
+        let log = cap.log.clone();
         let mut s = make_stepper(
-            ShoSys,
+            cap,
             SHO_X0,
             SHO_X_END,
             DVector::from_vec(vec![SHO_Q0, SHO_P0]),
             0.1,
-            SHO_X_END,
+            0.1,
         );
         let st = s.integrate().unwrap();
-        let yf = s.y_out().last().unwrap();
-        let endpoint = vec![yf[0], yf[1]];
+        let x_out = s.x_out().clone();
+        let y_out = s.y_out().clone();
+        let x_final = *x_out.last().unwrap_or(&SHO_X_END);
+        let endpoint = y_out
+            .last()
+            .map(|v| v.as_slice().to_vec())
+            .unwrap_or_else(|| log.last_y.borrow().clone());
         (
             endpoint.clone(),
             st.accepted_steps,
@@ -150,17 +157,21 @@ pub fn run_b() -> ExperimentResult {
     let cap = CapturingSystem::new(inner, SHO_X0, vec![SHO_Q0, SHO_P0]);
     let log = cap.log.clone();
     let y0 = DVector::from_vec(vec![SHO_Q0, SHO_P0]);
-    let mut stepper = make_stepper(cap, SHO_X0, SHO_X_END, y0, 0.1, SHO_X_END);
+    let mut stepper = make_stepper(cap, SHO_X0, SHO_X_END, y0, 0.1, 0.1);
     let stats = stepper.integrate().expect("sho integrate");
-    let yf = stepper.y_out().last().cloned().unwrap_or_default();
-    let q_end = yf[0];
-    let p_end = yf[1];
-    let qa = sho_analytic_q(SHO_X_END);
-    let pa = sho_analytic_p(SHO_X_END);
-    let endpoint_abs = ((q_end - qa).powi(2) + (p_end - pa).powi(2)).sqrt();
-    let energy_drift = (sho_energy(q_end, p_end) - sho_analytic_energy()).abs();
     let x_out = stepper.x_out().clone();
     let y_out = stepper.y_out().clone();
+    let x_final = *x_out.last().unwrap_or(&SHO_X_END);
+    let yf = y_out
+        .last()
+        .map(|v| v.as_slice().to_vec())
+        .unwrap_or_else(|| log.last_y.borrow().clone());
+    let q_end = yf[0];
+    let p_end = yf[1];
+    let qa = sho_analytic_q(x_final);
+    let pa = sho_analytic_p(x_final);
+    let endpoint_abs = ((q_end - qa).powi(2) + (p_end - pa).powi(2)).sqrt();
+    let energy_drift = (sho_energy(q_end, p_end) - sho_analytic_energy()).abs();
     let mut dense_probes = Vec::new();
     for &theta in &[0.3, 0.6] {
         let xq = SHO_X0 + theta * (SHO_X_END - SHO_X0);
@@ -198,7 +209,9 @@ pub fn run_b() -> ExperimentResult {
     ExperimentResult {
         id: ExperimentId::B,
         passed: endpoint_abs < 1e-4 && energy_drift < 1e-3 && det.deterministic,
-        detail: format!("endpoint={endpoint_abs:.3e} energy_drift={energy_drift:.3e} root_only"),
+        detail: format!(
+            "endpoint={endpoint_abs:.3e} energy_drift={energy_drift:.3e} x_final={x_final:.6} root_only"
+        ),
         endpoint_abs_error: Some(endpoint_abs),
         endpoint_rel_error: None,
         component_errors: vec![],
