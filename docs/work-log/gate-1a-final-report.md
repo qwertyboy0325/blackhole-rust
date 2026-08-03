@@ -3,11 +3,20 @@
 ## Identity
 
 - Branch: `gate-1a-geometry-kernel`
-- Tip / evaluate commit: `2b6c075fdac86e61b2342797284246c7f2ccd3d0`
 - Draft PR: https://github.com/qwertyboy0325/blackhole-rust/pull/1
 - Local evaluate: **PASS** (`authoritative=true`, dirty=false)
-- CI: **pass** (push + pull_request checks on tip)
 - Toolchain: `rustc 1.96.0 (ac68faa20 2026-05-25)` / `aarch64-apple-darwin`
+
+## Commit provenance
+
+| Field | SHA / value |
+|---|---|
+| `reviewed_head` | `37d5e59afb974e0d5d36a5ee1481570b6951cf17` |
+| authoritative evaluator commit | `25eb8e654751d533010c4cab0d725d3c49290bdf` |
+| commits between | one evidence-closure commit (`docs/` + `xtask/` only) |
+| between commits documentation-only | **yes** (no geometry production code) |
+
+Evaluator JSON records the same block under `provenance`.
 
 ## Coordinate convention selected
 
@@ -60,11 +69,14 @@ owner remediation note; `docs/physics-assumptions.md`.
 | η(ℓ,ℓ) | `3.331e-16` | corpus max |
 | g(ℓ,ℓ) | `9.307e-16` | corpus max |
 | \|det(g)+1\| | `3.220e-15` | corpus max |
-| derivative abs | `3.816e-3` | CancellationProneOblate `(0.1,0,1e-8)` axis=2 αβ=(2,2) |
-| derivative rel | `1.872e-1` | same site (abs still ≤ 5e-3 oracle bound) |
+| derivative abs | `3.816e-3` | CancellationProneOblate `(0.1,0,1e-8)` axis=2 αβ=(2,2) analytic=`−2.039e-2` fd=`−1.657e-2` scale=`2.039e-2` |
+| derivative rel at worst abs | `1.872e-1` | relative residual at the abs-worst site only |
 | tetrad orthonormality | `2.220e-16` | baseline ZAMO |
 | ZAMO \|u_φ\| | `1.388e-17` | baseline |
 | nullness | `2.741e-16` | baseline center ray |
+
+`derivative_rel_at_worst_abs` is **not** the global worst relative residual; it is
+computed only at the component where `derivative_abs` is maximal.
 
 ## Dirty-tree behavior
 
@@ -92,11 +104,11 @@ cargo test --workspace --all-features  # PASS
 cargo xtask evaluate --preset presets/gargantua-baseline.toml --scope gate-1a  # PASS
 ```
 
-CI on tip: Actions `check` **pass** for push `30783306153` and PR `30783308613`.
+CI on `25eb8e6`: **pass** (push `30783970750`, PR `30783972950`)
 
 ## Remaining risks
 
 - Local placement gauge vs globally integrated `T(r)`, `ψ(r)` from infinity
-- Derivative relative residual can be large when the component itself is tiny;
-  abs bound is the operative oracle check there
+- `derivative_rel_at_worst_abs` can be large when the abs-worst component is
+  tiny; the operative oracle gate is abs ≤ 5e-3 with rel ≤ 2e-3 per component
 - No Gate 1B scope introduced

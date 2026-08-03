@@ -13,11 +13,24 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Remediation-reviewed geometry head (PR #1 owner review); evaluator may run on a
+/// later documentation-only commit.
+const REVIEWED_HEAD: &str = "37d5e59afb974e0d5d36a5ee1481570b6951cf17";
+
+#[derive(Debug, Serialize)]
+struct Provenance {
+    reviewed_head: String,
+    evaluator_commit: String,
+    commits_between_reviewed_and_evaluator: Vec<String>,
+    between_commits_documentation_only: bool,
+}
+
 #[derive(Debug, Serialize)]
 struct Gate1aReport {
     gate: &'static str,
     result: &'static str,
     authoritative: bool,
+    provenance: Provenance,
     commit: String,
     dirty: bool,
     dirty_detail: String,
@@ -60,7 +73,10 @@ struct WorstResiduals {
     g_ll: f64,
     det_plus_one: f64,
     derivative_abs: f64,
-    derivative_rel: f64,
+    derivative_rel_at_worst_abs: f64,
+    derivative_analytic_at_worst_abs: f64,
+    derivative_fd_at_worst_abs: f64,
+    derivative_scale_at_worst_abs: f64,
     derivative_at: [f64; 3],
     derivative_tag: String,
     derivative_axis: usize,
@@ -98,7 +114,7 @@ pub fn evaluate(preset_path: &str, scope: &str) -> Result<(), Box<dyn std::error
     });
 
     let (dirty, dirty_detail) = porcelain_dirty(&root)?;
-    let commit = git_stdout(&root, ["rev-parse", "HEAD"]).unwrap_or_else(|_| "unknown".into());
+    let commit = git_stdout(&root, &["rev-parse", "HEAD"]).unwrap_or_else(|_| "unknown".into());
     let toolchain = Command::new("rustc")
         .arg("--version")
         .output()
@@ -218,10 +234,13 @@ pub fn evaluate(preset_path: &str, scope: &str) -> Result<(), Box<dyn std::error
         "FAIL"
     };
 
+    let provenance = build_provenance(&root, commit.trim())?;
+
     let report = Gate1aReport {
         gate: "gate-1a",
         result,
         authoritative,
+        provenance,
         commit: commit.trim().to_string(),
         dirty,
         dirty_detail,
@@ -385,7 +404,10 @@ fn run_total_corpus(
                             let rel = diff / scale;
                             if diff > worst.derivative_abs {
                                 worst.derivative_abs = diff;
-                                worst.derivative_rel = rel;
+                                worst.derivative_rel_at_worst_abs = rel;
+                                worst.derivative_analytic_at_worst_abs = an;
+                                worst.derivative_fd_at_worst_abs = fd[a][b];
+                                worst.derivative_scale_at_worst_abs = scale;
                                 worst.derivative_at = [pt.pos.x, pt.pos.y, pt.pos.z];
                                 worst.derivative_tag = format!("{:?}", pt.tag);
                                 worst.derivative_axis = axis;
@@ -429,14 +451,14 @@ fn run_total_corpus(
 
     if ok {
         detail = format!(
-            "seed={CORPUS_SEED} expected={} valid={} exp_fail={} unexpected=0 skips=0 deriv_components={} worst_id={:.3e} worst_d_abs={:.3e} worst_d_rel={:.3e} @{} axis={} αβ=({},{})",
+            "seed={CORPUS_SEED} expected={} valid={} exp_fail={} unexpected=0 skips=0 deriv_components={} worst_id={:.3e} worst_d_abs={:.3e} worst_d_rel_at_worst_abs={:.3e} @{} axis={} αβ=({},{})",
             coverage.expected_points,
             coverage.evaluated_valid,
             coverage.expected_failures,
             coverage.derivative_components,
             worst.metric_identity,
             worst.derivative_abs,
-            worst.derivative_rel,
+            worst.derivative_rel_at_worst_abs,
             worst.derivative_tag,
             worst.derivative_axis,
             worst.derivative_alpha,
@@ -456,6 +478,57 @@ fn run_total_corpus(
 
     let _ = CorpusTag::WeakField; // keep import meaningful for Debug tags
     Ok((coverage, worst, ok, detail))
+}
+
+fn build_provenance(
+    root: &Path,
+    evaluator_commit: &str,
+) -> Result<Provenance, Box<dyn std::error::Error>> {
+    let log_range = format!("{REVIEWED_HEAD}..HEAD");
+    let between = git_stdout(root, &["log", "--oneline", log_range.as_str()])?
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let between_docs_only = if between.is_empty() {
+        true
+    } else {
+        between_commits_touch_only_allowed_paths(root, REVIEWED_HEAD, evaluator_commit)?
+    };
+    Ok(Provenance {
+        reviewed_head: REVIEWED_HEAD.to_string(),
+        evaluator_commit: evaluator_commit.to_string(),
+        commits_between_reviewed_and_evaluator: between,
+        between_commits_documentation_only: between_docs_only,
+    })
+}
+
+/// True when every file changed between `from..to` lies under docs/ or xtask/.
+fn between_commits_touch_only_allowed_paths(
+    root: &Path,
+    from: &str,
+    to: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let diff_range = format!("{from}..{to}");
+    let out = Command::new("git")
+        .current_dir(root)
+        .args(["diff", "--name-only", diff_range.as_str()])
+        .output()?;
+    let paths = String::from_utf8(out.stdout)?;
+    if paths.trim().is_empty() {
+        return Ok(true);
+    }
+    for line in paths.lines() {
+        let p = line.trim();
+        if p.is_empty() {
+            continue;
+        }
+        if p.starts_with("docs/") || p.starts_with("xtask/") {
+            continue;
+        }
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 fn porcelain_dirty(root: &Path) -> Result<(bool, String), Box<dyn std::error::Error>> {
@@ -520,14 +593,26 @@ fn render_markdown(r: &Gate1aReport) -> String {
     s.push_str(&format!("- g(ℓ,ℓ): {:.6e}\n", r.worst.g_ll));
     s.push_str(&format!("- |det(g)+1|: {:.6e}\n", r.worst.det_plus_one));
     s.push_str(&format!(
-        "- derivative abs/rel: {:.6e} / {:.6e} at {:?} tag={} axis={} αβ=({},{})\n",
+        "- derivative worst abs: {:.6e} at {:?} tag={} axis={} αβ=({},{}) analytic={:.6e} fd={:.6e} scale={:.6e}\n",
         r.worst.derivative_abs,
-        r.worst.derivative_rel,
         r.worst.derivative_at,
         r.worst.derivative_tag,
         r.worst.derivative_axis,
         r.worst.derivative_alpha,
-        r.worst.derivative_beta
+        r.worst.derivative_beta,
+        r.worst.derivative_analytic_at_worst_abs,
+        r.worst.derivative_fd_at_worst_abs,
+        r.worst.derivative_scale_at_worst_abs
+    ));
+    s.push_str(&format!(
+        "- derivative rel at worst abs: {:.6e}\n",
+        r.worst.derivative_rel_at_worst_abs
+    ));
+    s.push_str(&format!(
+        "- provenance: reviewed_head=`{}` evaluator=`{}` between_docs_only={}\n",
+        r.provenance.reviewed_head,
+        r.provenance.evaluator_commit,
+        r.provenance.between_commits_documentation_only
     ));
     s.push_str(&format!(
         "- tetrad orthonormality: {:.6e}\n",
@@ -580,10 +665,7 @@ fn workspace_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(dir)
 }
 
-fn git_stdout(
-    root: &Path,
-    args: impl IntoIterator<Item = &'static str>,
-) -> Result<String, Box<dyn std::error::Error>> {
+fn git_stdout(root: &Path, args: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
     let out = Command::new("git").current_dir(root).args(args).output()?;
     Ok(String::from_utf8(out.stdout)?)
 }
