@@ -28,13 +28,15 @@ Both candidates ran experiments A–G under `spikes/` with shared JSON schema
 
 ## Decision matrix (enum labels)
 
-See `artifacts/gate-1b0/comparison.json` after authoritative evaluate.
+Authoritative comparison at commit `08eeecd` (see `artifacts/gate-1b0/comparison.json`):
 
-Key differentiators observed:
+| Requirement | ode_solvers | ivp |
+|---|---|---|
+| vector_tolerance_direct | Unsupported | Supported |
+| accepted_step_dense_interpolation | SupportedWithAdapter | Supported |
+| event_localization_fit | SupportedWithAdapter | Supported |
 
-- **Vector tolerance:** ivp `Supported`; ode_solvers `Unsupported` (adapter rescale only)
-- **Accepted-step dense interpolation:** ivp `Supported` (`StepInterpolant` in `SolOut`); ode_solvers `SupportedWithAdapter` (fixed dx grid; private `rcont`)
-- **Event localization:** ivp `Supported` (dense `sol(t)`); ode_solvers `SupportedWithAdapter` (dense grid bracket)
+Digests: ode `c6060749…`, ivp `58c40733…` (full hashes in `evaluation.json`).
 
 ## ADR 0005 recommendation
 
