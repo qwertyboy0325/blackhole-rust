@@ -2,10 +2,10 @@
 
 ## Current gate
 
-Gate 0 is complete. Gate 1A (geometry kernel and null-ray initialization) is
-implemented on `gate-1a-geometry-kernel` pending owner review. Do not begin
-Gate 1B geodesic integration, disk shading, image generation, GPU kernels, or
-a GUI without owner approval.
+Gate 0 is complete. Gate 1A passed owner review (merged pending on `main`).
+Gate 1B0 DOP853 spike implemented on `gate-1b0-dop853-spike`; ADR 0005 remains
+**Proposed** pending owner acceptance. Do not begin production geodesic
+integration without owner approval.
 
 ## Authority and scope
 

@@ -16,6 +16,9 @@ workspace = true
 
 [dependencies]
 relativity-core = { path = "../crates/relativity-core" }
+gate-1b0-ode-solvers = { path = "../spikes/gate-1b0-ode-solvers" }
+gate-1b0-ivp = { path = "../spikes/gate-1b0-ivp" }
+gate-1b0-contract = { path = "../spikes/gate-1b0-contract" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

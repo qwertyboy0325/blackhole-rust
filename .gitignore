@@ -2,6 +2,8 @@
 **/target/
 /artifacts/gate-1a/evaluation.json
 /artifacts/gate-1a/evaluation.md
+/artifacts/gate-1b0/*.json
+/artifacts/gate-1b0/*.md
 .DS_Store
 *.swp
 *.swo

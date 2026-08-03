@@ -129,10 +129,12 @@ tests, rather than transcribed from an incompatibly licensed repository.
   Documented in `crates/relativity-core/src/coords/` and
   `docs/physics-assumptions.md`. Access/derivation notes 2026-08-03; no
   third-party code reused.
-- **ODE crate survey** for future DOP853 adoption:
-  `ode_solvers` (Apache-2.0), `ivp` (Apache-2.0), `diffsol` (MIT). Details in
-  `docs/research/dop853-rust-dependency-audit.md` (updated: no locked preference;
-  Gate 1B0 spike required). Access checked 2026-08-03; no crate vendored.
+- **ODE crate survey + Gate 1B0 spike** (pinned `ode_solvers =0.6.1`, `ivp =0.6.0`):
+  Apache-2.0; repos [srenevey/ode-solvers](https://github.com/srenevey/ode-solvers),
+  [Ryan-D-Gast/ivp](https://github.com/Ryan-D-Gast/ivp). Survey:
+  `docs/research/dop853-rust-dependency-audit.md`. Executable spike:
+  `docs/research/gate-1b0-dop853-spike-report.md`. ADR 0005 remains Proposed.
+  No production ODE dependency in tree. Access checked 2026-08-03.
 
 ## Formats and GPU capability
 
