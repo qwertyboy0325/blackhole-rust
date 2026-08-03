@@ -183,22 +183,36 @@ pub fn endpoint_errors(y: f64, analytic: f64) -> (f64, f64) {
 }
 
 pub fn interpolate_dense_grid(x_out: &[f64], y_out: &[DVector<f64>], x_query: f64) -> Option<f64> {
+    interpolate_dense_state(x_out, y_out, x_query).map(|y| y[0])
+}
+
+pub fn interpolate_dense_state(
+    x_out: &[f64],
+    y_out: &[DVector<f64>],
+    x_query: f64,
+) -> Option<Vec<f64>> {
     if x_out.is_empty() {
         return None;
     }
     if x_query <= x_out[0] {
-        return Some(y_out[0][0]);
+        return Some(y_out[0].as_slice().to_vec());
     }
     let last = x_out.len() - 1;
     if x_query >= x_out[last] {
-        return Some(y_out[last][0]);
+        return Some(y_out[last].as_slice().to_vec());
     }
     for i in 0..last {
         let x0 = x_out[i];
         let x1 = x_out[i + 1];
         if x_query >= x0 && x_query <= x1 {
             let t = (x_query - x0) / (x1 - x0);
-            return Some(y_out[i][0] + t * (y_out[i + 1][0] - y_out[i][0]));
+            return Some(
+                y_out[i]
+                    .iter()
+                    .zip(y_out[i + 1].iter())
+                    .map(|(a, b)| a + t * (b - a))
+                    .collect(),
+            );
         }
     }
     None

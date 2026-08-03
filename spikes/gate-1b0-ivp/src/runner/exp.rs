@@ -335,7 +335,10 @@ pub fn run_e() -> ExperimentResult {
     ExperimentResult {
         id: ExperimentId::E,
         passed,
-        detail: format!("time_err={:.3e} root={:.3e} via GlobalSolutionQuery", ev.time_error, ev.root_residual),
+        detail: format!(
+            "time_err={:.3e} root={:.3e} via GlobalSolutionQuery",
+            ev.time_error, ev.root_residual
+        ),
         endpoint_abs_error: None,
         endpoint_rel_error: None,
         component_errors: vec![],

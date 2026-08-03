@@ -2,7 +2,7 @@
 
 use crate::adapter::{
     component_errors, dense_assessment_ode_solvers, endpoint_errors, interpolate_dense_grid,
-    make_stepper, stats_to_integration, CapturingSystem, DEFAULT_RTOL,
+    interpolate_dense_state, make_stepper, stats_to_integration, CapturingSystem, DEFAULT_RTOL,
 };
 use gate_1b0_contract::{
     exp_analytic, mixed8_analytic, mixed8_derivative, mixed8_y0, shallow_event_fn,
@@ -320,29 +320,24 @@ pub fn run_d() -> ExperimentResult {
 pub fn run_e() -> ExperimentResult {
     let inner = ShoSys;
     let y0 = DVector::from_vec(vec![1.0, 0.0]);
-    let mut stepper = make_stepper(inner, 0.0, SHO_EVENT_X + 1.0, y0, 0.005, 2.0);
+    let mut stepper = make_stepper(inner, 0.0, SHO_EVENT_X + 1.0, y0.clone(), 0.005, 2.0);
     let _ = stepper.integrate();
     let x_out = stepper.x_out();
     let y_out = stepper.y_out();
     let event = |_t: f64, y: &[f64]| y[0];
     let mut lo = 0.0;
     let mut hi = SHO_EVENT_X + 1.0;
-    let mut y_lo = vec![1.0, 0.0];
-    let mut y_hi = y_out
-        .last()
-        .map(|v| v.as_slice().to_vec())
-        .unwrap_or_else(|| y_lo.clone());
-    for w in x_out.windows(2) {
-        let ia = x_out.iter().position(|&x| (x - w[0]).abs() < 1e-15).unwrap_or(0);
-        let ib = x_out.iter().position(|&x| (x - w[1]).abs() < 1e-15).unwrap_or(0);
-        let ya = y_out[ia][0];
-        let yb = y_out[ib][0];
-        if ya.signum() != yb.signum() {
-            lo = w[0];
-            hi = w[1];
-            y_lo = vec![ya, 0.0];
-            y_hi = vec![yb, 0.0];
-            break;
+    let mut y_lo = y0.as_slice().to_vec();
+    let mut y_hi = interpolate_dense_state(&x_out, &y_out, hi).unwrap_or_else(|| y_lo.clone());
+    for _ in 0..48 {
+        let mid = 0.5 * (lo + hi);
+        let y_mid = interpolate_dense_state(&x_out, &y_out, mid).expect("dense mid");
+        if event(lo, &y_lo).signum() != event(mid, &y_mid).signum() {
+            hi = mid;
+            y_hi = y_mid;
+        } else {
+            lo = mid;
+            y_lo = y_mid;
         }
     }
     let ev = localize_event(
