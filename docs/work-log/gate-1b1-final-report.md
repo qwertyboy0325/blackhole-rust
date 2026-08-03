@@ -3,7 +3,9 @@
 ## 1. Branch / commits / PR
 
 - Branch: `gate-1b1-production-integrator`
-- Commits: `86332e4` (ADR Accepted), `1afbb8d` (production crate + evaluator)
+- Commits: `86332e4` (ADR Accepted), `1afbb8d` (production crate + evaluator),
+  `40f838d` (report digest note)
+- Draft PR: https://github.com/qwertyboy0325/blackhole-rust/pull/3
 - Authoritative evaluate: PASS at `1afbb8d`; artifact digest
   `1df50a6a8fdfc5dea7c4b510cef02b9bf80323b3f102d6d740624697b8c9f1ea`
 
