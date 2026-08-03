@@ -1,9 +1,9 @@
-# Gate 1B1 Final Report (remediation)
+# Gate 1B1 Final Report (evidence closure)
 
 ## 1. Commits
 
-- Remediation: `23ac27d` — exact events vs SurfaceApproach + evidence closure
-- Authoritative evaluate head: `23ac27d5b74384530676172a22374b69602fc4ac`
+- Remediation (architecture): `23ac27d` — exact events vs SurfaceApproach
+- Evidence closure (this tip): localizer non-convergence self-check + Kerr evidence serialization
 - Draft PR: https://github.com/qwertyboy0325/blackhole-rust/pull/3
 
 ## 2. Exact-event vs SurfaceApproach
@@ -19,11 +19,20 @@
 with `signed_event_value > 0` and `<= approach_tolerance`.  
 Horizon stall remains an unresolved f64 Cartesian-KS numerical investigation item.
 
-## 4. Root localizer
+## 4. Root localizer non-convergence
 
-`LocalizationTermination::{ExactEndpoint, EventValueTolerance, AffineWidthTolerance}`  
-typed `EventLocalizationDidNotConverge`; interpolant bounds enforced; tests cover
-value/width/exact/stagnation/exhaustion/lost-bracket/bounds.
+Executable self-check: `localization_nonconvergence_self_check()` — evaluator PASSes only
+when this returns structured evidence (no unconditional PASS).
+
+| Path | EventId | iterations | residual | bracket_width |
+|---|---|---|---|---|
+| Midpoint stagnation | OuterHorizon | 1 | 1.0 | 2.0 |
+| Iteration exhaustion | EscapeSphere | 80 | 1.0 | ≈ 8.272e-25 |
+
+Stagnation success path returns mutually consistent `(lambda, state, residual)` from the
+last sample (never a prior residual under a different λ).
+
+Retained: value-tol, affine-width, exact endpoint, lost bracket, interpolant bounds.
 
 ## 5. Production errors
 
@@ -31,9 +40,26 @@ value/width/exact/stagnation/exhaustion/lost-bracket/bounds.
 - EventDomain SolOut latch preserves EventId
 - Generic solver status → `Solver` (not PhysicsDomain / EventDomain / SurfaceApproach)
 
-## 6. Kerr 3-level convergence
+## 6. Kerr 3-level convergence (serialized)
 
-loose / medium / tight; `d_medium_tight <= d_loose_medium`; H / p_t / steps recorded.
+Criterion: `d_medium_tight <= d_loose_medium + 1e-15` (documented slack).
+
+| Level | accepted/rejected | rhs | H_max | p_t drift |
+|---|---|---|---|---|
+| loose | 6 / 0 | 92 | 2.602e-16 | 0 |
+| medium | 6 / 0 | 92 | 2.602e-16 | 0 |
+| tight | 6 / 0 | 92 | 2.602e-16 | 0 |
+
+Measured distances (fixture affine window `0.5`):
+
+```text
+d_loose_medium = 0
+d_medium_tight = 0
+passed = true
+```
+
+Full per-run evidence (tolerances, endpoint_bits, H, p_t, steps) is serialized in
+`artifacts/gate-1b1/evaluation.json` under `kerr_convergence`.
 
 ## 7. Cross-process corpus digests
 
@@ -49,15 +75,14 @@ loose / medium / tight; `d_medium_tight <= d_loose_medium`; H / p_t / steps reco
 
 Convention: `content_digest_excluding_digest_field`
 
-```text
-590f40a06a647f437fed4e83412e60087f6f2dd424a18f00b0630fec98cc76ec
-```
-
-Sidecar: `artifacts/gate-1b1/evaluation.content_digest.sha256`
+Recorded by authoritative `cargo xtask evaluate --scope gate-1b1` on a clean tip;
+see `artifacts/gate-1b1/evaluation.content_digest.sha256` and PR #3 body for the
+commit-bound value (digest input includes `commit`).
 
 ## 9. Authoritative evaluator
 
-`cargo xtask evaluate --scope gate-1b1` → **PASS** (`authoritative: true`) at `23ac27d`
+`cargo xtask evaluate --scope gate-1b1` → **PASS** (`authoritative: true`) on the
+evidence-closure tip (clean worktree). Commit and content digest: PR #3.
 
 ## 10. Artifacts
 
@@ -65,14 +90,10 @@ Sidecar: `artifacts/gate-1b1/evaluation.content_digest.sha256`
 - `artifacts/gate-1b1/evaluation.md`
 - `artifacts/gate-1b1/evaluation.content_digest.sha256`
 
-## 11. CI
+## 11. Scope
 
-`fmt` / `clippy -D warnings` / `test --workspace` PASS under evaluator.
+No Gate 1B2 / disk / radiometry / image / GPU / wgpu / egui / GUI introduced.
 
 ## 12. ADR 0005
 
 **Accepted**; `ivp = "=0.6.0"` unchanged.
-
-## 13. Scope
-
-No Gate 1B2 / disk / radiometry / image / GPU / wgpu / egui / GUI introduced.

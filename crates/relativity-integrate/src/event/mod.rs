@@ -15,5 +15,8 @@ mod surface;
 
 pub use escape::EscapeSphere;
 pub use horizon::OuterHorizon;
-pub use root::{localize_sign_change, EventLocalizationStats, LocalizationTermination};
+pub use root::{
+    localization_nonconvergence_self_check, localize_sign_change, EventLocalizationStats,
+    LocalizationNonconvergenceEvidence, LocalizationTermination, MAX_LOCALIZATION_ITERS,
+};
 pub use surface::{is_eligible_crossing, is_exact_root, CrossingDirection, EventId, EventSurface};

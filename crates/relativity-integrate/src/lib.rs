@@ -34,8 +34,10 @@ pub use corpus::{
 };
 pub use error::{IntegrationError, IntegrationStage};
 pub use event::{
-    is_eligible_crossing, is_exact_root, CrossingDirection, EscapeSphere, EventId,
-    EventLocalizationStats, EventSurface, LocalizationTermination, OuterHorizon,
+    is_eligible_crossing, is_exact_root, localization_nonconvergence_self_check, CrossingDirection,
+    EscapeSphere, EventId, EventLocalizationStats, EventSurface,
+    LocalizationNonconvergenceEvidence, LocalizationTermination, OuterHorizon,
+    MAX_LOCALIZATION_ITERS,
 };
 pub use outcome::{
     EventHit, IntegrationOutcome, IntegrationReport, IntegrationStats, InvariantDiagnostics,

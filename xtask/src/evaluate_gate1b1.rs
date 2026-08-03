@@ -2,15 +2,19 @@
 
 use crate::corpus_report;
 use relativity_integrate::{
-    build_canonical_corpus_report, determinism_record, run_and_check, CorpusId, ExpectedOutcome,
-    IntegrationOutcome, LocalizationTermination, CORPUS,
+    build_canonical_corpus_report, determinism_record, localization_nonconvergence_self_check,
+    run_and_check, CorpusId, ExpectedOutcome, IntegrationOutcome,
+    LocalizationNonconvergenceEvidence, LocalizationTermination, CORPUS,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[derive(Serialize)]
+/// Documented slack for successive Kerr endpoint tightening comparison.
+const KERR_CONVERGENCE_SLACK: f64 = 1e-15;
+
+#[derive(Serialize, Clone)]
 struct Gate1b1Report {
     gate: &'static str,
     result: &'static str,
@@ -27,18 +31,47 @@ struct Gate1b1Report {
     checks: Vec<Check>,
     determinism: Vec<CaseDeterminism>,
     subprocess_corpus_digests: Vec<String>,
+    localization_nonconvergence: Option<LocalizationNonconvergenceEvidence>,
+    kerr_convergence: Option<KerrConvergenceEvidence>,
     /// SHA-256 of the canonical JSON projection with this field empty/omitted.
     content_digest_excluding_digest_field: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
+struct KerrRunEvidence {
+    relative_tolerance: [f64; 8],
+    absolute_tolerance: [f64; 8],
+    endpoint_bits: String,
+    h_initial: f64,
+    h_final: f64,
+    h_max_abs_residual: f64,
+    p_t_initial: f64,
+    p_t_final: f64,
+    p_t_max_abs_drift: f64,
+    accepted_steps: u64,
+    rejected_steps: u64,
+    rhs_evaluations: u64,
+}
+
+#[derive(Serialize, Clone)]
+struct KerrConvergenceEvidence {
+    loose: KerrRunEvidence,
+    medium: KerrRunEvidence,
+    tight: KerrRunEvidence,
+    d_loose_medium: f64,
+    d_medium_tight: f64,
+    documented_slack: f64,
+    passed: bool,
+}
+
+#[derive(Serialize, Clone)]
 struct Check {
     name: String,
     status: &'static str,
     detail: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct CaseDeterminism {
     case: String,
     repeats: usize,
@@ -243,13 +276,30 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "Schwarzschild inward → SurfaceApproach(OuterHorizon), not EventHit".into(),
     );
 
-    // Localization non-convergence typed (unit coverage in root tests)
-    push(
-        &mut checks,
-        "localization_nonconvergence_typed",
-        true,
-        "EventLocalizationDidNotConverge covered by root unit tests".into(),
-    );
+    // Executable localizer non-convergence evidence (not unconditional PASS).
+    let localization_nonconvergence = match localization_nonconvergence_self_check() {
+        Ok(ev) => {
+            push(
+                &mut checks,
+                "localization_nonconvergence_typed",
+                true,
+                format!(
+                    "stagnation iters={} residual={:.3e} width={:.3e}; exhaustion iters={} residual={:.3e} width={:.3e}",
+                    ev.stagnation_iterations,
+                    ev.stagnation_residual,
+                    ev.stagnation_bracket_width,
+                    ev.exhaustion_iterations,
+                    ev.exhaustion_residual,
+                    ev.exhaustion_bracket_width
+                ),
+            );
+            Some(ev)
+        }
+        Err(e) => {
+            push(&mut checks, "localization_nonconvergence_typed", false, e);
+            None
+        }
+    };
 
     // Production error lifecycle tests ran via workspace tests
     push(
@@ -259,12 +309,31 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "non-finite outcome interpreter + EventDomain latch + Solver status tests".into(),
     );
 
-    let conv_ok = three_level_kerr_convergence_ok();
+    let kerr_convergence = three_level_kerr_convergence();
+    let conv_ok = kerr_convergence.as_ref().is_some_and(|e| e.passed);
+    let conv_detail = match &kerr_convergence {
+        Some(e) => format!(
+            "d_lm={:.6e} d_mt={:.6e} slack={:.0e}; Hmax=({:.3e},{:.3e},{:.3e}); steps=({}/{},{}/{},{}/{})",
+            e.d_loose_medium,
+            e.d_medium_tight,
+            e.documented_slack,
+            e.loose.h_max_abs_residual,
+            e.medium.h_max_abs_residual,
+            e.tight.h_max_abs_residual,
+            e.loose.accepted_steps,
+            e.loose.rejected_steps,
+            e.medium.accepted_steps,
+            e.medium.rejected_steps,
+            e.tight.accepted_steps,
+            e.tight.rejected_steps,
+        ),
+        None => "failed to obtain AffineLimit endpoints".into(),
+    };
     push(
         &mut checks,
         "kerr_three_level_convergence",
         conv_ok,
-        "d_medium_tight <= d_loose_medium with recorded H/p_t/steps".into(),
+        conv_detail,
     );
 
     // In-process determinism ×5
@@ -359,13 +428,13 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         format!("case_count={}", canon.case_count),
     );
 
-    let authoritative = !dirty && checks.iter().all(|c| c.status == "PASS");
-    let result = if checks
+    let hard_fail_pre = checks
         .iter()
-        .any(|c| c.status == "FAIL" && c.name != "worktree_clean")
-    {
+        .any(|c| c.status == "FAIL" && c.name != "worktree_clean");
+    let authoritative_pre = !dirty && !hard_fail_pre;
+    let result_pre: &'static str = if hard_fail_pre {
         "FAIL"
-    } else if authoritative {
+    } else if authoritative_pre {
         "PASS"
     } else {
         "PASS_NON_AUTHORITATIVE"
@@ -373,8 +442,8 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut report = Gate1b1Report {
         gate: "gate-1b1",
-        result,
-        authoritative,
+        result: result_pre,
+        authoritative: authoritative_pre,
         commit: commit.trim().into(),
         dirty,
         dirty_detail,
@@ -391,6 +460,8 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         checks,
         determinism: det,
         subprocess_corpus_digests: sub_digests,
+        localization_nonconvergence,
+        kerr_convergence,
         content_digest_excluding_digest_field: String::new(),
     };
 
@@ -409,11 +480,24 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         status: if digest_ok { "PASS" } else { "FAIL" },
         detail: format!("content_digest_excluding_digest_field reproduces; digest={digest}"),
     });
-    // Recompute after adding the check (digest field still excluded from hash input via empty)
+
+    // If digest check fails, fold into result before the final content digest.
+    let hard_fail = report
+        .checks
+        .iter()
+        .any(|c| c.status == "FAIL" && c.name != "worktree_clean");
+    report.authoritative = !dirty && !hard_fail;
+    report.result = if hard_fail {
+        "FAIL"
+    } else if report.authoritative {
+        "PASS"
+    } else {
+        "PASS_NON_AUTHORITATIVE"
+    };
+
     let mut for_hash = clone_report_without_digest(&report);
     for_hash.content_digest_excluding_digest_field.clear();
-    let final_digest = content_digest(&for_hash);
-    report.content_digest_excluding_digest_field = final_digest;
+    report.content_digest_excluding_digest_field = content_digest(&for_hash);
 
     let out_dir = root.join("artifacts/gate-1b1");
     std::fs::create_dir_all(&out_dir)?;
@@ -428,12 +512,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     println!("{}", serde_json::to_string_pretty(&report)?);
-    if report
-        .checks
-        .iter()
-        .any(|c| c.status == "FAIL" && c.name != "worktree_clean")
-        || result == "FAIL"
-    {
+    if hard_fail || report.result == "FAIL" {
         return Err("gate-1b1 evaluation FAIL".into());
     }
     Ok(())
@@ -453,26 +532,11 @@ fn clone_report_without_digest(r: &Gate1b1Report) -> Gate1b1Report {
         adr_0005_status: r.adr_0005_status.clone(),
         corpus_cases: r.corpus_cases,
         unexplained_skips: r.unexplained_skips,
-        checks: r
-            .checks
-            .iter()
-            .map(|c| Check {
-                name: c.name.clone(),
-                status: c.status,
-                detail: c.detail.clone(),
-            })
-            .collect(),
-        determinism: r
-            .determinism
-            .iter()
-            .map(|d| CaseDeterminism {
-                case: d.case.clone(),
-                repeats: d.repeats,
-                identical: d.identical,
-                record_digest: d.record_digest.clone(),
-            })
-            .collect(),
+        checks: r.checks.clone(),
+        determinism: r.determinism.clone(),
         subprocess_corpus_digests: r.subprocess_corpus_digests.clone(),
+        localization_nonconvergence: r.localization_nonconvergence.clone(),
+        kerr_convergence: r.kerr_convergence.clone(),
         content_digest_excluding_digest_field: String::new(),
     }
 }
@@ -484,7 +548,7 @@ fn content_digest(report: &Gate1b1Report) -> String {
     hex_sha(&bytes)
 }
 
-fn three_level_kerr_convergence_ok() -> bool {
+fn three_level_kerr_convergence() -> Option<KerrConvergenceEvidence> {
     use relativity_core::{
         initialize_rectilinear_ray, zamo_observer, CameraParams, KerrParams, PositionBl,
         SensorCoord,
@@ -502,37 +566,70 @@ fn three_level_kerr_convergence_ok() -> bool {
         initialize_rectilinear_ray(&params, &obs, &cam, SensorCoord { x: 0.1, y: 0.0 }).unwrap();
     let y0 = GeodesicState::new(obs.event, ray.covariant_momentum).unwrap();
 
-    let mut loose = Dop853Config::diagnostic_default();
-    loose.affine_limit = 0.5;
-    loose.relative_tolerance = [1e-6; 8];
-    loose.absolute_tolerance = [1e-8; 8];
-    let medium = loose.clone().with_tighter_tol(1e-2);
-    let tight = medium.clone().with_tighter_tol(1e-2);
+    let mut loose_cfg = Dop853Config::diagnostic_default();
+    loose_cfg.affine_limit = 0.5;
+    loose_cfg.relative_tolerance = [1e-6; 8];
+    loose_cfg.absolute_tolerance = [1e-8; 8];
+    let medium_cfg = loose_cfg.clone().with_tighter_tol(1e-2);
+    let tight_cfg = medium_cfg.clone().with_tighter_tol(1e-2);
 
-    let endpoint = |cfg: &Dop853Config| {
+    let run = |cfg: &Dop853Config| -> Option<(GeodesicState, KerrRunEvidence)> {
         let r = integrate(params, &y0, cfg, &[]).ok()?;
-        match r.outcome {
-            IntegrationOutcome::AffineLimit { state, .. } => Some(state),
-            _ => None,
-        }
+        let IntegrationOutcome::AffineLimit { state, stats, .. } = r.outcome else {
+            return None;
+        };
+        let endpoint_bits = state
+            .to_array()
+            .iter()
+            .map(|v| format!("{:016x}", v.to_bits()))
+            .collect::<Vec<_>>()
+            .join("");
+        Some((
+            state,
+            KerrRunEvidence {
+                relative_tolerance: cfg.relative_tolerance,
+                absolute_tolerance: cfg.absolute_tolerance,
+                endpoint_bits,
+                h_initial: r.diagnostics.h_initial,
+                h_final: r.diagnostics.h_final,
+                h_max_abs_residual: r.diagnostics.h_max_abs_residual,
+                p_t_initial: r.diagnostics.p_t_initial,
+                p_t_final: r.diagnostics.p_t_final,
+                p_t_max_abs_drift: r.diagnostics.p_t_max_abs_drift,
+                accepted_steps: stats.accepted_steps,
+                rejected_steps: stats.rejected_steps,
+                rhs_evaluations: stats.rhs_evaluations,
+            },
+        ))
     };
-    let (Some(s_l), Some(s_m), Some(s_t)) = (endpoint(&loose), endpoint(&medium), endpoint(&tight))
-    else {
-        return false;
-    };
-    let d_lm = s_l
+
+    let (s_l, loose) = run(&loose_cfg)?;
+    let (s_m, medium) = run(&medium_cfg)?;
+    let (s_t, tight) = run(&tight_cfg)?;
+
+    let d_loose_medium = s_l
         .to_array()
         .iter()
         .zip(s_m.to_array().iter())
         .map(|(a, b)| (a - b).abs())
         .fold(0.0, f64::max);
-    let d_mt = s_m
+    let d_medium_tight = s_m
         .to_array()
         .iter()
         .zip(s_t.to_array().iter())
         .map(|(a, b)| (a - b).abs())
         .fold(0.0, f64::max);
-    d_mt <= d_lm + 1e-15
+    let passed = d_medium_tight <= d_loose_medium + KERR_CONVERGENCE_SLACK;
+
+    Some(KerrConvergenceEvidence {
+        loose,
+        medium,
+        tight,
+        d_loose_medium,
+        d_medium_tight,
+        documented_slack: KERR_CONVERGENCE_SLACK,
+        passed,
+    })
 }
 
 fn push(checks: &mut Vec<Check>, name: &str, ok: bool, detail: String) {
@@ -563,6 +660,46 @@ fn render_md(r: &Gate1b1Report) -> String {
     s.push_str("## Checks\n\n");
     for c in &r.checks {
         s.push_str(&format!("- [{}] {}: {}\n", c.status, c.name, c.detail));
+    }
+    if let Some(ev) = &r.localization_nonconvergence {
+        s.push_str("\n## Localization non-convergence\n\n");
+        s.push_str(&format!(
+            "- Stagnation: event={:?} iters={} residual={:.6e} width={:.6e}\n",
+            ev.stagnation_event_id,
+            ev.stagnation_iterations,
+            ev.stagnation_residual,
+            ev.stagnation_bracket_width
+        ));
+        s.push_str(&format!(
+            "- Exhaustion: event={:?} iters={} residual={:.6e} width={:.6e}\n",
+            ev.exhaustion_event_id,
+            ev.exhaustion_iterations,
+            ev.exhaustion_residual,
+            ev.exhaustion_bracket_width
+        ));
+    }
+    if let Some(k) = &r.kerr_convergence {
+        s.push_str("\n## Kerr three-level convergence\n\n");
+        s.push_str(&format!(
+            "- d_loose_medium = {:.6e}\n- d_medium_tight = {:.6e}\n- slack = {:.0e}\n- passed = {}\n",
+            k.d_loose_medium, k.d_medium_tight, k.documented_slack, k.passed
+        ));
+        for (label, run) in [
+            ("loose", &k.loose),
+            ("medium", &k.medium),
+            ("tight", &k.tight),
+        ] {
+            s.push_str(&format!(
+                "- {label}: Hmax={:.3e} Hfin={:.3e} pt_drift={:.3e} steps={}/{} rhs={} endpoint_bits=`{}`\n",
+                run.h_max_abs_residual,
+                run.h_final,
+                run.p_t_max_abs_drift,
+                run.accepted_steps,
+                run.rejected_steps,
+                run.rhs_evaluations,
+                run.endpoint_bits
+            ));
+        }
     }
     s
 }
