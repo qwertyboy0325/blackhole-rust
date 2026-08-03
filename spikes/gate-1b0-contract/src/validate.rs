@@ -129,11 +129,7 @@ fn validate_experiment_fields(candidate: &str, exp: &ExperimentResult) -> Vec<Va
                 ));
             }
         }
-        ExperimentId::E => match (
-            &exp.root_localization,
-            &exp.solver_stop,
-            &exp.restart,
-        ) {
+        ExperimentId::E => match (&exp.root_localization, &exp.solver_stop, &exp.restart) {
             (None, _, _) | (_, None, _) | (_, _, None) => {
                 issues.push(issue(
                     "missing_evidence",
