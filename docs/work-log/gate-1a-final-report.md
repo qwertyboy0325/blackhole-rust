@@ -3,9 +3,10 @@
 ## Identity
 
 - Branch: `gate-1a-geometry-kernel`
-- Evaluate commit: `1a1b8279d79d72ca790cfd389188acadb14393b5`
+- Tip / evaluate commit: `2b6c075fdac86e61b2342797284246c7f2ccd3d0`
 - Draft PR: https://github.com/qwertyboy0325/blackhole-rust/pull/1
 - Local evaluate: **PASS** (`authoritative=true`, dirty=false)
+- CI: **pass** (push + pull_request checks on tip)
 - Toolchain: `rustc 1.96.0 (ac68faa20 2026-05-25)` / `aarch64-apple-darwin`
 
 ## Coordinate convention selected
@@ -91,7 +92,7 @@ cargo test --workspace --all-features  # PASS
 cargo xtask evaluate --preset presets/gargantua-baseline.toml --scope gate-1a  # PASS
 ```
 
-CI: re-check PR #1 Actions after push (API may be unavailable from this host).
+CI on tip: Actions `check` **pass** for push `30783306153` and PR `30783308613`.
 
 ## Remaining risks
 
