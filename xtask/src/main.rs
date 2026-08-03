@@ -2,9 +2,12 @@
 
 use clap::{Parser, Subcommand};
 
+mod corpus_report;
 mod evaluate;
 mod evaluate_gate1b0;
+mod evaluate_gate1b1;
 mod inspect;
+mod integrate_ray;
 mod preset;
 mod spike_dop853;
 
@@ -43,7 +46,7 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
-    /// Gate evaluator (Gate 1A / Gate 1B0 scope).
+    /// Gate evaluator (Gate 1A / Gate 1B0 / Gate 1B1 scope).
     Evaluate {
         #[arg(long)]
         preset: Option<String>,
@@ -54,6 +57,22 @@ enum Commands {
     SpikeDop853 {
         #[arg(long)]
         candidate: String,
+    },
+    /// Integrate one camera ray; emit JSON diagnostics (no image).
+    IntegrateRay {
+        #[arg(long)]
+        preset: String,
+        #[arg(long)]
+        sensor_x: f64,
+        #[arg(long)]
+        sensor_y: f64,
+        #[arg(long, default_value_t = 100.0)]
+        affine_limit: f64,
+    },
+    /// Emit canonical Gate 1B1 corpus JSON (numerical records; for determinism).
+    CorpusReport {
+        #[arg(long)]
+        scope: String,
     },
 }
 
@@ -77,11 +96,26 @@ fn main() {
         Commands::Evaluate { preset, scope } => {
             if scope == "gate-1b0" {
                 evaluate_gate1b0::evaluate()
+            } else if scope == "gate-1b1" {
+                evaluate_gate1b1::evaluate()
             } else {
                 match preset {
                     Some(p) => evaluate::evaluate(&p, &scope),
                     None => Err("gate-1a evaluate requires --preset".into()),
                 }
+            }
+        }
+        Commands::IntegrateRay {
+            preset,
+            sensor_x,
+            sensor_y,
+            affine_limit,
+        } => integrate_ray::run(&preset, sensor_x, sensor_y, affine_limit),
+        Commands::CorpusReport { scope } => {
+            if scope == "gate-1b1" {
+                corpus_report::run()
+            } else {
+                Err(format!("unsupported corpus-report scope {scope}").into())
             }
         }
         Commands::SpikeDop853 { candidate } => {
