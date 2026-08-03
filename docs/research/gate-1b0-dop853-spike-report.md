@@ -4,12 +4,12 @@
 **Date:** 2026-08-03  
 **Branch:** `gate-1b0-dop853-spike` (rebased on Gate 1A `main` @ `dc38619`)  
 **PR:** #2 (Gate 1B0 only)  
-**Authoritative commit:** `d072e32d5fc3a62d80ca45961ca37ce899661b93`
+**Authoritative evaluate commit:** `bd561cbcc4f1d0307df8c5a7e88b24bc9cdad840`
 
 | Artifact | SHA-256 |
 |---|---|
-| ode-solvers.json | `f2c5bb1ecefca8bd3c97cbf8717d81ee98bded0f619d31725bdacd63987d7eb9` |
-| ivp.json | `2404ccc73a4fe90943f9db01671828023fda4f2f712dab23d96d8897fc851123` |
+| ode-solvers.json | `cd92ea430f751f82a7a65dcbc2a422075acbba41f88116fe376ac1583b45e41a` |
+| ivp.json | `2961eba63cb9aa1900d5d90dbaef7db93361b9cc0d929146ea21ba24d3d70d9c` |
 
 ## Candidates (pinned)
 
