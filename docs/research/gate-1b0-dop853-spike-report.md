@@ -3,7 +3,13 @@
 **Status:** lifecycle/error-propagation closure (non-production)  
 **Date:** 2026-08-03  
 **Branch:** `gate-1b0-dop853-spike` (rebased on Gate 1A `main` @ `dc38619`)  
-**PR:** #2 (Gate 1B0 only)
+**PR:** #2 (Gate 1B0 only)  
+**Authoritative commit:** `d072e32d5fc3a62d80ca45961ca37ce899661b93`
+
+| Artifact | SHA-256 |
+|---|---|
+| ode-solvers.json | `f2c5bb1ecefca8bd3c97cbf8717d81ee98bded0f619d31725bdacd63987d7eb9` |
+| ivp.json | `2404ccc73a4fe90943f9db01671828023fda4f2f712dab23d96d8897fc851123` |
 
 ## Candidates (pinned)
 
