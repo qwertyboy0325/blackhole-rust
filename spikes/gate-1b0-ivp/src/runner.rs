@@ -24,7 +24,7 @@ pub fn run_candidate_report(
 
     let mut e = run_e();
     let shallow = run_e_shallow();
-    if let (Some(ref mut main), Some(sh)) = (&mut e.event_evidence, shallow.event_evidence) {
+    if let (Some(ref mut main), Some(sh)) = (&mut e.root_localization, shallow.root_localization) {
         main.shallow_crossing_tested = sh.shallow_crossing_tested;
         main.shallow_sign_change_only_insufficient = sh.shallow_sign_change_only_insufficient;
     }
@@ -60,6 +60,35 @@ fn build_decision_matrix(
     let e = ex.iter().find(|e| matches!(e.id, ExperimentId::E));
     let f = ex.iter().find(|e| matches!(e.id, ExperimentId::F));
 
+    let all_deterministic = ex.iter().all(|x| {
+        x.determinism
+            .as_ref()
+            .is_some_and(|d| d.deterministic && d.in_process_runs >= 5 && d.signatures.len() >= 5)
+    });
+
+    let dense_interp = if d.map(|x| x.passed).unwrap_or(false) {
+        SupportLevel::Supported
+    } else {
+        SupportLevel::Unverified
+    };
+
+    let event_fit = if e.map(|x| x.passed).unwrap_or(false) {
+        SupportLevel::Supported
+    } else {
+        SupportLevel::Unverified
+    };
+
+    let stop_restart = if e
+        .and_then(|x| x.solver_stop.as_ref())
+        .is_some_and(|s| s.interrupted)
+        && e.and_then(|x| x.restart.as_ref())
+            .is_some_and(|r| r.deterministic)
+    {
+        SupportLevel::Supported
+    } else {
+        SupportLevel::Unsupported
+    };
+
     vec![
         score(
             "mathematical_method_dop853_f64",
@@ -83,25 +112,17 @@ fn build_decision_matrix(
         ),
         score(
             "accepted_step_dense_interpolation",
-            if d.map(|x| x.passed).unwrap_or(false) {
-                SupportLevel::Supported
-            } else {
-                SupportLevel::Unverified
-            },
+            dense_interp,
             "StepInterpolant in SolOut",
         ),
         score(
             "event_localization_fit",
-            if e.map(|x| x.passed).unwrap_or(false) {
-                SupportLevel::Supported
-            } else {
-                SupportLevel::Unverified
-            },
-            "sol(t) dense bracket",
+            event_fit,
+            "sol(t) dense bracket in callback",
         ),
         score(
             "stop_restart_semantics",
-            SupportLevel::Supported,
+            stop_restart,
             "Interrupt + re-init",
         ),
         score(
@@ -118,15 +139,12 @@ fn build_decision_matrix(
         ),
         score(
             "determinism_same_platform",
-            if ex
-                .iter()
-                .any(|x| x.determinism.as_ref().is_some_and(|d| d.deterministic))
-            {
+            if all_deterministic {
                 SupportLevel::Supported
             } else {
                 SupportLevel::Unverified
             },
-            "exp A x5",
+            "all experiments A-G x5 in-process",
         ),
         score(
             "error_propagation",

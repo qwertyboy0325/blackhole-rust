@@ -26,7 +26,8 @@ pub fn run_candidate_report(
 
     let mut e = run_e();
     let e_shallow = run_e_shallow();
-    if let (Some(ref mut main), Some(sh)) = (&mut e.event_evidence, e_shallow.event_evidence) {
+    if let (Some(ref mut main), Some(sh)) = (&mut e.root_localization, e_shallow.root_localization)
+    {
         main.shallow_crossing_tested = sh.shallow_crossing_tested;
         main.shallow_sign_change_only_insufficient = sh.shallow_sign_change_only_insufficient;
     }
@@ -62,25 +63,25 @@ fn build_decision_matrix(
     ex: &[ExperimentResult],
     scale: &gate_1b0_contract::ErrorScalingAssessment,
 ) -> Vec<ContractRequirementScore> {
-    let d = ex.iter().find(|e| matches!(e.id, ExperimentId::D));
     let e = ex.iter().find(|e| matches!(e.id, ExperimentId::E));
     let f = ex.iter().find(|e| matches!(e.id, ExperimentId::F));
 
-    let dense_interp = d
-        .and_then(|x| x.dense_assessment.as_ref())
-        .map(|a| {
-            if a.classes_observed.iter().any(|c| {
-                matches!(
-                    c,
-                    gate_1b0_contract::DenseOutputClass::AcceptedStepInterpolant
-                )
-            }) {
-                SupportLevel::Supported
-            } else {
-                SupportLevel::SupportedWithAdapter
-            }
-        })
-        .unwrap_or(SupportLevel::Unverified);
+    let all_deterministic = ex.iter().all(|x| {
+        x.determinism
+            .as_ref()
+            .is_some_and(|d| d.deterministic && d.in_process_runs >= 5 && d.signatures.len() >= 5)
+    });
+
+    let stop_restart = if e
+        .and_then(|x| x.solver_stop.as_ref())
+        .is_some_and(|s| s.interrupted)
+        && e.and_then(|x| x.restart.as_ref())
+            .is_some_and(|r| r.deterministic)
+    {
+        SupportLevel::Supported
+    } else {
+        SupportLevel::Unsupported
+    };
 
     vec![
         score(
@@ -105,29 +106,25 @@ fn build_decision_matrix(
         ),
         score(
             "accepted_step_dense_interpolation",
-            dense_interp,
-            "dx-grid, no public rcont",
+            SupportLevel::Unsupported,
+            "PredeterminedSamples + grid query only; no public rcont",
         ),
         score(
             "event_localization_fit",
-            if e.map(|x| x.passed).unwrap_or(false) {
-                SupportLevel::SupportedWithAdapter
-            } else {
-                SupportLevel::Unverified
-            },
-            "dense-grid bracket",
+            SupportLevel::Unsupported,
+            "post-hoc grid localization only; no callback event loop",
         ),
         score(
             "stop_restart_semantics",
-            SupportLevel::Supported,
-            "solout halt + re-init",
+            stop_restart,
+            "E solver_stop.interrupted=false; restart not demonstrated",
         ),
         score(
             "step_guard_control",
             f.and_then(|x| x.step_guard.as_ref())
                 .map(|g| g.static_h_max)
                 .unwrap_or(SupportLevel::Unverified),
-            "h_max",
+            "h_max + solout halt",
         ),
         score(
             "integration_statistics",
@@ -136,15 +133,12 @@ fn build_decision_matrix(
         ),
         score(
             "determinism_same_platform",
-            if ex
-                .iter()
-                .any(|x| x.determinism.as_ref().is_some_and(|d| d.deterministic))
-            {
+            if all_deterministic {
                 SupportLevel::Supported
             } else {
                 SupportLevel::Unverified
             },
-            "exp A x5",
+            "all experiments A-G x5 in-process",
         ),
         score(
             "error_propagation",

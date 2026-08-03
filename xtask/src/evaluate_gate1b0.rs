@@ -2,8 +2,8 @@
 
 use crate::spike_dop853;
 use gate_1b0_contract::{
-    json_digest, ComparisonReport, ExperimentId, RequirementComparisonRow, SupportLevel,
-    CANDIDATE_IVP, CANDIDATE_ODE_SOLVERS, DECISION_REQUIREMENTS,
+    json_digest, validate_candidate_report, ComparisonReport, RequirementComparisonRow,
+    SupportLevel, ALL_EXPERIMENT_IDS, CANDIDATE_IVP, CANDIDATE_ODE_SOLVERS, DECISION_REQUIREMENTS,
 };
 use std::path::Path;
 use std::process::Command;
@@ -127,13 +127,22 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     let subprocess_det = subprocess_ode.windows(2).all(|w| w[0] == w[1])
         && subprocess_ivp.windows(2).all(|w| w[0] == w[1]);
 
+    let ode_validation = validate_candidate_report(&ode);
+    let ivp_validation = validate_candidate_report(&ivp);
+    let validation_ok = ode_validation.is_ok() && ivp_validation.is_ok();
+    checks.push(Check {
+        name: "candidate_validation".into(),
+        status: if validation_ok { "PASS" } else { "FAIL" },
+        detail: format_candidate_validation_detail(&ode_validation, &ivp_validation),
+    });
+
     let in_process_det = [(&ode, "ode_solvers"), (&ivp, "ivp")]
         .iter()
-        .all(|(report, _)| exp_a_in_process_deterministic(report));
+        .all(|(report, _)| all_experiments_in_process_deterministic(report));
     checks.push(Check {
         name: "in_process_determinism".into(),
         status: if in_process_det { "PASS" } else { "FAIL" },
-        detail: "experiment A x5 in-process".into(),
+        detail: "experiments A-G x5 in-process per candidate".into(),
     });
     checks.push(Check {
         name: "subprocess_determinism".into(),
@@ -241,13 +250,41 @@ fn adr_recommendation(
     }
 }
 
-fn exp_a_in_process_deterministic(report: &gate_1b0_contract::CandidateReport) -> bool {
-    report
-        .experiments
-        .iter()
-        .find(|e| e.id == ExperimentId::A)
-        .and_then(|e| e.determinism.as_ref())
-        .is_some_and(|d| d.deterministic && d.in_process_runs >= 5)
+fn all_experiments_in_process_deterministic(report: &gate_1b0_contract::CandidateReport) -> bool {
+    ALL_EXPERIMENT_IDS.iter().all(|&id| {
+        report
+            .experiments
+            .iter()
+            .find(|e| e.id == id)
+            .and_then(|e| e.determinism.as_ref())
+            .is_some_and(|d| d.deterministic && d.in_process_runs >= 5 && d.signatures.len() >= 5)
+    })
+}
+
+fn format_candidate_validation_detail(
+    ode: &Result<(), Vec<gate_1b0_contract::ValidationIssue>>,
+    ivp: &Result<(), Vec<gate_1b0_contract::ValidationIssue>>,
+) -> String {
+    fn issues_text(
+        label: &str,
+        result: &Result<(), Vec<gate_1b0_contract::ValidationIssue>>,
+    ) -> String {
+        match result {
+            Ok(()) => format!("{label}: ok"),
+            Err(issues) => {
+                let details: Vec<String> = issues
+                    .iter()
+                    .map(|i| format!("{}: {}", i.code, i.detail))
+                    .collect();
+                format!("{label}: {}", details.join("; "))
+            }
+        }
+    }
+    format!(
+        "{} | {}",
+        issues_text("ode-solvers", ode),
+        issues_text("ivp", ivp)
+    )
 }
 
 fn level_of(report: &gate_1b0_contract::CandidateReport, req: &str) -> SupportLevel {

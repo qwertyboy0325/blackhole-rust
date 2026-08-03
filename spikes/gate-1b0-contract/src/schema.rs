@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 
 pub const CANDIDATE_ODE_SOLVERS: &str = "ode-solvers";
 pub const CANDIDATE_IVP: &str = "ivp";
-pub const SPIKE_VERSION: &str = "gate-1b0-v1";
+pub const SPIKE_VERSION: &str = "gate-1b0-v2";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ExperimentId {
     A,
@@ -17,6 +17,16 @@ pub enum ExperimentId {
     F,
     G,
 }
+
+pub const ALL_EXPERIMENT_IDS: [ExperimentId; 7] = [
+    ExperimentId::A,
+    ExperimentId::B,
+    ExperimentId::C,
+    ExperimentId::D,
+    ExperimentId::E,
+    ExperimentId::F,
+    ExperimentId::G,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -30,13 +40,9 @@ pub enum SupportLevel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DenseOutputClass {
-    /// True current accepted-step interpolant / coefficients exposed.
     AcceptedStepInterpolant,
-    /// Query completed global solution (e.g. sol(t) after integrate).
     GlobalSolutionQuery,
-    /// Samples at predetermined output times only.
     PredeterminedSamples,
-    /// External reconstruction from stage values (not used unless proven).
     ExternalReconstruction,
 }
 
@@ -76,8 +82,21 @@ pub struct DenseProbe {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcceptedStepProbe {
+    pub step_x0: f64,
+    pub step_x1: f64,
+    pub theta: f64,
+    pub t: f64,
+    pub computed: Vec<f64>,
+    pub analytic: Vec<f64>,
+    pub max_abs_error: f64,
+    pub max_rel_error: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeterminismRecord {
     pub in_process_runs: u32,
+    pub signatures: Vec<String>,
     pub endpoint_bits: Vec<String>,
     pub accepted_steps: Vec<u32>,
     pub json_digests: Vec<String>,
@@ -111,24 +130,69 @@ pub struct StepGuardAssessment {
     pub static_h_max: SupportLevel,
     pub dynamic_h_max: SupportLevel,
     pub pre_rhs_domain_reject: SupportLevel,
+    pub post_accepted_step_stop: SupportLevel,
     pub stop_from_callback: SupportLevel,
     pub bracket_recovery: SupportLevel,
     pub typed_domain_failure: SupportLevel,
     pub notes: String,
 }
 
+/// Pure root localization on a supplied interpolant — no solver lifecycle claims.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventEvidence {
+pub struct RootLocalizationEvidence {
     pub event_time_analytic: f64,
     pub event_time_found: f64,
     pub time_error: f64,
     pub root_residual: f64,
     pub state_error: f64,
     pub interpolation_calls: u32,
-    pub stopped_at_event: bool,
-    pub restart_deterministic: bool,
+    pub localized_state: Vec<f64>,
     pub shallow_crossing_tested: bool,
     pub shallow_sign_change_only_insufficient: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SolverStopEvidence {
+    pub interrupted: bool,
+    pub stop_time: f64,
+    pub stop_state: Vec<f64>,
+    pub callback_count_at_stop: u32,
+    pub accepted_steps_at_stop: u32,
+    pub rejected_steps_at_stop: u32,
+    pub rhs_evaluations_at_stop: u32,
+    pub no_steps_after_stop: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestartEvidence {
+    pub restart_time: f64,
+    pub restart_state: Vec<f64>,
+    pub restart_endpoint: Vec<f64>,
+    pub reference_endpoint: Vec<f64>,
+    pub endpoint_error: f64,
+    pub deterministic: bool,
+    pub endpoint_bits: Vec<String>,
+    pub in_process_runs: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallbackStopEvidence {
+    pub callback_invoked: bool,
+    pub interrupt_requested: bool,
+    pub interrupted: bool,
+    pub stop_time: f64,
+    pub stop_state: Vec<f64>,
+    pub accepted_steps_before_stop: u32,
+    pub accepted_steps_after_stop: u32,
+    pub deterministic: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DomainErrorEvidence {
+    pub typed_error_code: String,
+    pub typed_error_recovered: bool,
+    pub solver_panicked: bool,
+    pub nan_presented_as_error: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,25 +204,42 @@ pub struct ExperimentResult {
     pub endpoint_rel_error: Option<f64>,
     pub component_errors: Vec<ComponentError>,
     pub dense_probes: Vec<DenseProbe>,
+    pub accepted_step_probes: Vec<AcceptedStepProbe>,
     pub stats: Option<IntegrationStats>,
     pub determinism: Option<DeterminismRecord>,
     pub dense_assessment: Option<DenseOutputAssessment>,
     pub step_guard: Option<StepGuardAssessment>,
-    pub event_evidence: Option<EventEvidence>,
+    pub root_localization: Option<RootLocalizationEvidence>,
+    pub solver_stop: Option<SolverStopEvidence>,
+    pub restart: Option<RestartEvidence>,
+    pub callback_stop: Option<CallbackStopEvidence>,
+    pub domain_error: Option<DomainErrorEvidence>,
     pub error_scaling: Option<ErrorScalingAssessment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnsafeOccurrence {
+    pub file: String,
+    pub line: u32,
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DependencyAudit {
     pub crate_name: String,
     pub exact_version: String,
+    pub package_id: String,
+    pub checksum: String,
+    pub source: String,
     pub license: String,
     pub source_repo: String,
     pub source_tag_or_rev: String,
-    pub direct_unsafe_in_crate: bool,
+    pub direct_unsafe_occurrences: Vec<UnsafeOccurrence>,
     pub build_scripts: Vec<String>,
+    pub proc_macro_crates: Vec<String>,
     pub native_dependencies: Vec<String>,
     pub cargo_tree_digest: String,
+    pub audit_commands: Vec<String>,
     pub maintenance_notes: String,
     pub transitive_risk_notes: String,
 }

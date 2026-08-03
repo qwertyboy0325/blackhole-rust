@@ -2,6 +2,7 @@
 
 use gate_1b0_contract::{
     CallbackTiming, DenseOutputAssessment, DenseOutputClass, IntegrationStats, SupportLevel,
+    DOMAIN_X_MAX,
 };
 use nalgebra::DVector;
 use ode_solvers::dop853::Dop853;
@@ -9,6 +10,17 @@ use ode_solvers::dop_shared::{OutputType, Stats};
 use ode_solvers::System;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+pub const DOMAIN_ERROR_CODE: &str = "DOMAIN_X_EXCEEDED";
+
+#[derive(Clone, Default)]
+pub struct DomainLatch(pub Rc<RefCell<Option<String>>>);
+
+impl DomainLatch {
+    pub fn new() -> Self {
+        Self(Rc::new(RefCell::new(None)))
+    }
+}
 
 pub const DEFAULT_RTOL: f64 = 1e-9;
 pub const DEFAULT_ATOL: f64 = 1e-12;
@@ -30,6 +42,8 @@ pub struct CaptureLog {
     pub last_x: Rc<RefCell<f64>>,
     pub last_y: Rc<RefCell<Vec<f64>>>,
     pub stop_next: Rc<RefCell<bool>>,
+    pub interrupt_requested: Rc<RefCell<bool>>,
+    pub accepted_after_stop: Rc<RefCell<u32>>,
 }
 
 impl CaptureLog {
@@ -40,6 +54,8 @@ impl CaptureLog {
             last_x: Rc::new(RefCell::new(x0)),
             last_y: Rc::new(RefCell::new(y0)),
             stop_next: Rc::new(RefCell::new(false)),
+            interrupt_requested: Rc::new(RefCell::new(false)),
+            accepted_after_stop: Rc::new(RefCell::new(0)),
         }
     }
 }
@@ -68,6 +84,9 @@ where
 
     fn solout(&mut self, x: f64, y: &DVector<f64>, _dy: &DVector<f64>) -> bool {
         *self.log.callback_count.borrow_mut() += 1;
+        if *self.log.interrupt_requested.borrow() {
+            *self.log.accepted_after_stop.borrow_mut() += 1;
+        }
         let y1 = y.as_slice().to_vec();
         let last_x = *self.log.last_x.borrow();
         let h = x - last_x;
@@ -82,7 +101,26 @@ where
         }
         *self.log.last_x.borrow_mut() = x;
         *self.log.last_y.borrow_mut() = y1;
-        *self.log.stop_next.borrow()
+        if *self.log.stop_next.borrow() {
+            *self.log.interrupt_requested.borrow_mut() = true;
+            return true;
+        }
+        false
+    }
+}
+
+pub struct DomainSys {
+    pub latch: DomainLatch,
+}
+
+impl System<f64, DVector<f64>> for DomainSys {
+    fn system(&self, x: f64, y: &DVector<f64>, dy: &mut DVector<f64>) {
+        if x >= DOMAIN_X_MAX {
+            *self.latch.0.borrow_mut() = Some(DOMAIN_ERROR_CODE.into());
+            dy[0] = f64::NAN;
+            return;
+        }
+        dy[0] = y[0];
     }
 }
 

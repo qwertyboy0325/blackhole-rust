@@ -1,6 +1,6 @@
 //! Candidate-neutral event bracket and root localization on a dense interpolant.
 
-use crate::schema::EventEvidence;
+use crate::schema::RootLocalizationEvidence;
 
 /// Interpolate state at parameter `theta` in `[0,1]` on the current accepted step `[t0,t1]`.
 pub type StepInterpolant = dyn Fn(f64) -> Vec<f64>;
@@ -9,8 +9,9 @@ pub type StepInterpolant = dyn Fn(f64) -> Vec<f64>;
 pub type EventFn = dyn Fn(f64, &[f64]) -> f64;
 
 /// Localize an event using bisection on the interpolant.
+/// Returns root-localization evidence only — no solver stop/restart claims.
 #[allow(clippy::too_many_arguments)]
-pub fn localize_event(
+pub fn localize_root(
     t0: f64,
     t1: f64,
     y0: &[f64],
@@ -20,7 +21,7 @@ pub fn localize_event(
     event_time_analytic: f64,
     analytic_at_event: &[f64],
     shallow: bool,
-) -> EventEvidence {
+) -> RootLocalizationEvidence {
     let f0 = event(t0, y0);
     let f1 = event(t1, y1);
 
@@ -34,7 +35,6 @@ pub fn localize_event(
     let mut lo_f = f0;
     let mut hi_f = f1;
 
-    // If no sign change, try dense samples on interpolant
     if lo_f.signum() == hi_f.signum() {
         if let Some(interp) = interpolant {
             for k in 1..=16 {
@@ -111,27 +111,15 @@ pub fn localize_event(
         .map(|(a, b)| (a - b).abs())
         .fold(0.0_f64, f64::max);
 
-    EventEvidence {
+    RootLocalizationEvidence {
         event_time_analytic,
         event_time_found: root_t,
         time_error,
         root_residual,
         state_error,
         interpolation_calls: interp_calls,
-        stopped_at_event: true,
-        restart_deterministic: true,
+        localized_state: y_event,
         shallow_crossing_tested: shallow,
         shallow_sign_change_only_insufficient: shallow && lo_f.signum() == hi_f.signum(),
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct EventLocalizationResult {
-    pub evidence: EventEvidence,
-}
-
-impl EventLocalizationResult {
-    pub fn new(evidence: EventEvidence) -> Self {
-        Self { evidence }
     }
 }

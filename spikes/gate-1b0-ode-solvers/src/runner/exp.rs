@@ -2,17 +2,19 @@
 
 use crate::adapter::{
     component_errors, dense_assessment_ode_solvers, endpoint_errors, interpolate_dense_grid,
-    interpolate_dense_state, make_stepper, stats_to_integration, CapturingSystem, DEFAULT_RTOL,
+    interpolate_dense_state, make_stepper, stats_to_integration, CapturingSystem, DomainLatch,
+    DomainSys, DEFAULT_RTOL, DOMAIN_ERROR_CODE,
 };
 use gate_1b0_contract::{
-    exp_analytic, mixed8_analytic, mixed8_derivative, mixed8_y0, shallow_event_fn,
-    shallow_event_root_analytic, sho_analytic_energy, sho_analytic_p, sho_analytic_q, sho_energy,
-    DOMAIN_X_MAX, EXP_LAMBDA, EXP_X0, EXP_X_END, EXP_Y0, MIXED8_DIM, SHO_EVENT_X, SHO_P0, SHO_Q0,
-    SHO_X0, SHO_X_END,
+    endpoint_bits, exp_analytic, mixed8_analytic, mixed8_derivative, mixed8_y0, repeat_in_process,
+    repeat_in_process_sig, shallow_event_fn, shallow_event_root_analytic, sho_analytic_energy,
+    sho_analytic_p, sho_analytic_q, sho_energy, signature_join, EXP_LAMBDA, EXP_X0, EXP_X_END,
+    EXP_Y0, MIXED8_DIM, SHO_EVENT_X, SHO_P0, SHO_Q0, SHO_X0, SHO_X_END,
 };
 use gate_1b0_contract::{
-    localize_event, repeat_in_process, DenseProbe, DeterminismRecord, ExperimentId,
-    ExperimentResult, StepGuardAssessment, SupportLevel,
+    localize_root, CallbackStopEvidence, DenseProbe, DeterminismRecord, DomainErrorEvidence,
+    ExperimentId, ExperimentResult, RepeatSummary, RestartEvidence, SolverStopEvidence,
+    StepGuardAssessment, SupportLevel,
 };
 use nalgebra::DVector;
 use ode_solvers::dop853::Dop853;
@@ -44,15 +46,31 @@ impl System<f64, DVector<f64>> for Mixed8Sys {
     }
 }
 
-struct DomainSys;
-impl System<f64, DVector<f64>> for DomainSys {
-    fn system(&self, x: f64, y: &DVector<f64>, dy: &mut DVector<f64>) {
-        if x >= DOMAIN_X_MAX {
-            dy[0] = f64::NAN;
-            return;
-        }
-        dy[0] = y[0];
+fn det_record(det: RepeatSummary) -> DeterminismRecord {
+    DeterminismRecord {
+        in_process_runs: det.signatures.len() as u32,
+        signatures: det.signatures,
+        endpoint_bits: det.endpoint_bits,
+        accepted_steps: det.accepted_steps,
+        json_digests: det.json_digests,
+        deterministic: det.deterministic,
     }
+}
+
+fn exp_a_determinism() -> RepeatSummary {
+    repeat_in_process(5, || {
+        let mut s = make_stepper(
+            ExpSys { lambda: EXP_LAMBDA },
+            EXP_X0,
+            EXP_X_END,
+            DVector::from_vec(vec![EXP_Y0]),
+            0.05,
+            EXP_X_END,
+        );
+        let st = s.integrate().unwrap();
+        let ye = s.y_out().last().unwrap()[0];
+        (vec![ye], st.accepted_steps, endpoint_bits(&[ye]))
+    })
 }
 
 pub fn run_a() -> ExperimentResult {
@@ -80,19 +98,7 @@ pub fn run_a() -> ExperimentResult {
             });
         }
     }
-    let det = repeat_in_process(5, || {
-        let mut s = make_stepper(
-            ExpSys { lambda: EXP_LAMBDA },
-            EXP_X0,
-            EXP_X_END,
-            DVector::from_vec(vec![EXP_Y0]),
-            0.05,
-            EXP_X_END,
-        );
-        let st = s.integrate().unwrap();
-        let ye = s.y_out().last().unwrap()[0];
-        (vec![ye], st.accepted_steps, format!("{:?}", ye.to_bits()))
-    });
+    let det = exp_a_determinism();
     ExperimentResult {
         id: ExperimentId::A,
         passed: abs < 1e-6 && rel < 1e-6 && det.deterministic,
@@ -104,19 +110,39 @@ pub fn run_a() -> ExperimentResult {
         endpoint_rel_error: Some(rel),
         component_errors: vec![],
         dense_probes,
+        accepted_step_probes: vec![],
         stats: Some(stats_to_integration(stats, 0.0, 0.0)),
-        determinism: Some(DeterminismRecord {
-            in_process_runs: 5,
-            endpoint_bits: det.endpoint_bits,
-            accepted_steps: det.accepted_steps,
-            json_digests: det.json_digests,
-            deterministic: det.deterministic,
-        }),
+        determinism: Some(det_record(det)),
         dense_assessment: None,
         step_guard: None,
-        event_evidence: None,
+        root_localization: None,
+        solver_stop: None,
+        restart: None,
+        callback_stop: None,
+        domain_error: None,
         error_scaling: None,
     }
+}
+
+fn sho_determinism() -> RepeatSummary {
+    repeat_in_process(5, || {
+        let mut s = make_stepper(
+            ShoSys,
+            SHO_X0,
+            SHO_X_END,
+            DVector::from_vec(vec![SHO_Q0, SHO_P0]),
+            0.1,
+            SHO_X_END,
+        );
+        let st = s.integrate().unwrap();
+        let yf = s.y_out().last().unwrap();
+        let endpoint = vec![yf[0], yf[1]];
+        (
+            endpoint.clone(),
+            st.accepted_steps,
+            endpoint_bits(&endpoint),
+        )
+    })
 }
 
 pub fn run_b() -> ExperimentResult {
@@ -154,12 +180,9 @@ pub fn run_b() -> ExperimentResult {
             }
         }
     }
-    // Event at pi/2 using captured steps
     let event = |_t: f64, y: &[f64]| y[0];
-    let mut ev = None;
-    if log.steps.borrow().len() >= 2 {
-        let s = &log.steps.borrow()[0];
-        ev = Some(localize_event(
+    let root_localization = log.steps.borrow().first().map(|s| {
+        localize_root(
             s.x0,
             s.x1,
             &s.y0,
@@ -169,43 +192,49 @@ pub fn run_b() -> ExperimentResult {
             SHO_EVENT_X,
             &[0.0, sho_analytic_p(SHO_EVENT_X)],
             false,
-        ));
-    }
-    // Restart from localized state
-    let restart_ok = if let Some(ref e) = ev {
-        let y_restart = DVector::from_vec(vec![0.0, sho_analytic_p(e.event_time_found)]);
-        let mut s2 = make_stepper(
-            ShoSys,
-            e.event_time_found,
-            SHO_X_END,
-            y_restart,
-            0.1,
-            SHO_X_END,
-        );
-        s2.integrate().is_ok()
-    } else {
-        false
-    };
-    if let Some(ref mut e) = ev {
-        e.restart_deterministic = restart_ok;
-    }
+        )
+    });
+    let det = sho_determinism();
     ExperimentResult {
         id: ExperimentId::B,
-        passed: endpoint_abs < 1e-4 && energy_drift < 1e-3,
-        detail: format!(
-            "endpoint={endpoint_abs:.3e} energy_drift={energy_drift:.3e} restart={restart_ok}"
-        ),
+        passed: endpoint_abs < 1e-4 && energy_drift < 1e-3 && det.deterministic,
+        detail: format!("endpoint={endpoint_abs:.3e} energy_drift={energy_drift:.3e} root_only"),
         endpoint_abs_error: Some(endpoint_abs),
         endpoint_rel_error: None,
         component_errors: vec![],
         dense_probes,
+        accepted_step_probes: vec![],
         stats: Some(stats_to_integration(stats, 0.0, 0.0)),
-        determinism: None,
+        determinism: Some(det_record(det)),
         dense_assessment: None,
         step_guard: None,
-        event_evidence: ev,
+        root_localization,
+        solver_stop: None,
+        restart: None,
+        callback_stop: None,
+        domain_error: None,
         error_scaling: None,
     }
+}
+
+fn mixed8_determinism() -> RepeatSummary {
+    repeat_in_process(5, || {
+        let mut s = make_stepper(
+            Mixed8Sys,
+            0.0,
+            0.5,
+            DVector::from_vec(mixed8_y0().to_vec()),
+            0.02,
+            0.5,
+        );
+        let st = s.integrate().unwrap();
+        let endpoint = s.y_out().last().unwrap().as_slice().to_vec();
+        (
+            endpoint.clone(),
+            st.accepted_steps,
+            endpoint_bits(&endpoint),
+        )
+    })
 }
 
 pub fn run_c() -> ExperimentResult {
@@ -217,9 +246,10 @@ pub fn run_c() -> ExperimentResult {
     let analytic = mixed8_analytic(x_end);
     let comps = component_errors(&y_end, &analytic);
     let max_abs = comps.iter().map(|c| c.abs).fold(0.0_f64, f64::max);
+    let det = mixed8_determinism();
     ExperimentResult {
         id: ExperimentId::C,
-        passed: comps.iter().all(|c| c.abs < 1e-5),
+        passed: comps.iter().all(|c| c.abs < 1e-5) && det.deterministic,
         detail: format!(
             "scalar_tol max_abs={max_abs:.3e}; direct_vector=Unsupported; adapter rescale tested separately"
         ),
@@ -227,17 +257,21 @@ pub fn run_c() -> ExperimentResult {
         endpoint_rel_error: None,
         component_errors: comps,
         dense_probes: vec![],
+        accepted_step_probes: vec![],
         stats: Some(stats_to_integration(stats, 0.0, 0.0)),
-        determinism: None,
+        determinism: Some(det_record(det)),
         dense_assessment: None,
         step_guard: None,
-        event_evidence: None,
+        root_localization: None,
+        solver_stop: None,
+        restart: None,
+        callback_stop: None,
+        domain_error: None,
         error_scaling: Some(crate::adapter::error_scaling_ode_solvers()),
     }
 }
 
 pub fn run_c_adapter() -> ExperimentResult {
-    // Adapter: rescale state so per-component scales map to scalar tol
     let scales: [f64; MIXED8_DIM] = mixed8_y0().map(|v| v.abs().max(1e-6));
     struct ScaledMixed8 {
         scales: [f64; MIXED8_DIM],
@@ -278,13 +312,41 @@ pub fn run_c_adapter() -> ExperimentResult {
         endpoint_rel_error: None,
         component_errors: comps,
         dense_probes: vec![],
+        accepted_step_probes: vec![],
         stats: Some(stats_to_integration(stats, 0.0, 0.0)),
         determinism: None,
         dense_assessment: None,
         step_guard: None,
-        event_evidence: None,
+        root_localization: None,
+        solver_stop: None,
+        restart: None,
+        callback_stop: None,
+        domain_error: None,
         error_scaling: None,
     }
+}
+
+fn dense_d_determinism() -> RepeatSummary {
+    repeat_in_process_sig(5, || {
+        let cap = CapturingSystem::new(ExpSys { lambda: EXP_LAMBDA }, EXP_X0, vec![EXP_Y0]);
+        let log = cap.log.clone();
+        let mut s = make_stepper(
+            cap,
+            EXP_X0,
+            EXP_X_END,
+            DVector::from_vec(vec![EXP_Y0]),
+            0.01,
+            EXP_X_END,
+        );
+        let st = s.integrate().unwrap();
+        let sig = signature_join(&[
+            &log.callback_count.borrow().to_string(),
+            &log.steps.borrow().len().to_string(),
+            &s.x_out().len().to_string(),
+            &st.accepted_steps.to_string(),
+        ]);
+        (sig.clone(), st.accepted_steps, sig)
+    })
 }
 
 pub fn run_d() -> ExperimentResult {
@@ -295,24 +357,38 @@ pub fn run_d() -> ExperimentResult {
     let mut stepper = make_stepper(cap, EXP_X0, EXP_X_END, y0, 0.01, EXP_X_END);
     let stats = stepper.integrate().expect("dense access");
     let assessment = dense_assessment_ode_solvers();
+    let callbacks = *log.callback_count.borrow();
+    let steps_captured = log.steps.borrow().len();
+    let dense_grid = stepper.x_out().len();
+    let det = dense_d_determinism();
+    let passed = callbacks > 0
+        && steps_captured > 0
+        && dense_grid > 1
+        && det.deterministic
+        && assessment
+            .classes_observed
+            .contains(&gate_1b0_contract::DenseOutputClass::PredeterminedSamples);
     ExperimentResult {
         id: ExperimentId::D,
-        passed: *log.callback_count.borrow() > 0 && !log.steps.borrow().is_empty(),
+        passed,
         detail: format!(
-            "callbacks={} steps_captured={} dense_grid={}",
-            log.callback_count.borrow(),
-            log.steps.borrow().len(),
-            stepper.x_out().len()
+            "callbacks={callbacks} steps_captured={steps_captured} dense_grid={dense_grid}; \
+             no AcceptedStepInterpolant"
         ),
         endpoint_abs_error: None,
         endpoint_rel_error: None,
         component_errors: vec![],
         dense_probes: vec![],
+        accepted_step_probes: vec![],
         stats: Some(stats_to_integration(stats, 0.0, 0.0)),
-        determinism: None,
+        determinism: Some(det_record(det)),
         dense_assessment: Some(assessment),
         step_guard: None,
-        event_evidence: None,
+        root_localization: None,
+        solver_stop: None,
+        restart: None,
+        callback_stop: None,
+        domain_error: None,
         error_scaling: None,
     }
 }
@@ -320,13 +396,14 @@ pub fn run_d() -> ExperimentResult {
 pub fn run_e() -> ExperimentResult {
     let inner = ShoSys;
     let y0 = DVector::from_vec(vec![1.0, 0.0]);
-    let mut stepper = make_stepper(inner, 0.0, SHO_EVENT_X + 1.0, y0.clone(), 0.005, 2.0);
-    let _ = stepper.integrate();
+    let x_end = SHO_EVENT_X + 1.0;
+    let mut stepper = make_stepper(inner, 0.0, x_end, y0.clone(), 0.005, 2.0);
+    let stats = stepper.integrate().expect("sho grid integrate");
     let x_out = stepper.x_out();
     let y_out = stepper.y_out();
     let event = |_t: f64, y: &[f64]| y[0];
     let mut lo = 0.0;
-    let mut hi = SHO_EVENT_X + 1.0;
+    let mut hi = x_end;
     let mut y_lo = y0.as_slice().to_vec();
     let mut y_hi = interpolate_dense_state(x_out, y_out, hi).unwrap_or_else(|| y_lo.clone());
     for _ in 0..48 {
@@ -340,7 +417,7 @@ pub fn run_e() -> ExperimentResult {
             y_lo = y_mid;
         }
     }
-    let ev = localize_event(
+    let root_localization = localize_root(
         lo,
         hi,
         &y_lo,
@@ -351,23 +428,99 @@ pub fn run_e() -> ExperimentResult {
         &[0.0, sho_analytic_p(SHO_EVENT_X)],
         false,
     );
-    let passed = ev.time_error < 1e-4 && ev.root_residual < 1e-6;
+    let y_final = interpolate_dense_state(x_out, y_out, x_end).unwrap_or_default();
+    let solver_stop = SolverStopEvidence {
+        interrupted: false,
+        stop_time: x_end,
+        stop_state: y_final.clone(),
+        callback_count_at_stop: 0,
+        accepted_steps_at_stop: stats.accepted_steps,
+        rejected_steps_at_stop: stats.rejected_steps,
+        rhs_evaluations_at_stop: stats.num_eval,
+        no_steps_after_stop: true,
+    };
+    let reference_endpoint = vec![sho_analytic_q(SHO_X_END), sho_analytic_p(SHO_X_END)];
+    let (restart_endpoint, endpoint_error) = {
+        let y_restart = DVector::from_vec(vec![
+            0.0,
+            sho_analytic_p(root_localization.event_time_found),
+        ]);
+        let mut s2 = make_stepper(
+            ShoSys,
+            root_localization.event_time_found,
+            SHO_X_END,
+            y_restart,
+            0.1,
+            SHO_X_END,
+        );
+        if s2.integrate().is_ok() {
+            let ep = s2.y_out().last().unwrap().as_slice().to_vec();
+            let err = ep
+                .iter()
+                .zip(reference_endpoint.iter())
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0_f64, f64::max);
+            (ep, err)
+        } else {
+            (vec![], f64::INFINITY)
+        }
+    };
+    let restart = RestartEvidence {
+        restart_time: root_localization.event_time_found,
+        restart_state: root_localization.localized_state.clone(),
+        restart_endpoint: restart_endpoint.clone(),
+        reference_endpoint: reference_endpoint.clone(),
+        endpoint_error,
+        deterministic: false,
+        endpoint_bits: if restart_endpoint.is_empty() {
+            vec![]
+        } else {
+            vec![endpoint_bits(&restart_endpoint)]
+        },
+        in_process_runs: 0,
+    };
+    let det = repeat_in_process_sig(5, || {
+        let mut s = make_stepper(
+            ShoSys,
+            0.0,
+            x_end,
+            DVector::from_vec(vec![1.0, 0.0]),
+            0.005,
+            2.0,
+        );
+        let st = s.integrate().unwrap();
+        let ye = s.y_out().last().unwrap().as_slice().to_vec();
+        (
+            endpoint_bits(&ye),
+            st.accepted_steps,
+            signature_join(&[&ye[0].to_bits().to_string(), &ye[1].to_bits().to_string()]),
+        )
+    });
+    let passed = root_localization.time_error < 1e-4
+        && root_localization.root_residual < 1e-6
+        && det.deterministic;
     ExperimentResult {
         id: ExperimentId::E,
         passed,
         detail: format!(
-            "time_err={:.3e} root={:.3e} via PredeterminedSamples",
-            ev.time_error, ev.root_residual
+            "grid root time_err={:.3e} residual={:.3e}; solver_stop.interrupted=false; \
+             restart not demonstrated (deterministic=false)",
+            root_localization.time_error, root_localization.root_residual
         ),
         endpoint_abs_error: None,
         endpoint_rel_error: None,
         component_errors: vec![],
         dense_probes: vec![],
-        stats: None,
-        determinism: None,
+        accepted_step_probes: vec![],
+        stats: Some(stats_to_integration(stats, 0.0, 0.0)),
+        determinism: Some(det_record(det)),
         dense_assessment: None,
         step_guard: None,
-        event_evidence: Some(ev),
+        root_localization: Some(root_localization),
+        solver_stop: Some(solver_stop),
+        restart: Some(restart),
+        callback_stop: None,
+        domain_error: None,
         error_scaling: None,
     }
 }
@@ -387,12 +540,11 @@ pub fn run_e_shallow() -> ExperimentResult {
     let mut stepper = make_stepper(cap, 0.0, x_end, y0, 0.01, x_end);
     let _ = stepper.integrate();
     let event = |t: f64, _y: &[f64]| shallow_event_fn(t);
-    let mut ev = None;
-    for s in log.steps.borrow().iter() {
+    let root_localization = log.steps.borrow().iter().find_map(|s| {
         let f0 = event(s.x0, &s.y0);
         let f1 = event(s.x1, &s.y1);
         if f0.signum() != f1.signum() {
-            ev = Some(localize_event(
+            Some(localize_root(
                 s.x0,
                 s.x1,
                 &s.y0,
@@ -402,63 +554,275 @@ pub fn run_e_shallow() -> ExperimentResult {
                 shallow_event_root_analytic(),
                 &[shallow_event_fn(shallow_event_root_analytic())],
                 true,
-            ));
-            break;
+            ))
+        } else {
+            None
         }
-    }
+    });
     ExperimentResult {
         id: ExperimentId::E,
-        passed: ev.is_some(),
-        detail: "shallow crossing".into(),
+        passed: root_localization.is_some(),
+        detail: "shallow crossing grid localization".into(),
         endpoint_abs_error: None,
         endpoint_rel_error: None,
         component_errors: vec![],
         dense_probes: vec![],
+        accepted_step_probes: vec![],
         stats: None,
         determinism: None,
         dense_assessment: None,
         step_guard: None,
-        event_evidence: ev,
+        root_localization,
+        solver_stop: None,
+        restart: None,
+        callback_stop: None,
+        domain_error: None,
         error_scaling: None,
     }
 }
 
+fn callback_stop_evidence() -> (CallbackStopEvidence, bool) {
+    let cap = CapturingSystem::new(ExpSys { lambda: EXP_LAMBDA }, EXP_X0, vec![EXP_Y0]);
+    let log = cap.log.clone();
+    *log.stop_next.borrow_mut() = true;
+    let y0 = DVector::from_vec(vec![EXP_Y0]);
+    let mut stepper = make_stepper(cap, EXP_X0, EXP_X_END, y0, 0.02, EXP_X_END);
+    let stats = stepper.integrate().expect("callback stop integrate");
+    let x_out = stepper.x_out();
+    let y_out = stepper.y_out();
+    let stop_time = *x_out.last().unwrap_or(&EXP_X0);
+    let stop_state = y_out
+        .last()
+        .map(|y| y.as_slice().to_vec())
+        .unwrap_or_else(|| vec![EXP_Y0]);
+    let accepted_before = stats
+        .accepted_steps
+        .saturating_sub(*log.accepted_after_stop.borrow());
+    let det = repeat_in_process_sig(5, || {
+        let cap = CapturingSystem::new(ExpSys { lambda: EXP_LAMBDA }, EXP_X0, vec![EXP_Y0]);
+        let inner_log = cap.log.clone();
+        *inner_log.stop_next.borrow_mut() = true;
+        let mut s = make_stepper(
+            cap,
+            EXP_X0,
+            EXP_X_END,
+            DVector::from_vec(vec![EXP_Y0]),
+            0.02,
+            EXP_X_END,
+        );
+        let st = s.integrate().unwrap();
+        let xt = *s.x_out().last().unwrap();
+        (
+            signature_join(&[&xt.to_bits().to_string(), &st.accepted_steps.to_string()]),
+            st.accepted_steps,
+            xt.to_bits().to_string(),
+        )
+    });
+    let interrupted = stop_time < EXP_X_END - 1e-9;
+    let evidence = CallbackStopEvidence {
+        callback_invoked: *log.callback_count.borrow() > 0,
+        interrupt_requested: *log.interrupt_requested.borrow(),
+        interrupted,
+        stop_time,
+        stop_state,
+        accepted_steps_before_stop: accepted_before,
+        accepted_steps_after_stop: *log.accepted_after_stop.borrow(),
+        deterministic: det.deterministic,
+    };
+    let ok = evidence.callback_invoked
+        && evidence.interrupt_requested
+        && evidence.interrupted
+        && evidence.accepted_steps_after_stop == 0
+        && det.deterministic;
+    (evidence, ok)
+}
+
+fn domain_error_evidence() -> (DomainErrorEvidence, bool) {
+    let latch = DomainLatch::new();
+    let sys = DomainSys {
+        latch: latch.clone(),
+    };
+    let y0 = DVector::from_vec(vec![1.0]);
+    let mut stepper = make_stepper(sys, 0.0, 2.0, y0, 0.01, 0.2);
+    let result = stepper.integrate();
+    let code = latch.0.borrow().clone().unwrap_or_default();
+    let evidence = DomainErrorEvidence {
+        typed_error_code: code.clone(),
+        typed_error_recovered: false,
+        solver_panicked: false,
+        nan_presented_as_error: result.is_err(),
+    };
+    let ok = code == DOMAIN_ERROR_CODE && result.is_err() && !evidence.solver_panicked;
+    (evidence, ok)
+}
+
 pub fn run_f() -> ExperimentResult {
     let h_max = 0.05;
-    let sys = DomainSys;
-    let cap = CapturingSystem::new(sys, 0.0, vec![1.0]);
-    let y0 = DVector::from_vec(vec![1.0]);
-    let mut stepper = make_stepper(cap, 0.0, 2.0, y0, 0.01, h_max);
-    let result = stepper.integrate();
+    let (callback_stop, cb_ok) = callback_stop_evidence();
+    let (domain_error, domain_ok) = domain_error_evidence();
+    let det = repeat_in_process_sig(5, || {
+        let cap = CapturingSystem::new(ExpSys { lambda: EXP_LAMBDA }, EXP_X0, vec![EXP_Y0]);
+        let inner_log = cap.log.clone();
+        *inner_log.stop_next.borrow_mut() = true;
+        let mut s = make_stepper(
+            cap,
+            EXP_X0,
+            EXP_X_END,
+            DVector::from_vec(vec![EXP_Y0]),
+            0.02,
+            EXP_X_END,
+        );
+        let st = s.integrate().unwrap();
+        let latch = DomainLatch::new();
+        let mut ds = make_stepper(
+            DomainSys {
+                latch: latch.clone(),
+            },
+            0.0,
+            2.0,
+            DVector::from_vec(vec![1.0]),
+            0.01,
+            h_max,
+        );
+        let dom = ds.integrate().is_err();
+        let sig = signature_join(&[
+            &st.accepted_steps.to_string(),
+            &dom.to_string(),
+            &latch.0.borrow().clone().unwrap_or_default(),
+        ]);
+        (sig.clone(), st.accepted_steps, sig)
+    });
     let guard = StepGuardAssessment {
         static_h_max: SupportLevel::Supported,
         dynamic_h_max: SupportLevel::Unsupported,
         pre_rhs_domain_reject: SupportLevel::Unsupported,
+        post_accepted_step_stop: SupportLevel::Supported,
         stop_from_callback: SupportLevel::Supported,
         bracket_recovery: SupportLevel::SupportedWithAdapter,
-        typed_domain_failure: if result.is_err() {
+        typed_domain_failure: if domain_ok {
             SupportLevel::Supported
         } else {
             SupportLevel::SupportedWithAdapter
         },
-        notes: "Domain enforced in RHS returning NaN; h_max via from_param; no pre-step reject API"
+        notes: "solout true halts after accepted step; DomainLatch typed code on x>=DOMAIN_X_MAX"
             .into(),
     };
     ExperimentResult {
         id: ExperimentId::F,
-        passed: true,
-        detail: format!("integrate_result={result:?} h_max={h_max}"),
+        passed: cb_ok && domain_ok && det.deterministic,
+        detail: format!(
+            "callback_stop interrupted={} domain_code={} h_max={h_max}",
+            callback_stop.interrupted, domain_error.typed_error_code
+        ),
         endpoint_abs_error: None,
         endpoint_rel_error: None,
         component_errors: vec![],
         dense_probes: vec![],
+        accepted_step_probes: vec![],
         stats: None,
-        determinism: None,
+        determinism: Some(det_record(det)),
         dense_assessment: None,
         step_guard: Some(guard),
-        event_evidence: None,
+        root_localization: None,
+        solver_stop: None,
+        restart: None,
+        callback_stop: Some(callback_stop),
+        domain_error: Some(domain_error),
         error_scaling: None,
     }
+}
+
+fn kerr_determinism(tight: bool) -> RepeatSummary {
+    repeat_in_process_sig(5, || {
+        let sig = kerr_signature(tight);
+        (sig.clone(), 0, sig)
+    })
+}
+
+fn kerr_signature(tight: bool) -> String {
+    use relativity_core::{
+        evaluate_hamiltonian, initialize_rectilinear_ray, zamo_observer, CameraParams, KerrParams,
+        PositionBl, SensorCoord,
+    };
+    let mass = 1.0;
+    let spin = 0.9;
+    let params = KerrParams::new(mass, spin).expect("params");
+    let bl = PositionBl::new(0.0, 500.0, std::f64::consts::FRAC_PI_2, 0.0);
+    let obs = zamo_observer(&params, &bl).expect("zamo");
+    let cam = CameraParams {
+        horizontal_fov: 60.0_f64.to_radians(),
+        roll: 0.0,
+    };
+    let ray = initialize_rectilinear_ray(&params, &obs, &cam, SensorCoord { x: 0.0, y: 0.0 })
+        .expect("ray");
+    let pos = obs.event;
+    let p = ray.covariant_momentum;
+    let h0 = evaluate_hamiltonian(&params, &pos, &p).expect("H0");
+
+    struct Kerr8 {
+        params: KerrParams,
+    }
+    impl System<f64, DVector<f64>> for Kerr8 {
+        fn system(&self, _lam: f64, y: &DVector<f64>, dy: &mut DVector<f64>) {
+            let pos = relativity_core::PositionKs::new(y[0], y[1], y[2], y[3]);
+            let pc = relativity_core::Covector::from_components([y[4], y[5], y[6], y[7]]);
+            if let Ok(ev) = evaluate_hamiltonian(&self.params, &pos, &pc) {
+                dy[0] = ev.dx_dlambda.t;
+                dy[1] = ev.dx_dlambda.x;
+                dy[2] = ev.dx_dlambda.y;
+                dy[3] = ev.dx_dlambda.z;
+                dy[4] = ev.dp_dlambda.t;
+                dy[5] = ev.dp_dlambda.x;
+                dy[6] = ev.dp_dlambda.y;
+                dy[7] = ev.dp_dlambda.z;
+            } else {
+                dy.fill(f64::NAN);
+            }
+        }
+    }
+    let y0 = DVector::from_vec(vec![pos.t, pos.x, pos.y, pos.z, p.t, p.x, p.y, p.z]);
+    let lam_end = 0.01;
+    let rtol = if tight { 1e-12 } else { DEFAULT_RTOL };
+    let atol = if tight { 1e-14 } else { 1e-12 };
+    let mut stepper = Dop853::from_param(
+        Kerr8 { params },
+        0.0,
+        lam_end,
+        0.001,
+        y0,
+        rtol,
+        atol,
+        0.9,
+        0.0,
+        0.333,
+        6.0,
+        lam_end,
+        0.0,
+        100_000,
+        1000,
+        ode_solvers::dop_shared::OutputType::Dense,
+    );
+    let stats = stepper.integrate();
+    let yf = stepper.y_out().last().cloned();
+    let hf = yf.as_ref().and_then(|y| {
+        evaluate_hamiltonian(
+            &KerrParams::new(mass, spin).unwrap(),
+            &relativity_core::PositionKs::new(y[0], y[1], y[2], y[3]),
+            &relativity_core::Covector::from_components([y[4], y[5], y[6], y[7]]),
+        )
+        .ok()
+    });
+    let h_drift = hf.map(|h| (h.h - h0.h).abs()).unwrap_or(f64::INFINITY);
+    signature_join(&[
+        &h_drift.to_bits().to_string(),
+        &stats
+            .as_ref()
+            .map(|s| s.accepted_steps.to_string())
+            .unwrap_or_default(),
+        &yf.as_ref()
+            .map(|y| endpoint_bits(y.as_slice()))
+            .unwrap_or_default(),
+    ])
 }
 
 pub fn run_g(tight: bool) -> ExperimentResult {
@@ -539,9 +903,10 @@ pub fn run_g(tight: bool) -> ExperimentResult {
         .map(|h| (h.energy_like - h0.energy_like).abs())
         .unwrap_or(f64::INFINITY);
     let finite = yf.as_ref().is_some_and(|y| y.iter().all(|v| v.is_finite()));
+    let det = kerr_determinism(tight);
     ExperimentResult {
         id: ExperimentId::G,
-        passed: stats.is_ok() && finite && h_drift < 1e-6,
+        passed: stats.is_ok() && finite && h_drift < 1e-6 && det.deterministic,
         detail: format!(
             "tight={tight} H_drift={h_drift:.3e} E_drift={e_drift:.3e} nacc={} finite={finite}",
             stats.as_ref().map(|s| s.accepted_steps).unwrap_or(0)
@@ -550,11 +915,16 @@ pub fn run_g(tight: bool) -> ExperimentResult {
         endpoint_rel_error: Some(e_drift),
         component_errors: vec![],
         dense_probes: vec![],
+        accepted_step_probes: vec![],
         stats: stats.ok().map(|s| stats_to_integration(s, 0.0, 0.0)),
-        determinism: None,
+        determinism: Some(det_record(det)),
         dense_assessment: None,
         step_guard: None,
-        event_evidence: None,
+        root_localization: None,
+        solver_stop: None,
+        restart: None,
+        callback_stop: None,
+        domain_error: None,
         error_scaling: None,
     }
 }
