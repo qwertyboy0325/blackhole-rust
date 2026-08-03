@@ -1,0 +1,20 @@
+[package]
+name = "gate-1b0-ode-solvers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Gate 1B0 spike: ode_solvers DOP853 adapter (non-production)"
+
+[dependencies]
+gate-1b0-contract = { path = "../gate-1b0-contract" }
+relativity-core = { path = "../../crates/relativity-core" }
+ode_solvers = "=0.6.1"
+nalgebra = "0.33"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+
+[lints]
+workspace = true

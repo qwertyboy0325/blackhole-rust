@@ -62,20 +62,18 @@
 | Methods | BDF/SDIRK/ERK — **no DOP853** |
 | Fit | Wrong method family for ADR 0002 unless that ADR is revised |
 
-## Recommendation (still Proposed)
+## Recommendation (post Gate 1B0 spike)
 
-1. **Do not select a production ODE crate in Gate 1A.**
-2. Require a Gate **1B0** implementation spike that, for **both** `ode_solvers::Dop853` and `ivp` DOP853, demonstrates against a frozen checklist:
-   - vector or equivalently scaled component tolerances for the 8D state;
-   - accepted-step callback timing;
-   - either public dense coefficients **or** an interpolant API sufficient for bracketed root finding owned by this repo;
-   - dynamic `h` guards from geometry;
-   - rejected/accepted step statistics;
-   - deterministic replay on the pinned toolchain.
-3. Until that spike lands, ADR 0005 remains **Proposed** with **no preference locked**.
+1. ADR 0005 remains **Proposed** until owner review.
+2. Measured fit favors **`ivp`** for vector tolerances and accepted-step
+   `StepInterpolant` in `SolOut`.
+3. **`ode_solvers`** remains usable with adapter limitations (scalar tol; dense
+   via predetermined dx samples; private `rcont`).
 4. From-scratch DOP853 remains unapproved.
+
+See `docs/research/gate-1b0-dop853-spike-report.md` for experiment evidence.
 
 ## Explicit Gate 1A action
 
-- No ODE crate in workspace dependencies.
-- Prior “prefer `ode_solvers`” language is **withdrawn** as a selection decision; it is only a survey note pending 1B0 evidence.
+- No ODE crate in production `relativity-core` dependencies.
+- Spike-only deps under `spikes/gate-1b0-*`.

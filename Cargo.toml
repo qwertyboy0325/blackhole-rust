@@ -3,6 +3,9 @@ resolver = "2"
 members = [
     "crates/relativity-core",
     "xtask",
+    "spikes/gate-1b0-contract",
+    "spikes/gate-1b0-ode-solvers",
+    "spikes/gate-1b0-ivp",
 ]
 default-members = [
     "crates/relativity-core",
