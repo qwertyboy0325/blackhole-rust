@@ -109,6 +109,25 @@ chooses a compatible project license and explicitly approves reuse. Equations
 must be implemented from attributable literature, with derivation notes and
 tests, rather than transcribed from an incompatibly licensed repository.
 
+## Gate 1A geometry and numerics
+
+- **[KerrSchild1965]** R. P. Kerr and A. Schild, “Some algebraically degenerate
+  solutions of Einstein’s gravitational field equations,” *Proc. Symp. Appl.
+  Math.* 17, 199 (1965). Kerr–Schild ansatz; bibliographic/access only.
+- **Cartesian Kerr–Schild working form** as used by GRay2 / common numerical
+  practice: `g = η + 2H ℓ⊗ℓ` with
+  `H = M r³/(r⁴ + a² z²)` and
+  `ℓ_μ = (1, (rx+ay)/(r²+a²), (ry−ax)/(r²+a²), z/r)`.
+  Cross-check: GRay2 arXiv:1706.07062; Wikipedia Kerr metric KS section
+  (secondary). No third-party code reused.
+- **Stable oblate-radius rationalization** `r² = 2 a² z² / (D − A)` when `A < 0`
+  follows from multiplying `(A+D)/2` by `(D−A)/(D−A)`. Project derivation; see
+  `crates/relativity-core/src/radius.rs` and work-log conditioning notes.
+- **ODE crate survey** for future DOP853 adoption:
+  `ode_solvers` (Apache-2.0), `ivp` (Apache-2.0), `diffsol` (MIT). Details in
+  `docs/research/dop853-rust-dependency-audit.md`. Access checked 2026-08-03;
+  no crate vendored in Gate 1A.
+
 ## Formats and GPU capability
 
 - **OpenEXR technical introduction.** Multi-channel `HALF`, `FLOAT`, and `UINT`
