@@ -2,10 +2,10 @@
 
 ## Current gate
 
-Gate 0 is complete. Gate 1A passed owner review (merged pending on `main`).
-Gate 1B0 DOP853 spike implemented on `gate-1b0-dop853-spike`; ADR 0005 remains
-**Proposed** pending owner acceptance. Do not begin production geodesic
-integration without owner approval.
+Gate 0 and Gate 1A are complete. Gate 1B0 PASS; ADR 0005 **Accepted**
+(`ivp = "=0.6.0"`). Gate 1B1 production integrator is on
+`gate-1b1-production-integrator`. Do not begin disk, radiometry, image, GPU,
+or GUI work until Gate 1B1 owner review completes.
 
 ## Authority and scope
 
