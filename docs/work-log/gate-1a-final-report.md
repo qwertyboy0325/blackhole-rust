@@ -4,7 +4,8 @@
 
 - Branch: `gate-1a-geometry-kernel`
 - Base: `25a9e72c73e33a13eda2f03819820b5492d09e43`
-- Draft PR: opened against `main` after push (see PR URL in chat)
+- Tip: `c7dcc5b5562a6825bcd033503d589159dc9a48a3`
+- Draft PR: https://github.com/qwertyboy0325/blackhole-rust/pull/1
 
 ## 2. Files changed (summary)
 
