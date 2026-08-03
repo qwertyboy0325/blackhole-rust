@@ -2,8 +2,11 @@
 //!
 //! Exclusions (not supported in Gate 1B1):
 //! - tangent contact
-//! - roots with identical endpoint signs
+//! - roots with identical endpoint signs (proximity ≠ event)
 //! - discontinuous event functions
+//!
+//! `event_value_tolerance` is a localization convergence tolerance only.
+//! Horizon proximity uses the separate opt-in `HorizonProximityPolicy`.
 
 mod escape;
 mod horizon;
@@ -12,7 +15,5 @@ mod surface;
 
 pub use escape::EscapeSphere;
 pub use horizon::OuterHorizon;
-pub use root::{localize_sign_change, EventLocalizationStats};
-pub use surface::{
-    is_eligible_crossing, is_eligible_crossing_tol, CrossingDirection, EventId, EventSurface,
-};
+pub use root::{localize_sign_change, EventLocalizationStats, LocalizationTermination};
+pub use surface::{is_eligible_crossing, is_exact_root, CrossingDirection, EventId, EventSurface};

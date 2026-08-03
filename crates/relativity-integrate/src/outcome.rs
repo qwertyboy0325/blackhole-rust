@@ -28,9 +28,32 @@ pub struct EventHit {
     pub integration: IntegrationStats,
 }
 
+/// Opt-in near-surface termination that is **not** an exact event crossing.
+///
+/// A positive signed residual means the geometric surface was not crossed.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SurfaceApproach {
+    pub event_id: EventId,
+    pub lambda: AffineParameter,
+    pub state: GeodesicState,
+    pub signed_event_value: f64,
+    pub approach_tolerance: f64,
+    pub reason: SurfaceApproachReason,
+    pub raw_solver_stop: RawSolverStop,
+    pub integration: IntegrationStats,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SurfaceApproachReason {
+    AcceptedEndpointWithinTolerance,
+    SolverStepSizeTooSmall,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum IntegrationOutcome {
     Event(EventHit),
+    SurfaceApproach(SurfaceApproach),
     AffineLimit {
         lambda: AffineParameter,
         state: GeodesicState,
@@ -42,6 +65,7 @@ impl IntegrationOutcome {
     pub fn variant_name(&self) -> &'static str {
         match self {
             Self::Event(_) => "Event",
+            Self::SurfaceApproach(_) => "SurfaceApproach",
             Self::AffineLimit { .. } => "AffineLimit",
         }
     }
@@ -49,8 +73,13 @@ impl IntegrationOutcome {
     pub fn stats(&self) -> &IntegrationStats {
         match self {
             Self::Event(e) => &e.integration,
+            Self::SurfaceApproach(a) => &a.integration,
             Self::AffineLimit { stats, .. } => stats,
         }
+    }
+
+    pub fn is_exact_event(&self) -> bool {
+        matches!(self, Self::Event(_))
     }
 }
 

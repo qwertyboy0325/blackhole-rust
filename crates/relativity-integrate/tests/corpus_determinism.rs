@@ -1,5 +1,16 @@
-use relativity_integrate::{determinism_record, run_and_check, DeterminismRecord, CORPUS};
+use relativity_integrate::{
+    build_canonical_corpus_report, canonical_corpus_json, determinism_record, run_and_check,
+    DeterminismRecord, CORPUS,
+};
 use serde_json::to_string;
+use sha2::{Digest, Sha256};
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
 
 #[test]
 fn complete_corpus_expected_outcomes() {
@@ -31,4 +42,32 @@ fn determinism_record_shape() {
     let rec: DeterminismRecord = determinism_record(case, report.as_ref());
     assert_eq!(rec.case, case.id.as_str());
     assert!(!rec.outcome_variant.is_empty());
+}
+
+#[test]
+fn canonical_corpus_sorted_unique_complete() {
+    let report = build_canonical_corpus_report().unwrap();
+    assert_eq!(report.case_count, CORPUS.len());
+    assert_eq!(report.cases.len(), CORPUS.len());
+    for w in report.cases.windows(2) {
+        assert!(w[0].case < w[1].case);
+    }
+    let json = canonical_corpus_json().unwrap();
+    let digest = sha256_hex(json.as_bytes());
+    assert_eq!(digest.len(), 64);
+}
+
+#[test]
+fn surface_approach_never_serialized_as_event() {
+    use relativity_integrate::{CorpusId, IntegrationOutcome};
+    for case in CORPUS {
+        if case.id == CorpusId::SchwarzschildInwardHorizon {
+            let report = run_and_check(case).unwrap().unwrap();
+            assert!(matches!(
+                report.outcome,
+                IntegrationOutcome::SurfaceApproach(_)
+            ));
+            assert!(!matches!(report.outcome, IntegrationOutcome::Event(_)));
+        }
+    }
 }

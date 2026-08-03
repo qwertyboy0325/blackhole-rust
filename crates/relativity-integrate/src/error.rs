@@ -40,6 +40,16 @@ pub enum IntegrationError {
 
     #[error("invalid interpolant bounds")]
     InvalidInterpolantBounds,
+
+    #[error(
+        "event localization did not converge for {event_id:?}: iterations={iterations}, residual={residual}, bracket_width={bracket_width}"
+    )]
+    EventLocalizationDidNotConverge {
+        event_id: EventId,
+        iterations: u64,
+        residual: f64,
+        bracket_width: f64,
+    },
 }
 
 impl IntegrationError {

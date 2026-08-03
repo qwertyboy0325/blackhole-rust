@@ -5,7 +5,8 @@ use relativity_core::{
     initialize_rectilinear_ray, zamo_observer, CameraParams, KerrParams, PositionBl, SensorCoord,
 };
 use relativity_integrate::{
-    integrate, Dop853Config, EscapeSphere, EventSurface, GeodesicState, OuterHorizon,
+    integrate, Dop853Config, EscapeSphere, EventSurface, GeodesicState, HorizonProximityPolicy,
+    OuterHorizon,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -82,7 +83,7 @@ pub fn run(
     ];
     cfg.affine_limit = affine_limit;
     cfg.max_accepted_steps = preset.geodesics.maximum_steps;
-    cfg.event_value_tolerance = 1e-10;
+    cfg.horizon_proximity = HorizonProximityPolicy::enabled(1e-10)?;
 
     let r_escape = preset.celestial_sphere.radius_m;
     if !(r_escape > bl.r) {

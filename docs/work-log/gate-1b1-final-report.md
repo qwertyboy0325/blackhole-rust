@@ -1,83 +1,39 @@
-# Gate 1B1 Final Report
+# Gate 1B1 Final Report (remediation)
 
-## 1. Branch / commits / PR
+## 1. Commits
 
-- Branch: `gate-1b1-production-integrator`
-- Commits: `86332e4` (ADR Accepted), `1afbb8d` (production crate + evaluator),
-  `40f838d` (report digest note)
-- Draft PR: https://github.com/qwertyboy0325/blackhole-rust/pull/3
-- Authoritative evaluate: PASS at `1afbb8d`; artifact digest
-  `1df50a6a8fdfc5dea7c4b510cef02b9bf80323b3f102d6d740624697b8c9f1ea`
+Remediation commits on `gate-1b1-production-integrator` (see git log / PR #3).
 
-## 2. ADR 0005
+## 2. Exact-event vs SurfaceApproach
 
-Status **Accepted**; Decision `ivp = "=0.6.0"`; evidence commit `bd561cb` with
-Gate 1B0 artifact digests recorded in the ADR.
+- Exact Event: sign change or `f == 0.0` endpoint only.
+- SurfaceApproach: opt-in `HorizonProximityPolicy` for OuterHorizon stall/proximity.
+- Never serialize proximity/stall as `EventHit`.
 
-## 3. Production public API
+## 3. Horizon corpus
 
-`relativity-integrate::{integrate, GeodesicState, Dop853Config, IntegrationOutcome,
-EventSurface, OuterHorizon, EscapeSphere, IntegrationError, …}` — no public `ivp`.
+Actual: `SurfaceApproach { event_id: OuterHorizon, reason: SolverStepSizeTooSmall }` with `signed_event_value > 0` and `<= approach_tolerance`.
 
-## 4. Dependency pin
+## 4. Root localizer
 
-`crates/relativity-integrate/Cargo.toml`: `ivp = "=0.6.0"`.
+`LocalizationTermination::{ExactEndpoint, EventValueTolerance, AffineWidthTolerance}`; typed `EventLocalizationDidNotConverge`; bounds enforced.
 
-## 5. Tolerance model
+## 5. Error evidence
 
-Per-component vector rtol/atol via `Tolerance::Vector`; diagnostic defaults only.
+Backend tests: non-finite outcome → `NonFiniteState{Outcome}`; EventDomain via SolOut latch preserves EventId; generic solver status → `Solver`.
 
-## 6. Event abstraction
+## 6. Kerr 3-level convergence
 
-`EventSurface` + `CrossingDirection::{Any,Increasing,Decreasing}`; sign-change
-primary; endpoint/stall capture within value tolerance for f64 horizon approach.
+`d_medium_tight <= d_loose_medium` with H / p_t / steps recorded.
 
-## 7. Raw stop vs localized outcome
+## 7. Cross-process corpus digests
 
-Escape-sphere tests: interpolant localization; raw stop λ/state retained and
-separated; adapter outcome equals localized state.
+`cargo xtask corpus-report --scope gate-1b1` ×3; identical SHA-256 of numerical JSON.
 
-## 8. Horizon / escape corpus
+## 8. Artifact digest
 
-`schwarzschild_inward_horizon` → `Event(OuterHorizon)`;
-`minkowski_escape_sphere` → `Event(EscapeSphere)`.
+`content_digest_excluding_digest_field` + sidecar `evaluation.content_digest.sha256`.
 
-## 9. Minkowski analytic
+## 9–13
 
-Straight null line + constant momentum; escape λ ≈ 10 for r: 10 → 20.
-
-## 10. Kerr invariants
-
-`p_t` drift reported; H residual reported; no projection; tighter tol convergence.
-
-## 11. Typed errors
-
-`PhysicsDomain`, `EventDomain` (preserves EventId), `StepLimitExceeded`,
-`NonFiniteState`, `Solver` (incl. StepSizeTooSmall without surface capture).
-
-## 12. Determinism
-
-In-process ×5 per corpus case; subprocess corpus test ×3 in evaluator.
-
-## 13. Artifacts
-
-`artifacts/gate-1b1/evaluation.json` + `evaluation.md` (digests in JSON).
-
-## 14. Commands / CI
-
-`cargo fmt`, `clippy -D warnings`, `test --workspace`;
-`cargo xtask evaluate --scope gate-1b1`;
-`cargo xtask integrate-ray …`.
-
-## 15. Remaining risks
-
-- Horizon crossing in f64 Cartesian KS is stiff; relies on value-tol endpoint/stall
-  capture rather than a deep interior sample.
-- Quasi-Minkowski uses `M = 1e-18` (core forbids `M = 0`).
-- Exact extremal Kerr excluded from corpus.
-
-## 16. Recommended Gate 1B2 scope
-
-Disk intersection event + opaque first-hit policy; ray-bundle termination
-taxonomy; optional named horizon safety offset as a separate policy surface;
-broader Kerr camera corpus; CI wire-up for `evaluate --scope gate-1b1`.
+Authoritative evaluate commit, artifact digests, CI, ADR 0005 Accepted, no Gate 1B2 scope — filled after evaluate.

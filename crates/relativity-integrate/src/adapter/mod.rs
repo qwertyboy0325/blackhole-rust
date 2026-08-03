@@ -11,12 +11,15 @@ use crate::outcome::{IntegrationOutcome, IntegrationReport, InvariantDiagnostics
 use crate::rhs::initial_hamiltonian;
 use crate::state::{AffineParameter, GeodesicState};
 
-use ivp_backend::{integrate_ivp, pending_to_event_hit};
+use ivp_backend::{
+    integrate_ivp, pending_to_event_hit, pending_to_surface_approach, PendingTermination,
+};
 
 /// Integrate a geodesic from `y0` with optional sign-changing event surfaces.
 ///
-/// Public API is independent of `ivp` types. Caller-authoritative event results
-/// use adapter-localized state; raw solver stop is retained separately.
+/// Public API is independent of `ivp` types. Exact event crossings return
+/// `IntegrationOutcome::Event`. Opt-in OuterHorizon proximity returns
+/// `SurfaceApproach` and is never an `EventHit`.
 pub fn integrate(
     params: KerrParams,
     y0: &GeodesicState,
@@ -31,21 +34,31 @@ pub fn integrate(
 
     let backend = integrate_ivp(params, y0, config, surfaces)?;
 
-    let outcome = if let Some(pending) = backend.pending {
-        if backend.steps_after_interrupt != 0 {
-            return Err(IntegrationError::Solver {
-                detail: "accepted steps continued after event interrupt".into(),
-            });
+    let outcome = match backend.pending {
+        Some(PendingTermination::ExactEvent(pending)) => {
+            if backend.steps_after_interrupt != 0 {
+                return Err(IntegrationError::Solver {
+                    detail: "accepted steps continued after event interrupt".into(),
+                });
+            }
+            IntegrationOutcome::Event(pending_to_event_hit(pending, backend.stats))
         }
-        IntegrationOutcome::Event(pending_to_event_hit(pending, backend.stats))
-    } else if backend.interrupted {
-        return Err(IntegrationError::MissingEventOutcome);
-    } else {
-        IntegrationOutcome::AffineLimit {
+        Some(PendingTermination::SurfaceApproach(pending)) => {
+            if backend.steps_after_interrupt != 0 {
+                return Err(IntegrationError::Solver {
+                    detail: "accepted steps continued after approach interrupt".into(),
+                });
+            }
+            IntegrationOutcome::SurfaceApproach(pending_to_surface_approach(pending, backend.stats))
+        }
+        None if backend.interrupted => {
+            return Err(IntegrationError::MissingEventOutcome);
+        }
+        None => IntegrationOutcome::AffineLimit {
             lambda: AffineParameter(backend.final_lambda),
             state: backend.final_state,
             stats: backend.stats,
-        }
+        },
     };
 
     let (h_final, pt_final, raw_sep) = match &outcome {
@@ -53,6 +66,10 @@ pub fn integrate(
             let h = initial_hamiltonian(&params, &hit.state)?;
             let sep = (hit.raw_solver_stop.lambda.0 - hit.lambda.0).abs();
             (h, hit.state.momentum.t, Some(sep))
+        }
+        IntegrationOutcome::SurfaceApproach(a) => {
+            let h = initial_hamiltonian(&params, &a.state)?;
+            (h, a.state.momentum.t, Some(0.0))
         }
         IntegrationOutcome::AffineLimit { state, .. } => {
             let h = initial_hamiltonian(&params, state)?;

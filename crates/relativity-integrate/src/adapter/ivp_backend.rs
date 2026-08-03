@@ -12,9 +12,11 @@ use std::rc::Rc;
 use crate::config::Dop853Config;
 use crate::error::{IntegrationError, IntegrationStage};
 use crate::event::{
-    is_eligible_crossing_tol, localize_sign_change, EventId, EventLocalizationStats, EventSurface,
+    is_eligible_crossing, localize_sign_change, EventId, EventLocalizationStats, EventSurface,
 };
-use crate::outcome::{EventHit, IntegrationStats, RawSolverStop};
+use crate::outcome::{
+    EventHit, IntegrationStats, RawSolverStop, SurfaceApproach, SurfaceApproachReason,
+};
 use crate::rhs::{DomainLatch, HamiltonianRhs};
 use crate::state::{AffineParameter, GeodesicState};
 
@@ -38,6 +40,73 @@ pub(crate) struct PendingEvent {
     pub localization: EventLocalizationStats,
 }
 
+#[derive(Clone)]
+pub(crate) struct PendingApproach {
+    pub event_id: EventId,
+    pub lambda: AffineParameter,
+    pub state: GeodesicState,
+    pub signed_event_value: f64,
+    pub approach_tolerance: f64,
+    pub reason: SurfaceApproachReason,
+    pub raw: RawSolverStop,
+}
+
+#[derive(Clone)]
+pub(crate) enum PendingTermination {
+    ExactEvent(PendingEvent),
+    SurfaceApproach(PendingApproach),
+}
+
+/// Project-owned solver status class (no `ivp` in public API).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SolverStatusClass {
+    Success,
+    UserInterrupt,
+    StepSizeTooSmall,
+    OtherFailure(String),
+}
+
+impl SolverStatusClass {
+    pub fn from_ivp(status: Status) -> Self {
+        match status {
+            Status::Success => Self::Success,
+            Status::UserInterrupt => Self::UserInterrupt,
+            Status::StepSizeTooSmall => Self::StepSizeTooSmall,
+            other => Self::OtherFailure(format!("{other:?}")),
+        }
+    }
+
+    pub fn is_success_or_interrupt(&self) -> bool {
+        matches!(self, Self::Success | Self::UserInterrupt)
+    }
+}
+
+/// Interpret solver status after latch/non-finite checks.
+/// Returns `Err(Solver)` for non-domain generic failures without approach capture.
+pub(crate) fn interpret_solver_status(status: &SolverStatusClass) -> Result<(), IntegrationError> {
+    match status {
+        SolverStatusClass::Success | SolverStatusClass::UserInterrupt => Ok(()),
+        SolverStatusClass::StepSizeTooSmall => Err(IntegrationError::Solver {
+            detail: "StepSizeTooSmall".into(),
+        }),
+        SolverStatusClass::OtherFailure(detail) => Err(IntegrationError::Solver {
+            detail: detail.clone(),
+        }),
+    }
+}
+
+/// Require a finite outcome state vector (backend-level interpreter).
+pub(crate) fn require_finite_outcome_state(y: &[f64]) -> Result<GeodesicState, IntegrationError> {
+    if y.iter().any(|v| !v.is_finite()) {
+        return Err(IntegrationError::NonFiniteState {
+            stage: IntegrationStage::Outcome,
+        });
+    }
+    GeodesicState::from_array(y).map_err(|_| IntegrationError::NonFiniteState {
+        stage: IntegrationStage::Outcome,
+    })
+}
+
 struct EventSolOut<'a> {
     surfaces: &'a [&'a dyn EventSurface],
     config: &'a Dop853Config,
@@ -47,7 +116,7 @@ struct EventSolOut<'a> {
     callback_count: Rc<RefCell<u64>>,
     steps_after_interrupt: Rc<RefCell<u64>>,
     interrupted: Rc<RefCell<bool>>,
-    pending: Rc<RefCell<Option<PendingEvent>>>,
+    pending: Rc<RefCell<Option<PendingTermination>>>,
     endpoint_h: Rc<RefCell<Vec<f64>>>,
     endpoint_pt: Rc<RefCell<Vec<f64>>>,
     params: KerrParams,
@@ -91,7 +160,6 @@ impl SolOut for EventSolOut<'_> {
             return ControlFlag::Interrupt;
         };
 
-        // Accepted-endpoint invariant samples (diagnostics only).
         if let Ok(h) = crate::rhs::initial_hamiltonian(&self.params, &state1) {
             self.endpoint_h.borrow_mut().push(h);
         }
@@ -104,7 +172,7 @@ impl SolOut for EventSolOut<'_> {
         };
 
         let (lam_lo, lam_hi) = interp.bounds();
-        let mut best: Option<PendingEvent> = None;
+        let mut best_event: Option<PendingEvent> = None;
 
         for surface in self.surfaces {
             let f0 = match surface.value(AffineParameter(xold), &state0) {
@@ -123,94 +191,65 @@ impl SolOut for EventSolOut<'_> {
                     return ControlFlag::Interrupt;
                 }
             };
-            if !is_eligible_crossing_tol(
-                f0,
-                f1,
-                surface.crossing(),
-                self.config.event_value_tolerance,
-            ) {
-                continue;
-            }
 
             let raw = RawSolverStop {
                 lambda: AffineParameter(*x),
                 state: state1,
             };
 
-            // Endpoint capture: surface reached within value tolerance without a
-            // strict interior sign change (typical f64 horizon approach).
-            if f0 * f1 >= 0.0 && f1.abs() <= self.config.event_value_tolerance {
-                let cand = PendingEvent {
-                    event_id: surface.id(),
-                    lambda: AffineParameter(*x),
-                    state: state1,
-                    raw: raw.clone(),
-                    event_value: f1,
-                    localization: EventLocalizationStats {
-                        interpolation_calls: 0,
-                        final_bracket_width: 0.0,
-                        iterations: 0,
-                    },
+            // Exact event kernel only (no proximity → Event).
+            if is_eligible_crossing(f0, f1, surface.crossing()) {
+                let interp_fn = |lam: f64| -> Result<GeodesicState, IntegrationError> {
+                    let mut yi = vec![0.0; 8];
+                    interp.interpolate(lam, &mut yi);
+                    GeodesicState::from_array(&yi)
                 };
-                let take = match &best {
-                    None => true,
-                    Some(b) => cand.lambda.0 < b.lambda.0,
-                };
-                if take {
-                    best = Some(cand);
-                }
-                continue;
-            }
-
-            let interp_fn = |lam: f64| -> Result<GeodesicState, IntegrationError> {
-                let mut yi = vec![0.0; 8];
-                interp.interpolate(lam, &mut yi);
-                GeodesicState::from_array(&yi)
-            };
-            let event_fn = |lam: AffineParameter, st: &GeodesicState| surface.value(lam, st);
-
-            match localize_sign_change(
-                lam_lo,
-                lam_hi,
-                &state0,
-                &state1,
-                f0,
-                f1,
-                &interp_fn,
-                &event_fn,
-                self.config.event_time_tolerance,
-                self.config.event_value_tolerance,
-            ) {
-                Ok((lam, st, fv, loc)) => {
-                    let cand = PendingEvent {
-                        event_id: surface.id(),
-                        lambda: lam,
-                        state: st,
-                        raw,
-                        event_value: fv,
-                        localization: loc,
-                    };
-                    let take = match &best {
-                        None => true,
-                        Some(b) => cand.lambda.0 < b.lambda.0,
-                    };
-                    if take {
-                        best = Some(cand);
+                let event_fn = |lam: AffineParameter, st: &GeodesicState| surface.value(lam, st);
+                match localize_sign_change(
+                    surface.id(),
+                    lam_lo,
+                    lam_hi,
+                    &state0,
+                    &state1,
+                    f0,
+                    f1,
+                    &interp_fn,
+                    &event_fn,
+                    self.config.event_time_tolerance,
+                    self.config.event_value_tolerance,
+                ) {
+                    Ok((lam, st, fv, loc)) => {
+                        let cand = PendingEvent {
+                            event_id: surface.id(),
+                            lambda: lam,
+                            state: st,
+                            raw: raw.clone(),
+                            event_value: fv,
+                            localization: loc,
+                        };
+                        let take = match &best_event {
+                            None => true,
+                            Some(b) => cand.lambda.0 < b.lambda.0,
+                        };
+                        if take {
+                            best_event = Some(cand);
+                        }
+                    }
+                    Err(e) => {
+                        self.latch.set(e);
+                        *self.interrupted.borrow_mut() = true;
+                        return ControlFlag::Interrupt;
                     }
                 }
-                Err(e) => {
-                    self.latch.set(e);
-                    *self.interrupted.borrow_mut() = true;
-                    return ControlFlag::Interrupt;
-                }
             }
+            let _ = raw;
         }
 
         *self.last_y.borrow_mut() = y.to_vec();
         *self.last_lam.borrow_mut() = *x;
 
-        if let Some(ev) = best {
-            *self.pending.borrow_mut() = Some(ev);
+        if let Some(ev) = best_event {
+            *self.pending.borrow_mut() = Some(PendingTermination::ExactEvent(ev));
             *self.interrupted.borrow_mut() = true;
             return ControlFlag::Interrupt;
         }
@@ -220,7 +259,7 @@ impl SolOut for EventSolOut<'_> {
 }
 
 pub(crate) struct BackendResult {
-    pub pending: Option<PendingEvent>,
+    pub pending: Option<PendingTermination>,
     pub final_lambda: f64,
     pub final_state: GeodesicState,
     pub stats: IntegrationStats,
@@ -229,6 +268,8 @@ pub(crate) struct BackendResult {
     pub endpoint_h: Vec<f64>,
     pub endpoint_pt: Vec<f64>,
     pub non_finite_checks: u64,
+    #[allow(dead_code)]
+    pub solver_status: SolverStatusClass,
 }
 
 pub(crate) fn integrate_ivp(
@@ -292,62 +333,57 @@ pub(crate) fn integrate_ivp(
     }
 
     let final_y = last_y.borrow().clone();
-    if final_y.iter().any(|v| !v.is_finite()) {
-        return Err(IntegrationError::NonFiniteState {
-            stage: IntegrationStage::Outcome,
-        });
-    }
-    let final_state = GeodesicState::from_array(&final_y)?;
+    let final_state = require_finite_outcome_state(&final_y)?;
 
     match result {
         Ok(res) => {
-            let interrupted_flag = matches!(res.status, Status::UserInterrupt);
+            let status = SolverStatusClass::from_ivp(res.status);
+            let interrupted_flag = matches!(status, SolverStatusClass::UserInterrupt);
             let stats = IntegrationStats {
                 accepted_steps: res.steps.accepted as u64,
                 rejected_steps: res.steps.rejected as u64,
                 rhs_evaluations: *eval_count.borrow(),
                 callback_count: *callback_count.borrow(),
             };
-            let mut pending_ev = pending.borrow().clone();
+            let mut pending_term = pending.borrow().clone();
 
-            // Stall recovery: adaptive step collapsed (typical near r₊ in f64 KS)
-            // while a Decreasing surface is already within value tolerance.
-            if !res.status.is_success() && pending_ev.is_none() {
-                if matches!(res.status, Status::StepSizeTooSmall) {
-                    let lam = AffineParameter(*last_lam.borrow());
-                    for surface in surfaces {
-                        if surface.crossing() != crate::event::CrossingDirection::Decreasing {
-                            continue;
-                        }
-                        let f = surface.value(lam, &final_state)?;
-                        if f.is_finite() && f.abs() <= config.event_value_tolerance {
-                            pending_ev = Some(PendingEvent {
-                                event_id: surface.id(),
-                                lambda: lam,
-                                state: final_state,
-                                raw: RawSolverStop {
-                                    lambda: lam,
-                                    state: final_state,
-                                },
-                                event_value: f,
-                                localization: EventLocalizationStats {
-                                    interpolation_calls: 0,
-                                    final_bracket_width: 0.0,
-                                    iterations: 0,
-                                },
-                            });
-                            break;
+            // Stall → SurfaceApproach only under opt-in OuterHorizon proximity.
+            if !status.is_success_or_interrupt() && pending_term.is_none() {
+                if matches!(status, SolverStatusClass::StepSizeTooSmall) {
+                    let pol = &config.horizon_proximity;
+                    if pol.enabled {
+                        let lam = AffineParameter(*last_lam.borrow());
+                        for surface in surfaces {
+                            if surface.id() != EventId::OuterHorizon {
+                                continue;
+                            }
+                            let f = surface.value(lam, &final_state)?;
+                            if f.is_finite() && f > 0.0 && f <= pol.approach_tolerance {
+                                pending_term =
+                                    Some(PendingTermination::SurfaceApproach(PendingApproach {
+                                        event_id: EventId::OuterHorizon,
+                                        lambda: lam,
+                                        state: final_state,
+                                        signed_event_value: f,
+                                        approach_tolerance: pol.approach_tolerance,
+                                        reason: SurfaceApproachReason::SolverStepSizeTooSmall,
+                                        raw: RawSolverStop {
+                                            lambda: lam,
+                                            state: final_state,
+                                        },
+                                    }));
+                                break;
+                            }
                         }
                     }
                 }
-                if pending_ev.is_none() {
-                    return Err(IntegrationError::Solver {
-                        detail: format!("{:?}", res.status),
-                    });
+                if pending_term.is_none() {
+                    interpret_solver_status(&status)?;
                 }
             }
+
             Ok(BackendResult {
-                pending: pending_ev,
+                pending: pending_term,
                 final_lambda: *last_lam.borrow(),
                 final_state,
                 stats,
@@ -356,6 +392,7 @@ pub(crate) fn integrate_ivp(
                 endpoint_h: endpoint_h.borrow().clone(),
                 endpoint_pt: endpoint_pt.borrow().clone(),
                 non_finite_checks: *non_finite_checks.borrow(),
+                solver_status: status,
             })
         }
         Err(e) => Err(IntegrationError::Solver {
@@ -373,5 +410,54 @@ pub(crate) fn pending_to_event_hit(p: PendingEvent, stats: IntegrationStats) -> 
         event_value: p.event_value,
         localization: p.localization,
         integration: stats,
+    }
+}
+
+pub(crate) fn pending_to_surface_approach(
+    p: PendingApproach,
+    stats: IntegrationStats,
+) -> SurfaceApproach {
+    SurfaceApproach {
+        event_id: p.event_id,
+        lambda: p.lambda,
+        state: p.state,
+        signed_event_value: p.signed_event_value,
+        approach_tolerance: p.approach_tolerance,
+        reason: p.reason,
+        raw_solver_stop: p.raw,
+        integration: stats,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_finite_outcome_state_typed() {
+        let mut y = [1.0; 8];
+        y[2] = f64::NAN;
+        let err = require_finite_outcome_state(&y).unwrap_err();
+        assert!(matches!(
+            err,
+            IntegrationError::NonFiniteState {
+                stage: IntegrationStage::Outcome
+            }
+        ));
+    }
+
+    #[test]
+    fn generic_solver_failure_stays_solver() {
+        let err = interpret_solver_status(&SolverStatusClass::OtherFailure("ProbablyStiff".into()))
+            .unwrap_err();
+        assert!(matches!(err, IntegrationError::Solver { .. }));
+        assert!(!matches!(err, IntegrationError::PhysicsDomain { .. }));
+        assert!(!matches!(err, IntegrationError::EventDomain { .. }));
+    }
+
+    #[test]
+    fn step_size_too_small_without_policy_is_solver() {
+        let err = interpret_solver_status(&SolverStatusClass::StepSizeTooSmall).unwrap_err();
+        assert!(matches!(err, IntegrationError::Solver { .. }));
     }
 }

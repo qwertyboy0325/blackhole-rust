@@ -7,8 +7,12 @@
 //!
 //! Not supported or claimed:
 //! - tangent contact
-//! - roots with identical endpoint signs
+//! - roots with identical endpoint signs (proximity ≠ EventHit)
 //! - discontinuous event functions
+//!
+//! Exact events require a strict sign-changing bracket or an exact endpoint
+//! root (`f == 0.0`). Opt-in `HorizonProximityPolicy` may yield
+//! `SurfaceApproach` for OuterHorizon only — never an `EventHit`.
 
 #![forbid(unsafe_code)]
 
@@ -22,18 +26,19 @@ pub mod rhs;
 pub mod state;
 
 pub use adapter::{integrate, integrate_to_affine_limit};
-pub use config::Dop853Config;
+pub use config::{Dop853Config, HorizonProximityPolicy};
 pub use corpus::{
-    determinism_record, run_and_check, run_corpus_case, CorpusCase, CorpusId, DeterminismRecord,
-    ErrorClass, ExpectedOutcome, CORPUS,
+    build_canonical_corpus_report, canonical_corpus_json, determinism_record, run_and_check,
+    run_corpus_case, CanonicalCaseRecord, CanonicalCorpusReport, CorpusCase, CorpusId,
+    DeterminismRecord, ErrorClass, ExpectedOutcome, CORPUS,
 };
 pub use error::{IntegrationError, IntegrationStage};
 pub use event::{
-    is_eligible_crossing, is_eligible_crossing_tol, CrossingDirection, EscapeSphere, EventId,
-    EventLocalizationStats, EventSurface, OuterHorizon,
+    is_eligible_crossing, is_exact_root, CrossingDirection, EscapeSphere, EventId,
+    EventLocalizationStats, EventSurface, LocalizationTermination, OuterHorizon,
 };
 pub use outcome::{
     EventHit, IntegrationOutcome, IntegrationReport, IntegrationStats, InvariantDiagnostics,
-    RawSolverStop,
+    RawSolverStop, SurfaceApproach, SurfaceApproachReason,
 };
 pub use state::{AffineParameter, GeodesicState};

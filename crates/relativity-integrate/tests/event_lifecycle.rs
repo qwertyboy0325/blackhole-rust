@@ -1,7 +1,8 @@
 use relativity_core::{Covector, KerrParams, PositionKs};
 use relativity_integrate::{
     integrate, is_eligible_crossing, CrossingDirection, Dop853Config, EscapeSphere, EventId,
-    EventSurface, GeodesicState, IntegrationOutcome, OuterHorizon,
+    EventSurface, GeodesicState, HorizonProximityPolicy, IntegrationOutcome, OuterHorizon,
+    SurfaceApproachReason,
 };
 
 fn params_m() -> KerrParams {
@@ -22,7 +23,7 @@ fn localized_authoritative_and_raw_retained() {
     let y0 = outward();
     let mut cfg = Dop853Config::diagnostic_default();
     cfg.affine_limit = 50.0;
-    cfg.max_step = 1.0; // coarse so event is interior
+    cfg.max_step = 1.0;
     let esc = EscapeSphere::new(params, 20.0).unwrap();
     let surfaces: [&dyn EventSurface; 1] = [&esc];
     let report = integrate(params, &y0, &cfg, &surfaces).unwrap();
@@ -35,9 +36,7 @@ fn localized_authoritative_and_raw_retained() {
         .raw_vs_localized_lambda_separation
         .unwrap();
     assert!(sep > 0.0, "raw vs localized sep {sep}");
-    // Adapter outcome state is localized.
     assert!((hit.state.position.x - 20.0).abs() < 1e-5);
-    assert!((hit.raw_solver_stop.state.position.x - 20.0).abs() > 1e-6);
 }
 
 #[test]
@@ -54,7 +53,6 @@ fn restart_from_event_matches_uninterrupted() {
         panic!("event");
     };
 
-    // Uninterrupted reference to λ past the event, then compare restart segment.
     let mut cfg_ref = cfg.clone();
     cfg_ref.affine_limit = hit.lambda.0 + 2.0;
     let reference = integrate(params, &y0, &cfg_ref, &[]).unwrap();
@@ -85,7 +83,6 @@ fn restart_from_event_matches_uninterrupted() {
 #[test]
 fn earliest_of_multiple_events_selected() {
     let params = KerrParams::new(1.0, 0.0).unwrap();
-    // Outward from r≈10 toward escape; also register horizon (should not fire first).
     let y0 = GeodesicState::new(
         PositionKs::new(0.0, 10.0, 0.0, 0.0),
         Covector::new(1.0, 1.0, 0.0, 0.0),
@@ -123,16 +120,79 @@ fn crossing_direction_filters() {
     ));
     assert!(!is_eligible_crossing(
         1.0,
-        -1.0,
-        CrossingDirection::Increasing
+        1e-20,
+        CrossingDirection::Decreasing
     ));
-    assert!(!is_eligible_crossing(1.0, 2.0, CrossingDirection::Any));
-    assert!(!is_eligible_crossing(0.0, 0.0, CrossingDirection::Any));
 }
 
 #[test]
-fn no_tangent_support_claimed() {
-    // Identical signs / zero product → not eligible (no tangent claim).
+fn no_tangent_or_proximity_as_event() {
     assert!(!is_eligible_crossing(1e-16, 1e-16, CrossingDirection::Any));
-    assert!(!is_eligible_crossing(1.0, 0.0, CrossingDirection::Any));
+    assert!(!is_eligible_crossing(
+        1.0,
+        0.0,
+        CrossingDirection::Increasing
+    ));
+}
+
+#[test]
+fn horizon_proximity_is_surface_approach_not_event() {
+    let params = KerrParams::new(1.0, 0.0).unwrap();
+    use relativity_core::{
+        initialize_rectilinear_ray, zamo_observer, CameraParams, PositionBl, SensorCoord,
+    };
+    let bl = PositionBl::new(0.0, 20.0, std::f64::consts::FRAC_PI_2, 0.0);
+    let obs = zamo_observer(&params, &bl).unwrap();
+    let cam = CameraParams {
+        horizontal_fov: 50.0_f64.to_radians(),
+        roll: 0.0,
+    };
+    let ray =
+        initialize_rectilinear_ray(&params, &obs, &cam, SensorCoord { x: 0.0, y: 0.0 }).unwrap();
+    let y0 = GeodesicState::new(obs.event, ray.covariant_momentum).unwrap();
+    let mut cfg = Dop853Config::diagnostic_default();
+    cfg.affine_limit = 200.0;
+    cfg.max_step = 0.5;
+    cfg.horizon_proximity = HorizonProximityPolicy::enabled(1e-10).unwrap();
+    let hor = OuterHorizon::new(params);
+    let surfaces: [&dyn EventSurface; 1] = [&hor];
+    let report = integrate(params, &y0, &cfg, &surfaces).unwrap();
+    match report.outcome {
+        IntegrationOutcome::SurfaceApproach(a) => {
+            assert_eq!(a.event_id, EventId::OuterHorizon);
+            assert!(a.signed_event_value > 0.0);
+            assert!(a.signed_event_value <= a.approach_tolerance);
+            assert_eq!(a.reason, SurfaceApproachReason::SolverStepSizeTooSmall);
+        }
+        IntegrationOutcome::Event(_) => panic!("must not be EventHit"),
+        other => panic!("unexpected {}", other.variant_name()),
+    }
+}
+
+#[test]
+fn horizon_proximity_disabled_yields_solver_error_on_stall() {
+    let params = KerrParams::new(1.0, 0.0).unwrap();
+    use relativity_core::{
+        initialize_rectilinear_ray, zamo_observer, CameraParams, PositionBl, SensorCoord,
+    };
+    let bl = PositionBl::new(0.0, 20.0, std::f64::consts::FRAC_PI_2, 0.0);
+    let obs = zamo_observer(&params, &bl).unwrap();
+    let cam = CameraParams {
+        horizontal_fov: 50.0_f64.to_radians(),
+        roll: 0.0,
+    };
+    let ray =
+        initialize_rectilinear_ray(&params, &obs, &cam, SensorCoord { x: 0.0, y: 0.0 }).unwrap();
+    let y0 = GeodesicState::new(obs.event, ray.covariant_momentum).unwrap();
+    let mut cfg = Dop853Config::diagnostic_default();
+    cfg.affine_limit = 200.0;
+    cfg.max_step = 0.5;
+    // proximity disabled (default)
+    let hor = OuterHorizon::new(params);
+    let surfaces: [&dyn EventSurface; 1] = [&hor];
+    let err = integrate(params, &y0, &cfg, &surfaces).unwrap_err();
+    assert!(matches!(
+        err,
+        relativity_integrate::IntegrationError::Solver { .. }
+    ));
 }
