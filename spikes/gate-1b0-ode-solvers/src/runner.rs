@@ -28,8 +28,8 @@ pub fn run_candidate_report(
     let e_shallow = run_e_shallow();
     if let (Some(ref mut main), Some(sh)) = (&mut e.root_localization, e_shallow.root_localization)
     {
-        main.shallow_crossing_tested = sh.shallow_crossing_tested;
-        main.shallow_sign_change_only_insufficient = sh.shallow_sign_change_only_insufficient;
+        main.shallow_sign_changing_crossing_tested = sh.shallow_sign_changing_crossing_tested;
+        main.tangent_no_sign_change_tested = sh.tangent_no_sign_change_tested;
     }
 
     let experiments = vec![run_a(), run_b(), c, run_d(), e, run_f(), g];

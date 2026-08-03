@@ -3,6 +3,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod adapter_outcome;
 pub mod audit;
 pub mod determinism;
 pub mod digest;
@@ -11,6 +12,9 @@ pub mod schema;
 pub mod systems;
 pub mod validate;
 
+pub use adapter_outcome::{
+    interpret_domain_result, states_match, AdapterOutcome, RawSolverStop, SpikeAdapterError,
+};
 pub use audit::audit_direct_dependency;
 pub use determinism::{
     endpoint_bits, repeat_in_process, repeat_in_process_sig, signature_join, RepeatSummary,

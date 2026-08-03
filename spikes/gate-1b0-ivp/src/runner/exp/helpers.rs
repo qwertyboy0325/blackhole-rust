@@ -1,23 +1,22 @@
 //! Per-experiment implementations for `ivp`.
 
 use crate::adapter::{
-    component_errors, dense_assessment_ivp, dop853_with_max_step, endpoint_errors,
-    error_scaling_ivp, solve_dop853, solve_dop853_solout, stats_from_result, CaptureLog,
-    CapturingSolOut, DenseProbeSolOut, DomainLatch, DomainSys, DEFAULT_ATOL, DEFAULT_RTOL,
-    DOMAIN_ERROR_CODE,
+    component_errors, dense_assessment_ivp, endpoint_errors, error_scaling_ivp, solve_dop853,
+    solve_dop853_solout, stats_from_result, CaptureLog, CapturingSolOut, DenseProbeSolOut,
+    DEFAULT_ATOL, DEFAULT_RTOL,
 };
-use crate::event_loop::{interrupted_ok, run_shallow_event_localize, run_sho_event_stop};
-use gate_1b0_contract::event::EventFn;
+use crate::domain_adapter::domain_error_evidence;
+use crate::event_loop::{interrupted_ok, run_shallow_sign_changing_crossing, run_sho_event_stop};
 use gate_1b0_contract::{
     endpoint_bits, exp_analytic, localize_root, mixed8_analytic, mixed8_derivative, mixed8_y0,
-    repeat_in_process, repeat_in_process_sig, shallow_event_fn, sho_analytic_energy,
-    sho_analytic_p, sho_analytic_q, sho_energy, signature_join, EXP_LAMBDA, EXP_X0, EXP_X_END,
-    EXP_Y0, MIXED8_DIM, SHO_EVENT_X, SHO_P0, SHO_Q0, SHO_X0, SHO_X_END,
+    repeat_in_process, repeat_in_process_sig, sho_analytic_energy, sho_analytic_p, sho_analytic_q,
+    sho_energy, signature_join, AdapterOutcome, EXP_LAMBDA, EXP_X0, EXP_X_END, EXP_Y0, MIXED8_DIM,
+    SHO_EVENT_X, SHO_P0, SHO_Q0, SHO_X0, SHO_X_END,
 };
 use gate_1b0_contract::{
-    AcceptedStepProbe, CallbackStopEvidence, DenseProbe, DeterminismRecord, DomainErrorEvidence,
-    ExperimentId, ExperimentResult, RepeatSummary, RestartEvidence, RootLocalizationEvidence,
-    SolverStopEvidence, StepGuardAssessment, SupportLevel,
+    AcceptedStepProbe, CallbackStopEvidence, DenseProbe, DeterminismRecord, ExperimentId,
+    ExperimentResult, RepeatSummary, RestartEvidence, RootLocalizationEvidence, SolverStopEvidence,
+    StepGuardAssessment, SupportLevel,
 };
 use ivp::methods::Tolerance;
 use ivp::prelude::FirstOrderSystem;
@@ -210,7 +209,7 @@ pub fn run_b() -> ExperimentResult {
         }
     }
 
-    let event: &EventFn = &|_t: f64, y: &[f64]| y[0];
+    let event = |_t: f64, y: &[f64]| y[0];
     let root_localization = log.steps.borrow().iter().find_map(|s| {
         let f0 = event(s.x0, &s.y0);
         let f1 = event(s.x1, &s.y1);
@@ -220,7 +219,7 @@ pub fn run_b() -> ExperimentResult {
                 s.x1,
                 &s.y0,
                 &s.y1,
-                event,
+                &event,
                 None,
                 SHO_EVENT_X,
                 &[0.0, sho_analytic_p(SHO_EVENT_X)],
@@ -476,31 +475,37 @@ fn e_stop_restart_once() -> (
     RootLocalizationEvidence,
     SolverStopEvidence,
     RestartEvidence,
+    AdapterOutcome,
     u32,
 ) {
     let x_end = SHO_EVENT_X + 1.0;
-    let (res, cap) =
+    let (res, cap, outcome) =
         run_sho_event_stop(&ShoSys, 0.0, &[1.0, 0.0], x_end, DEFAULT_RTOL, DEFAULT_ATOL)
             .expect("event stop");
     let root = cap.root.borrow().clone().expect("root localized");
-    let mut solver_stop = cap.stop.borrow().clone().expect("stop evidence");
-    cap.fill_stop_stats(&res);
-    if let Some(stop) = cap.stop.borrow().clone() {
-        solver_stop = stop;
-    }
-    solver_stop.interrupted = interrupted_ok(&res);
+    let solver_stop = cap.to_solver_stop(&res);
+    debug_assert!(interrupted_ok(&res));
+
+    let AdapterOutcome::Event {
+        time: adapter_time,
+        state: adapter_state,
+        ..
+    } = outcome.clone()
+    else {
+        panic!("expected AdapterOutcome::Event");
+    };
 
     let reference_endpoint = sho_reference_endpoint();
     let (_, restart_endpoint) = solve_dop853(
         &ShoSys,
-        root.event_time_found,
-        &root.localized_state,
+        adapter_time,
+        &adapter_state,
         SHO_X_END,
         DEFAULT_RTOL,
         DEFAULT_ATOL,
         None,
     )
-    .expect("restart");
+    .expect("restart from adapter-returned state");
     let endpoint_error = restart_endpoint
         .iter()
         .zip(reference_endpoint.iter())
@@ -510,8 +515,8 @@ fn e_stop_restart_once() -> (
     let restart_det = repeat_in_process_sig(5, || {
         let (_, ep) = solve_dop853(
             &ShoSys,
-            root.event_time_found,
-            &root.localized_state,
+            adapter_time,
+            &adapter_state,
             SHO_X_END,
             DEFAULT_RTOL,
             DEFAULT_ATOL,
@@ -523,8 +528,8 @@ fn e_stop_restart_once() -> (
     });
 
     let restart = RestartEvidence {
-        restart_time: root.event_time_found,
-        restart_state: root.localized_state.clone(),
+        restart_time: adapter_time,
+        restart_state: adapter_state.clone(),
         restart_endpoint: restart_endpoint.clone(),
         reference_endpoint: reference_endpoint.clone(),
         endpoint_error,
@@ -533,29 +538,49 @@ fn e_stop_restart_once() -> (
         in_process_runs: restart_det.signatures.len() as u32,
     };
 
-    (root, solver_stop, restart, res.steps.accepted as u32)
+    (
+        root,
+        solver_stop,
+        restart,
+        outcome,
+        res.steps.accepted as u32,
+    )
 }
 
 pub fn run_e() -> ExperimentResult {
-    let (root, solver_stop, restart, accepted) = e_stop_restart_once();
+    let (root, solver_stop, restart, _outcome, accepted) = e_stop_restart_once();
     let det = repeat_in_process_sig(5, || {
-        let (root, _stop, restart, acc) = e_stop_restart_once();
+        let (root, stop, restart, _, acc) = e_stop_restart_once();
         let sig = signature_join(&[
             &root.event_time_found.to_bits().to_string(),
+            &stop.adapter_returned_time.to_bits().to_string(),
+            &stop.raw_solver_stop_time.to_bits().to_string(),
             &restart.endpoint_bits.first().cloned().unwrap_or_default(),
         ]);
         (sig.clone(), acc, sig)
     });
+    let raw_differs = (solver_stop.raw_solver_stop_time - solver_stop.adapter_returned_time).abs()
+        > 1e-18
+        || solver_stop.raw_solver_stop_state != solver_stop.adapter_returned_state;
     let passed = root.time_error < 1e-6
         && solver_stop.interrupted
+        && solver_stop.adapter_matches_localized
+        && solver_stop.no_steps_after_stop
         && restart.deterministic
-        && restart.endpoint_error < 1e-4;
+        && restart.endpoint_error < 1e-4
+        && det.deterministic;
     ExperimentResult {
         id: ExperimentId::E,
         passed,
         detail: format!(
-            "time_err={:.3e} interrupted={} restart_det={} endpoint_err={:.3e} nacc={accepted}",
-            root.time_error, solver_stop.interrupted, restart.deterministic, restart.endpoint_error
+            "time_err={:.3e} interrupted={} adapter_matches_localized={} raw_differs_from_adapter={} \
+             restart_det={} endpoint_err={:.3e} nacc={accepted}",
+            root.time_error,
+            solver_stop.interrupted,
+            solver_stop.adapter_matches_localized,
+            raw_differs,
+            restart.deterministic,
+            restart.endpoint_error
         ),
         endpoint_abs_error: None,
         endpoint_rel_error: None,
@@ -577,18 +602,17 @@ pub fn run_e() -> ExperimentResult {
 
 pub fn run_e_shallow() -> ExperimentResult {
     let root_localization =
-        run_shallow_event_localize(0.0, &[0.99, 0.0], 0.5, DEFAULT_RTOL, DEFAULT_ATOL)
-            .expect("shallow event")
+        run_shallow_sign_changing_crossing(0.0, &[0.99, 0.0], 0.5, DEFAULT_RTOL, DEFAULT_ATOL)
+            .expect("shallow sign-changing crossing")
             .map(|mut root| {
-                root.shallow_crossing_tested = true;
-                root.shallow_sign_change_only_insufficient =
-                    shallow_event_fn(root.event_time_found).abs() > 1e-9;
+                root.shallow_sign_changing_crossing_tested = true;
+                root.tangent_no_sign_change_tested = false;
                 root
             });
     ExperimentResult {
         id: ExperimentId::E,
         passed: root_localization.is_some(),
-        detail: "shallow crossing accepted-step localization".into(),
+        detail: "shallow_sign_changing_crossing (not tangent/no-sign-change)".into(),
         endpoint_abs_error: None,
         endpoint_rel_error: None,
         component_errors: vec![],
@@ -671,33 +695,6 @@ fn callback_stop_evidence() -> (CallbackStopEvidence, bool) {
     (evidence, ok)
 }
 
-fn domain_error_evidence() -> (DomainErrorEvidence, bool) {
-    let latch = DomainLatch::new();
-    let sys = DomainSys {
-        latch: latch.clone(),
-    };
-    let solver = dop853_with_max_step(0.2);
-    let result = solver.solve(
-        &sys,
-        0.0,
-        &[1.0],
-        2.0,
-        Tolerance::Scalar(DEFAULT_RTOL),
-        Tolerance::Scalar(DEFAULT_ATOL),
-        None::<&mut CapturingSolOut>,
-    );
-    let code = latch.0.borrow().clone().unwrap_or_default();
-    let nan_presented_as_error = result.is_err();
-    let evidence = DomainErrorEvidence {
-        typed_error_code: code.clone(),
-        typed_error_recovered: false,
-        solver_panicked: false,
-        nan_presented_as_error,
-    };
-    let ok = code == DOMAIN_ERROR_CODE && !nan_presented_as_error && !evidence.solver_panicked;
-    (evidence, ok)
-}
-
 pub fn run_f() -> ExperimentResult {
     let h_max = 0.05;
     let (callback_stop, cb_ok) = callback_stop_evidence();
@@ -719,26 +716,12 @@ pub fn run_f() -> ExperimentResult {
             Some(h_max),
         )
         .expect("F det callback");
-        let latch = DomainLatch::new();
-        let dom_sys = DomainSys {
-            latch: latch.clone(),
-        };
-        let dom_solver = dop853_with_max_step(h_max);
-        let dom = dom_solver
-            .solve(
-                &dom_sys,
-                0.0,
-                &[1.0],
-                2.0,
-                Tolerance::Scalar(DEFAULT_RTOL),
-                Tolerance::Scalar(DEFAULT_ATOL),
-                None::<&mut CapturingSolOut>,
-            )
-            .is_ok();
+        let (ev, ok) = domain_error_evidence();
         let sig = signature_join(&[
             &st.steps.accepted.to_string(),
-            &dom.to_string(),
-            &latch.0.borrow().clone().unwrap_or_default(),
+            &ok.to_string(),
+            &ev.caller_error_variant,
+            &ev.latched_error_code,
         ]);
         (sig.clone(), st.steps.accepted as u32, sig)
     });
@@ -752,18 +735,20 @@ pub fn run_f() -> ExperimentResult {
         typed_domain_failure: if domain_ok {
             SupportLevel::Supported
         } else {
-            SupportLevel::SupportedWithAdapter
+            SupportLevel::Unsupported
         },
-        notes:
-            "SolOut Interrupt halts after accepted step; DomainLatch typed code on x>=DOMAIN_X_MAX"
-                .into(),
+        notes: "SolOut Interrupt; solve_with_domain_adapter returns SpikeAdapterError::Domain"
+            .into(),
     };
     ExperimentResult {
         id: ExperimentId::F,
         passed: cb_ok && domain_ok && det.deterministic,
         detail: format!(
-            "callback_stop interrupted={} domain_code={} h_max={h_max}",
-            callback_stop.interrupted, domain_error.typed_error_code
+            "callback_stop interrupted={} domain_variant={} latched={} non_finite_rejected={} h_max={h_max}",
+            callback_stop.interrupted,
+            domain_error.caller_error_variant,
+            domain_error.latched_error_code,
+            domain_error.non_finite_nominal_rejected
         ),
         endpoint_abs_error: None,
         endpoint_rel_error: None,

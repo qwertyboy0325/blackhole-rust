@@ -4,6 +4,7 @@
 
 mod adapter;
 mod audit;
+mod domain_adapter;
 mod runner;
 
 pub use runner::run_candidate_report;

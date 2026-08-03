@@ -11,6 +11,7 @@ pub type EventFn = dyn Fn(f64, &[f64]) -> f64;
 /// Localize an event using bisection on the interpolant.
 /// Returns root-localization evidence only — no solver stop/restart claims.
 #[allow(clippy::too_many_arguments)]
+#[allow(unused_assignments)]
 pub fn localize_root(
     t0: f64,
     t1: f64,
@@ -119,7 +120,7 @@ pub fn localize_root(
         state_error,
         interpolation_calls: interp_calls,
         localized_state: y_event,
-        shallow_crossing_tested: shallow,
-        shallow_sign_change_only_insufficient: shallow && lo_f.signum() == hi_f.signum(),
+        shallow_sign_changing_crossing_tested: shallow,
+        tangent_no_sign_change_tested: false,
     }
 }

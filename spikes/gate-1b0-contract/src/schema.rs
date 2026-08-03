@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub const CANDIDATE_ODE_SOLVERS: &str = "ode-solvers";
 pub const CANDIDATE_IVP: &str = "ivp";
-pub const SPIKE_VERSION: &str = "gate-1b0-v2";
+pub const SPIKE_VERSION: &str = "gate-1b0-v3";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -147,15 +147,26 @@ pub struct RootLocalizationEvidence {
     pub state_error: f64,
     pub interpolation_calls: u32,
     pub localized_state: Vec<f64>,
-    pub shallow_crossing_tested: bool,
-    pub shallow_sign_change_only_insufficient: bool,
+    /// True when a shallow *sign-changing* crossing was exercised (not tangent).
+    pub shallow_sign_changing_crossing_tested: bool,
+    /// Reserved: true only if a no-endpoint-sign-change / tangent case was exercised.
+    pub tangent_no_sign_change_tested: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SolverStopEvidence {
     pub interrupted: bool,
-    pub stop_time: f64,
-    pub stop_state: Vec<f64>,
+    /// Accepted-step endpoint at Interrupt (raw solver).
+    pub raw_solver_stop_time: f64,
+    pub raw_solver_stop_state: Vec<f64>,
+    /// Localized root from StepInterpolant (adapter computation).
+    pub localized_event_time: Option<f64>,
+    pub localized_event_state: Option<Vec<f64>>,
+    /// Values returned to the caller by the adapter contract.
+    pub adapter_returned_time: f64,
+    pub adapter_returned_state: Vec<f64>,
+    /// adapter_returned == localized (preferred Event contract).
+    pub adapter_matches_localized: bool,
     pub callback_count_at_stop: u32,
     pub accepted_steps_at_stop: u32,
     pub rejected_steps_at_stop: u32,
@@ -189,10 +200,16 @@ pub struct CallbackStopEvidence {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DomainErrorEvidence {
-    pub typed_error_code: String,
+    pub latched_error_code: String,
+    /// Pattern-matchable caller variant: "Domain" | "NonFiniteResult" | "Solver" | "".
+    pub caller_error_variant: String,
     pub typed_error_recovered: bool,
     pub solver_panicked: bool,
-    pub nan_presented_as_error: bool,
+    pub raw_solver_status: String,
+    pub raw_result_non_finite: bool,
+    pub nan_presented_as_public_error: bool,
+    /// Separate probe: nominal success with non-finite state → NonFiniteResult.
+    pub non_finite_nominal_rejected: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -129,37 +129,54 @@ fn validate_experiment_fields(candidate: &str, exp: &ExperimentResult) -> Vec<Va
                 ));
             }
         }
-        ExperimentId::E => {
-            if exp.root_localization.is_none() || exp.solver_stop.is_none() || exp.restart.is_none()
-            {
+        ExperimentId::E => match (
+            &exp.root_localization,
+            &exp.solver_stop,
+            &exp.restart,
+        ) {
+            (None, _, _) | (_, None, _) | (_, _, None) => {
                 issues.push(issue(
                     "missing_evidence",
                     "E requires root localization, solver stop, and restart evidence".into(),
                 ));
-            } else if candidate == CANDIDATE_IVP && exp.passed {
-                if !exp.solver_stop.as_ref().is_some_and(|s| s.interrupted) {
+            }
+            (_, Some(stop), Some(restart)) if candidate == CANDIDATE_IVP && exp.passed => {
+                if !stop.interrupted {
                     issues.push(issue(
                         "missing_evidence",
                         "ivp E requires solver_stop.interrupted=true when passed".into(),
                     ));
                 }
-                if !exp.restart.as_ref().is_some_and(|r| r.deterministic) {
+                if !stop.adapter_matches_localized {
+                    issues.push(issue(
+                        "missing_evidence",
+                        "ivp E requires adapter_returned == localized root".into(),
+                    ));
+                }
+                if stop.localized_event_time.is_none() || stop.localized_event_state.is_none() {
+                    issues.push(issue(
+                        "missing_evidence",
+                        "ivp E requires localized_event_time/state distinct from raw".into(),
+                    ));
+                }
+                if !restart.deterministic {
                     issues.push(issue(
                         "missing_evidence",
                         "ivp E requires restart.deterministic=true when passed".into(),
                     ));
                 }
             }
-        }
-        ExperimentId::F => {
-            if exp.step_guard.is_none() || exp.callback_stop.is_none() || exp.domain_error.is_none()
-            {
+            _ => {}
+        },
+        ExperimentId::F => match (&exp.step_guard, &exp.callback_stop, &exp.domain_error) {
+            (None, _, _) | (_, None, _) | (_, _, None) => {
                 issues.push(issue(
                     "missing_evidence",
                     "F requires step guard, callback stop, and domain error evidence".into(),
                 ));
             }
-        }
+            (Some(_), Some(_), Some(_)) => issues.extend(validate_f_domain(exp)),
+        },
         ExperimentId::G => {
             if exp.stats.is_none() {
                 issues.push(issue(
@@ -167,6 +184,64 @@ fn validate_experiment_fields(candidate: &str, exp: &ExperimentResult) -> Vec<Va
                     "G requires integration stats".into(),
                 ));
             }
+        }
+    }
+    issues
+}
+
+fn validate_f_domain(exp: &ExperimentResult) -> Vec<ValidationIssue> {
+    let mut issues = Vec::new();
+    let cb = exp.callback_stop.as_ref().unwrap();
+    if !(cb.callback_invoked && cb.interrupt_requested && cb.interrupted) {
+        issues.push(issue(
+            "f_callback_incomplete",
+            "F callback-stop evidence incomplete".into(),
+        ));
+    }
+    let d = exp.domain_error.as_ref().unwrap();
+    if !d.typed_error_recovered {
+        issues.push(issue(
+            "f_domain_not_recovered",
+            "typed_error_recovered=false".into(),
+        ));
+    }
+    if d.latched_error_code.is_empty() {
+        issues.push(issue(
+            "f_domain_code_empty",
+            "latched_error_code empty".into(),
+        ));
+    }
+    if d.caller_error_variant != "Domain" {
+        issues.push(issue(
+            "f_caller_not_domain",
+            format!(
+                "caller_error_variant={} (expected Domain)",
+                d.caller_error_variant
+            ),
+        ));
+    }
+    if d.nan_presented_as_public_error {
+        issues.push(issue(
+            "f_nan_public_error",
+            "NaN presented as public error".into(),
+        ));
+    }
+    if !d.non_finite_nominal_rejected {
+        issues.push(issue(
+            "f_non_finite_accepted",
+            "nominal non-finite success was not rejected".into(),
+        ));
+    }
+    if let Some(g) = exp.step_guard.as_ref() {
+        if matches!(
+            g.typed_domain_failure,
+            SupportLevel::Supported | SupportLevel::SupportedWithAdapter
+        ) && !d.typed_error_recovered
+        {
+            issues.push(issue(
+                "f_typed_claim_without_recovery",
+                "typed-domain support claimed while typed_error_recovered=false".into(),
+            ));
         }
     }
     issues
@@ -202,13 +277,15 @@ fn validate_decision_matrix(report: &CandidateReport) -> Vec<ValidationIssue> {
             let e_ok = e.is_some_and(|x| {
                 x.passed
                     && x.root_localization.is_some()
-                    && x.solver_stop.as_ref().is_some_and(|s| s.interrupted)
+                    && x.solver_stop
+                        .as_ref()
+                        .is_some_and(|s| s.interrupted && s.adapter_matches_localized)
                     && x.restart.as_ref().is_some_and(|r| r.deterministic)
             });
             if !e_ok {
                 issues.push(issue(
                     "matrix_contradiction",
-                    "event/stop Supported but E stop/restart evidence incomplete".into(),
+                    "event/stop Supported but E adapter lifecycle evidence incomplete".into(),
                 ));
             }
         }
@@ -282,8 +359,8 @@ fn issue(code: &str, detail: String) -> ValidationIssue {
 mod tests {
     use super::*;
     use crate::schema::{
-        ContractRequirementScore, DependencyAudit, ErrorScalingAssessment, ExperimentResult,
-        SPIKE_VERSION,
+        CallbackStopEvidence, ContractRequirementScore, DependencyAudit, DomainErrorEvidence,
+        ErrorScalingAssessment, ExperimentResult, StepGuardAssessment, SPIKE_VERSION,
     };
 
     fn minimal_report(experiments: Vec<ExperimentResult>) -> CandidateReport {
@@ -355,6 +432,32 @@ mod tests {
         }
     }
 
+    fn f_exp_with_domain(domain: DomainErrorEvidence, passed: bool) -> ExperimentResult {
+        let mut e = stub_exp(ExperimentId::F, passed);
+        e.callback_stop = Some(CallbackStopEvidence {
+            callback_invoked: true,
+            interrupt_requested: true,
+            interrupted: true,
+            stop_time: 0.1,
+            stop_state: vec![1.0],
+            accepted_steps_before_stop: 1,
+            accepted_steps_after_stop: 0,
+            deterministic: true,
+        });
+        e.step_guard = Some(StepGuardAssessment {
+            static_h_max: SupportLevel::Supported,
+            dynamic_h_max: SupportLevel::Unsupported,
+            pre_rhs_domain_reject: SupportLevel::Unsupported,
+            post_accepted_step_stop: SupportLevel::Supported,
+            stop_from_callback: SupportLevel::Supported,
+            bracket_recovery: SupportLevel::Unsupported,
+            typed_domain_failure: SupportLevel::Supported,
+            notes: String::new(),
+        });
+        e.domain_error = Some(domain);
+        e
+    }
+
     #[test]
     fn one_failed_experiment_fails_gate() {
         let exps: Vec<_> = ALL_EXPERIMENT_IDS
@@ -400,5 +503,78 @@ mod tests {
         }];
         let err = validate_candidate_report(&report).unwrap_err();
         assert!(err.iter().any(|i| i.code == "matrix_contradiction"));
+    }
+
+    #[test]
+    fn latched_domain_without_typed_caller_fails() {
+        let mut exps: Vec<_> = ALL_EXPERIMENT_IDS
+            .iter()
+            .map(|&id| stub_exp(id, true))
+            .collect();
+        exps[5] = f_exp_with_domain(
+            DomainErrorEvidence {
+                latched_error_code: "DOMAIN_X_EXCEEDED".into(),
+                caller_error_variant: String::new(),
+                typed_error_recovered: false,
+                solver_panicked: false,
+                raw_solver_status: "Err".into(),
+                raw_result_non_finite: true,
+                nan_presented_as_public_error: false,
+                non_finite_nominal_rejected: true,
+            },
+            true,
+        );
+        let err = validate_candidate_report(&minimal_report(exps)).unwrap_err();
+        assert!(err
+            .iter()
+            .any(|i| i.code == "f_caller_not_domain" || i.code == "f_domain_not_recovered"));
+    }
+
+    #[test]
+    fn typed_claim_without_recovery_fails() {
+        let mut exps: Vec<_> = ALL_EXPERIMENT_IDS
+            .iter()
+            .map(|&id| stub_exp(id, true))
+            .collect();
+        exps[5] = f_exp_with_domain(
+            DomainErrorEvidence {
+                latched_error_code: "DOMAIN_X_EXCEEDED".into(),
+                caller_error_variant: "Solver".into(),
+                typed_error_recovered: false,
+                solver_panicked: false,
+                raw_solver_status: "Err".into(),
+                raw_result_non_finite: true,
+                nan_presented_as_public_error: false,
+                non_finite_nominal_rejected: true,
+            },
+            true,
+        );
+        let err = validate_candidate_report(&minimal_report(exps)).unwrap_err();
+        assert!(err.iter().any(|i| {
+            i.code == "f_typed_claim_without_recovery" || i.code == "f_domain_not_recovered"
+        }));
+    }
+
+    #[test]
+    fn non_finite_nominal_not_rejected_fails() {
+        let mut exps: Vec<_> = ALL_EXPERIMENT_IDS
+            .iter()
+            .map(|&id| stub_exp(id, true))
+            .collect();
+        exps[5] = f_exp_with_domain(
+            DomainErrorEvidence {
+                latched_error_code: "DOMAIN_X_EXCEEDED".into(),
+                caller_error_variant: "Domain".into(),
+                typed_error_recovered: true,
+                solver_panicked: false,
+                raw_solver_status: "latched".into(),
+                raw_result_non_finite: true,
+                nan_presented_as_public_error: false,
+                non_finite_nominal_rejected: false,
+            },
+            true,
+        );
+        let err = validate_candidate_report(&minimal_report(exps)).unwrap_err();
+        assert!(err.iter().any(|i| i.code == "f_non_finite_accepted"));
     }
 }

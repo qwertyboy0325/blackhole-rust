@@ -2,9 +2,9 @@
 
 use crate::adapter::{
     component_errors, dense_assessment_ode_solvers, endpoint_errors, interpolate_dense_grid,
-    interpolate_dense_state, make_stepper, stats_to_integration, CapturingSystem, DomainLatch,
-    DomainSys, DEFAULT_RTOL, DOMAIN_ERROR_CODE,
+    interpolate_dense_state, make_stepper, stats_to_integration, CapturingSystem, DEFAULT_RTOL,
 };
+use crate::domain_adapter::domain_error_evidence;
 use gate_1b0_contract::{
     endpoint_bits, exp_analytic, mixed8_analytic, mixed8_derivative, mixed8_y0, repeat_in_process,
     repeat_in_process_sig, shallow_event_fn, shallow_event_root_analytic, sho_analytic_energy,
@@ -12,9 +12,9 @@ use gate_1b0_contract::{
     EXP_Y0, MIXED8_DIM, SHO_EVENT_X, SHO_P0, SHO_Q0, SHO_X0, SHO_X_END,
 };
 use gate_1b0_contract::{
-    localize_root, CallbackStopEvidence, DenseProbe, DeterminismRecord, DomainErrorEvidence,
-    ExperimentId, ExperimentResult, RepeatSummary, RestartEvidence, SolverStopEvidence,
-    StepGuardAssessment, SupportLevel,
+    localize_root, CallbackStopEvidence, DenseProbe, DeterminismRecord, ExperimentId,
+    ExperimentResult, RepeatSummary, RestartEvidence, SolverStopEvidence, StepGuardAssessment,
+    SupportLevel,
 };
 use nalgebra::DVector;
 use ode_solvers::dop853::Dop853;
@@ -442,10 +442,16 @@ pub fn run_e() -> ExperimentResult {
         false,
     );
     let y_final = interpolate_dense_state(x_out, y_out, x_end).unwrap_or_default();
+    // No event adapter: raw = integration endpoint; localized is post-hoc grid only.
     let solver_stop = SolverStopEvidence {
         interrupted: false,
-        stop_time: x_end,
-        stop_state: y_final.clone(),
+        raw_solver_stop_time: x_end,
+        raw_solver_stop_state: y_final.clone(),
+        localized_event_time: Some(root_localization.event_time_found),
+        localized_event_state: Some(root_localization.localized_state.clone()),
+        adapter_returned_time: x_end,
+        adapter_returned_state: y_final.clone(),
+        adapter_matches_localized: false,
         callback_count_at_stop: 0,
         accepted_steps_at_stop: stats.accepted_steps,
         rejected_steps_at_stop: stats.rejected_steps,
@@ -575,7 +581,7 @@ pub fn run_e_shallow() -> ExperimentResult {
     ExperimentResult {
         id: ExperimentId::E,
         passed: root_localization.is_some(),
-        detail: "shallow crossing grid localization".into(),
+        detail: "shallow_sign_changing_crossing grid localization (not tangent)".into(),
         endpoint_abs_error: None,
         endpoint_rel_error: None,
         component_errors: vec![],
@@ -650,25 +656,6 @@ fn callback_stop_evidence() -> (CallbackStopEvidence, bool) {
     (evidence, ok)
 }
 
-fn domain_error_evidence() -> (DomainErrorEvidence, bool) {
-    let latch = DomainLatch::new();
-    let sys = DomainSys {
-        latch: latch.clone(),
-    };
-    let y0 = DVector::from_vec(vec![1.0]);
-    let mut stepper = make_stepper(sys, 0.0, 2.0, y0, 0.01, 0.2);
-    let result = stepper.integrate();
-    let code = latch.0.borrow().clone().unwrap_or_default();
-    let evidence = DomainErrorEvidence {
-        typed_error_code: code.clone(),
-        typed_error_recovered: false,
-        solver_panicked: false,
-        nan_presented_as_error: result.is_err(),
-    };
-    let ok = code == DOMAIN_ERROR_CODE && result.is_err() && !evidence.solver_panicked;
-    (evidence, ok)
-}
-
 pub fn run_f() -> ExperimentResult {
     let h_max = 0.05;
     let (callback_stop, cb_ok) = callback_stop_evidence();
@@ -686,22 +673,12 @@ pub fn run_f() -> ExperimentResult {
             EXP_X_END,
         );
         let st = s.integrate().unwrap();
-        let latch = DomainLatch::new();
-        let mut ds = make_stepper(
-            DomainSys {
-                latch: latch.clone(),
-            },
-            0.0,
-            2.0,
-            DVector::from_vec(vec![1.0]),
-            0.01,
-            h_max,
-        );
-        let dom = ds.integrate().is_err();
+        let (ev, ok) = domain_error_evidence();
         let sig = signature_join(&[
             &st.accepted_steps.to_string(),
-            &dom.to_string(),
-            &latch.0.borrow().clone().unwrap_or_default(),
+            &ok.to_string(),
+            &ev.caller_error_variant,
+            &ev.latched_error_code,
         ]);
         (sig.clone(), st.accepted_steps, sig)
     });
@@ -715,17 +692,19 @@ pub fn run_f() -> ExperimentResult {
         typed_domain_failure: if domain_ok {
             SupportLevel::Supported
         } else {
-            SupportLevel::SupportedWithAdapter
+            SupportLevel::Unsupported
         },
-        notes: "solout true halts after accepted step; DomainLatch typed code on x>=DOMAIN_X_MAX"
-            .into(),
+        notes: "solout halt; solve_with_domain_adapter returns SpikeAdapterError::Domain".into(),
     };
     ExperimentResult {
         id: ExperimentId::F,
         passed: cb_ok && domain_ok && det.deterministic,
         detail: format!(
-            "callback_stop interrupted={} domain_code={} h_max={h_max}",
-            callback_stop.interrupted, domain_error.typed_error_code
+            "callback_stop interrupted={} domain_variant={} latched={} non_finite_rejected={} h_max={h_max}",
+            callback_stop.interrupted,
+            domain_error.caller_error_variant,
+            domain_error.latched_error_code,
+            domain_error.non_finite_nominal_rejected
         ),
         endpoint_abs_error: None,
         endpoint_rel_error: None,

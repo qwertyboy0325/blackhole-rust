@@ -1,7 +1,7 @@
 # ADR 0005: DOP853 Rust dependency selection
 
-- Status: **Proposed** (Gate 1B0 spike complete; see `docs/research/gate-1b0-dop853-spike-report.md`)
-- Updated: 2026-08-03 (Gate 1B0 remediation evidence)
+- Status: **Proposed** (Gate 1B0 spike + lifecycle closure; see `docs/research/gate-1b0-dop853-spike-report.md`)
+- Updated: 2026-08-03 (Gate 1B0 lifecycle/error-propagation closure)
 
 ## Context
 
@@ -19,8 +19,9 @@ CPU `f64` geodesic oracle. Gate 1B0 executed executable spikes for
 | 8D state | Supported | Supported |
 | Vector tolerance direct | Unsupported | Supported |
 | Accepted-step dense interpolant | **Unsupported** (public API: predetermined dx grid only) | **Supported** (SolOut `StepInterpolant` probed in callback) |
-| Event localization (preferred arch) | **Unsupported** | **Supported** (callback interpolant → interrupt → restart) |
-| Stop/restart semantics | **Unsupported** | **Supported** (x5 deterministic) |
+| Event localization (preferred arch) | **Unsupported** | **Supported** (`AdapterOutcome::Event`; raw stop ≠ localized) |
+| Stop/restart semantics | **Unsupported** | **Supported** (restart from adapter-returned state; x5) |
+| Typed domain error | **Supported** (`SpikeAdapterError::Domain`) | **Supported** (`SpikeAdapterError::Domain`) |
 
 Spike JSON: `artifacts/gate-1b0/` (regenerate via `cargo xtask evaluate --scope gate-1b0`).
 

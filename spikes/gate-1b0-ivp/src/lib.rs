@@ -4,6 +4,7 @@
 
 mod adapter;
 mod audit;
+mod domain_adapter;
 mod event_loop;
 mod runner;
 

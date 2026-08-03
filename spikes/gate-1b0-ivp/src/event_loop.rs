@@ -1,7 +1,12 @@
 //! Real accepted-step event loop for `ivp` Experiment E.
+//!
+//! Preferred adapter contract: caller receives localized Event outcome;
+//! raw solver stop (accepted-step endpoint) is retained separately.
 
-use gate_1b0_contract::{sho_analytic_p, sho_analytic_q};
-use gate_1b0_contract::{RootLocalizationEvidence, SolverStopEvidence, SHO_EVENT_X};
+use gate_1b0_contract::{
+    sho_analytic_p, sho_analytic_q, states_match, AdapterOutcome, RawSolverStop,
+    RootLocalizationEvidence, SolverStopEvidence, SHO_EVENT_X,
+};
 use ivp::dense::StepInterpolant;
 use ivp::methods::{IntegrationResult, Tolerance, DOP853};
 use ivp::prelude::FirstOrderSystem;
@@ -13,7 +18,8 @@ use std::rc::Rc;
 #[derive(Clone)]
 pub struct EventLoopCapture {
     pub root: Rc<RefCell<Option<RootLocalizationEvidence>>>,
-    pub stop: Rc<RefCell<Option<SolverStopEvidence>>>,
+    pub raw_stop: Rc<RefCell<Option<RawSolverStop>>>,
+    pub outcome: Rc<RefCell<Option<AdapterOutcome>>>,
     pub callback_count: Rc<RefCell<u32>>,
     pub interrupted: Rc<RefCell<bool>>,
     pub steps_after_interrupt: Rc<RefCell<u32>>,
@@ -24,7 +30,8 @@ impl EventLoopCapture {
     pub fn new(_x0: f64, y0: Vec<f64>) -> Self {
         Self {
             root: Rc::new(RefCell::new(None)),
-            stop: Rc::new(RefCell::new(None)),
+            raw_stop: Rc::new(RefCell::new(None)),
+            outcome: Rc::new(RefCell::new(None)),
             callback_count: Rc::new(RefCell::new(0)),
             interrupted: Rc::new(RefCell::new(false)),
             steps_after_interrupt: Rc::new(RefCell::new(0)),
@@ -32,17 +39,41 @@ impl EventLoopCapture {
         }
     }
 
-    pub fn fill_stop_stats(&self, res: &IntegrationResult) {
-        if let Some(ref mut stop) = *self.stop.borrow_mut() {
-            stop.accepted_steps_at_stop = res.steps.accepted as u32;
-            stop.rejected_steps_at_stop = res.steps.rejected as u32;
-            stop.rhs_evaluations_at_stop = res.evals.ode as u32;
-            stop.no_steps_after_stop = *self.steps_after_interrupt.borrow() == 0;
+    pub fn to_solver_stop(&self, res: &IntegrationResult) -> SolverStopEvidence {
+        let root = self.root.borrow().clone();
+        let raw = self.raw_stop.borrow().clone().unwrap_or(RawSolverStop {
+            time: 0.0,
+            state: vec![],
+        });
+        let (adapter_time, adapter_state) = match self.outcome.borrow().as_ref() {
+            Some(AdapterOutcome::Event { time, state, .. }) => (*time, state.clone()),
+            Some(o) => (o.time(), o.state().to_vec()),
+            None => (raw.time, raw.state.clone()),
+        };
+        let matches = root.as_ref().is_some_and(|r| {
+            (adapter_time - r.event_time_found).abs() < 1e-15
+                && states_match(&adapter_state, &r.localized_state, 0.0)
+        });
+        SolverStopEvidence {
+            interrupted: matches!(res.status, Status::UserInterrupt),
+            raw_solver_stop_time: raw.time,
+            raw_solver_stop_state: raw.state,
+            localized_event_time: root.as_ref().map(|r| r.event_time_found),
+            localized_event_state: root.as_ref().map(|r| r.localized_state.clone()),
+            adapter_returned_time: adapter_time,
+            adapter_returned_state: adapter_state,
+            adapter_matches_localized: matches,
+            callback_count_at_stop: *self.callback_count.borrow(),
+            accepted_steps_at_stop: res.steps.accepted as u32,
+            rejected_steps_at_stop: res.steps.rejected as u32,
+            rhs_evaluations_at_stop: res.evals.ode as u32,
+            no_steps_after_stop: *self.steps_after_interrupt.borrow() == 0,
         }
     }
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(unused_assignments)]
 fn localize_on_ivp_interp(
     t0: f64,
     t1: f64,
@@ -118,8 +149,8 @@ fn localize_on_ivp_interp(
         state_error,
         interpolation_calls: interp_calls,
         localized_state: y_event,
-        shallow_crossing_tested: shallow,
-        shallow_sign_change_only_insufficient: shallow && lo_f.signum() == hi_f.signum(),
+        shallow_sign_changing_crossing_tested: shallow,
+        tangent_no_sign_change_tested: false,
     }
 }
 
@@ -160,18 +191,20 @@ impl SolOut for ShoEventSolOut {
                     &[sho_analytic_q(SHO_EVENT_X), sho_analytic_p(SHO_EVENT_X)],
                     false,
                 );
-                *self.cap.root.borrow_mut() = Some(root.clone());
-                *self.cap.stop.borrow_mut() = Some(SolverStopEvidence {
-                    interrupted: true,
-                    stop_time: root.event_time_found,
-                    stop_state: root.localized_state.clone(),
-                    callback_count_at_stop: *self.cap.callback_count.borrow(),
-                    accepted_steps_at_stop: 0,
-                    rejected_steps_at_stop: 0,
-                    rhs_evaluations_at_stop: 0,
-                    no_steps_after_stop: true,
-                });
+                let raw = RawSolverStop {
+                    time: *x,
+                    state: y.to_vec(),
+                };
+                let outcome = AdapterOutcome::Event {
+                    time: root.event_time_found,
+                    state: root.localized_state.clone(),
+                    raw_solver_stop: raw.clone(),
+                };
+                *self.cap.root.borrow_mut() = Some(root);
+                *self.cap.raw_stop.borrow_mut() = Some(raw);
+                *self.cap.outcome.borrow_mut() = Some(outcome);
                 *self.cap.interrupted.borrow_mut() = true;
+                // Leave raw solver x/y at accepted-step endpoint; adapter owns localized result.
                 return ControlFlag::Interrupt;
             }
         }
@@ -188,7 +221,7 @@ pub fn run_sho_event_stop<F>(
     xend: f64,
     rtol: f64,
     atol: f64,
-) -> Result<(IntegrationResult, EventLoopCapture), ivp::error::Error>
+) -> Result<(IntegrationResult, EventLoopCapture, AdapterOutcome), ivp::error::Error>
 where
     F: FirstOrderSystem,
 {
@@ -204,16 +237,20 @@ where
         Tolerance::Scalar(atol),
         Some(&mut solout),
     )?;
-    cap.fill_stop_stats(&res);
-    Ok((res, cap))
+    let outcome = cap
+        .outcome
+        .borrow()
+        .clone()
+        .expect("adapter Event outcome after interrupt");
+    Ok((res, cap, outcome))
 }
 
 pub fn interrupted_ok(res: &IntegrationResult) -> bool {
     matches!(res.status, Status::UserInterrupt)
 }
 
-/// Shallow-crossing event loop using `StepInterpolant` in the accepted-step callback.
-pub fn run_shallow_event_localize(
+/// Shallow *sign-changing* crossing (not tangent / no-sign-change).
+pub fn run_shallow_sign_changing_crossing(
     x0: f64,
     y0: &[f64],
     xend: f64,
