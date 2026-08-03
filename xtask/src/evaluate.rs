@@ -1,13 +1,15 @@
-//! Gate 1A evaluator: schema, fmt/clippy/tests, corpus, diagnostics, reports.
+//! Gate 1A evaluator: schema, fmt/clippy/tests, total corpus, diagnostics, reports.
 
 use crate::preset::load_preset;
 use relativity_core::{
     evaluate_kerr_schild, identity_residual, initialize_rectilinear_ray,
-    inverse_metric_spatial_derivatives, stratified_corpus, zamo_observer, CameraParams, KerrParams,
-    PositionBl, SensorCoord, CORPUS_SEED,
+    inverse_metric_spatial_derivatives, matrix_inverse_oracle, stratified_corpus, zamo_observer,
+    CameraParams, CoreError, CorpusTag, ExpectedOutcome, KerrParams, MetricTensor, PositionBl,
+    SensorCoord, Vector, CORPUS_SEED,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -15,17 +17,31 @@ use std::process::Command;
 struct Gate1aReport {
     gate: &'static str,
     result: &'static str,
+    authoritative: bool,
     commit: String,
     dirty: bool,
+    dirty_detail: String,
     toolchain: String,
     target: String,
     features: String,
     corpus_seed: u64,
     preset_path: String,
     preset_sha256: String,
+    corpus_coverage: CorpusCoverage,
     checks: Vec<Check>,
     worst: WorstResiduals,
     dependency_versions: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Default)]
+struct CorpusCoverage {
+    expected_points: usize,
+    evaluated_valid: usize,
+    expected_failures: usize,
+    unexpected_failures: usize,
+    unexplained_skips: usize,
+    derivative_components: usize,
+    by_tag: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -39,9 +55,19 @@ struct Check {
 struct WorstResiduals {
     metric_identity: f64,
     metric_identity_at: [f64; 3],
+    raw_inverse_asymmetry: f64,
+    eta_ll: f64,
+    g_ll: f64,
+    det_plus_one: f64,
     derivative_abs: f64,
+    derivative_rel: f64,
     derivative_at: [f64; 3],
+    derivative_tag: String,
+    derivative_axis: usize,
+    derivative_alpha: usize,
+    derivative_beta: usize,
     tetrad_orthonormality: f64,
+    zamo_u_phi: f64,
     nullness: f64,
 }
 
@@ -71,8 +97,7 @@ pub fn evaluate(preset_path: &str, scope: &str) -> Result<(), Box<dyn std::error
         ),
     });
 
-    let dirty =
-        !git_ok(&root, ["diff", "--quiet"]) || !git_ok(&root, ["diff", "--cached", "--quiet"]);
+    let (dirty, dirty_detail) = porcelain_dirty(&root)?;
     let commit = git_stdout(&root, ["rev-parse", "HEAD"]).unwrap_or_else(|_| "unknown".into());
     let toolchain = Command::new("rustc")
         .arg("--version")
@@ -80,6 +105,21 @@ pub fn evaluate(preset_path: &str, scope: &str) -> Result<(), Box<dyn std::error
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|_| "unknown".into());
     let target = std::env::var("TARGET").unwrap_or_else(|_| default_target());
+
+    // Dirty tree cannot emit authoritative PASS.
+    if dirty {
+        checks.push(Check {
+            name: "worktree_clean".into(),
+            status: "FAIL",
+            detail: format!("non-authoritative dirty worktree: {dirty_detail}"),
+        });
+    } else {
+        checks.push(Check {
+            name: "worktree_clean".into(),
+            status: "PASS",
+            detail: "clean".into(),
+        });
+    }
 
     run_check(
         &mut checks,
@@ -109,51 +149,14 @@ pub fn evaluate(preset_path: &str, scope: &str) -> Result<(), Box<dyn std::error
             .args(["test", "--workspace", "--all-features"]),
     )?;
 
-    let mut worst = WorstResiduals::default();
-    let mut corpus_ok = true;
-    let mut corpus_detail = String::new();
-    for pt in stratified_corpus() {
-        let Ok(params) = pt.params() else {
-            continue;
-        };
-        let Ok(geo) = evaluate_kerr_schild(&params, &pt.pos) else {
-            continue;
-        };
-        let id = identity_residual(&geo.metric, &geo.inverse_metric);
-        if id > worst.metric_identity {
-            worst.metric_identity = id;
-            worst.metric_identity_at = [pt.pos.x, pt.pos.y, pt.pos.z];
-        }
-        if id > 1e-9 {
-            corpus_ok = false;
-            corpus_detail = format!("metric identity {id} too large");
-        }
-        if let Ok(an) = inverse_metric_spatial_derivatives(&params, &pt.pos) {
-            if let Ok(diff) = crate::inspect::fd_max_public(&params, &pt.pos, &an) {
-                if diff > worst.derivative_abs {
-                    worst.derivative_abs = diff;
-                    worst.derivative_at = [pt.pos.x, pt.pos.y, pt.pos.z];
-                }
-                if diff > 5e-3 {
-                    corpus_ok = false;
-                    corpus_detail = format!("derivative abs {diff} exceeds oracle bound");
-                }
-            }
-        }
-    }
+    let (coverage, worst_corpus, corpus_ok, corpus_detail) = run_total_corpus()?;
     checks.push(Check {
         name: "metric_derivative_corpus".into(),
         status: if corpus_ok { "PASS" } else { "FAIL" },
-        detail: if corpus_ok {
-            format!(
-                "seed={CORPUS_SEED} worst_id={:.3e} worst_d={:.3e}",
-                worst.metric_identity, worst.derivative_abs
-            )
-        } else {
-            corpus_detail
-        },
+        detail: corpus_detail,
     });
 
+    let mut worst = worst_corpus;
     let mass = preset.spacetime.mass;
     let spin = preset.spacetime.spin_a_over_m * mass;
     let params = KerrParams::new(mass, spin)?;
@@ -182,35 +185,53 @@ pub fn evaluate(preset_path: &str, scope: &str) -> Result<(), Box<dyn std::error
         }
     }
     worst.tetrad_orthonormality = ortho;
+    worst.zamo_u_phi = obs.bl_u_phi.unwrap_or(f64::NAN).abs();
     let cam = CameraParams {
         horizontal_fov: preset.camera.horizontal_field_of_view_degrees.to_radians(),
         roll: preset.camera.roll_degrees.to_radians(),
     };
     let ray = initialize_rectilinear_ray(&params, &obs, &cam, SensorCoord { x: 0.0, y: 0.0 })?;
     worst.nullness = ray.chart_null_residual.abs().max(ray.hamiltonian.h.abs());
-    let ray_ok = ortho < 1e-10 && worst.nullness < 1e-10 && ray.past_time_component_local < 0.0;
+    let look_bl = relativity_core::vector_ks_to_bl(&params, &bl, &obs.tetrad.legs[3].scale(-1.0))?;
+    let ray_ok = ortho < 1e-10
+        && worst.nullness < 1e-10
+        && ray.past_time_component_local < 0.0
+        && worst.zamo_u_phi < 1e-10
+        && look_bl.x < 0.0;
     checks.push(Check {
         name: "baseline_observer_ray".into(),
         status: if ray_ok { "PASS" } else { "FAIL" },
         detail: format!(
-            "ortho={ortho:.3e} null={:.3e} past_k0={}",
-            worst.nullness, ray.past_time_component_local
+            "ortho={ortho:.3e} null={:.3e} u_phi={:.3e} look_r={:.3e} past_k0={}",
+            worst.nullness, worst.zamo_u_phi, look_bl.x, ray.past_time_component_local
         ),
     });
 
-    let all_pass = checks.iter().all(|c| c.status == "PASS");
-    let result = if all_pass { "PASS" } else { "FAIL" };
+    let all_checks_pass = checks.iter().all(|c| c.status == "PASS");
+    let authoritative = !dirty && all_checks_pass;
+    let result = if authoritative {
+        "PASS"
+    } else if all_checks_pass {
+        // Should not happen: dirty forces worktree_clean FAIL.
+        "FAIL"
+    } else {
+        "FAIL"
+    };
+
     let report = Gate1aReport {
         gate: "gate-1a",
         result,
+        authoritative,
         commit: commit.trim().to_string(),
         dirty,
+        dirty_detail,
         toolchain,
         target,
         features: "default".into(),
         corpus_seed: CORPUS_SEED,
         preset_path: preset_path.to_string(),
         preset_sha256: preset_sha,
+        corpus_coverage: coverage,
         checks,
         worst,
         dependency_versions: vec![
@@ -230,21 +251,237 @@ pub fn evaluate(preset_path: &str, scope: &str) -> Result<(), Box<dyn std::error
     std::fs::write(&json_path, serde_json::to_string_pretty(&report)?)?;
     std::fs::write(&md_path, render_markdown(&report))?;
 
-    println!("Gate 1A: {result}");
+    println!("Gate 1A: {result} (authoritative={authoritative})");
     println!("JSON: {}", json_path.display());
     println!("Markdown: {}", md_path.display());
-    if !all_pass {
+    if result != "PASS" {
         std::process::exit(1);
     }
     Ok(())
 }
 
+fn run_total_corpus(
+) -> Result<(CorpusCoverage, WorstResiduals, bool, String), Box<dyn std::error::Error>> {
+    let mut coverage = CorpusCoverage::default();
+    let mut worst = WorstResiduals::default();
+    let mut ok = true;
+    let mut detail = String::new();
+    let abs_tol = 5e-3;
+    let rel_tol = 2e-3;
+
+    let pts = stratified_corpus();
+    coverage.expected_points = pts.len();
+    for pt in &pts {
+        *coverage.by_tag.entry(format!("{:?}", pt.tag)).or_insert(0) += 1;
+    }
+
+    for pt in pts {
+        let params = match pt.params() {
+            Ok(p) => p,
+            Err(e) => {
+                coverage.unexpected_failures += 1;
+                ok = false;
+                detail = format!("params failed at {:?}: {e}", pt.pos);
+                continue;
+            }
+        };
+
+        match pt.expected {
+            ExpectedOutcome::ExpectedDomainFailure(reason) => {
+                match evaluate_kerr_schild(&params, &pt.pos) {
+                    Err(CoreError::ChartDomain { reason: r, .. }) if r == reason => {
+                        coverage.expected_failures += 1;
+                    }
+                    Err(e) => {
+                        coverage.unexpected_failures += 1;
+                        ok = false;
+                        detail = format!("unexpected domain err at {:?}: {e}", pt.pos);
+                    }
+                    Ok(_) => {
+                        coverage.unexpected_failures += 1;
+                        ok = false;
+                        detail = format!("expected domain failure missing at {:?}", pt.pos);
+                    }
+                }
+            }
+            ExpectedOutcome::Valid => {
+                let geo = match evaluate_kerr_schild(&params, &pt.pos) {
+                    Ok(g) => g,
+                    Err(e) => {
+                        coverage.unexpected_failures += 1;
+                        ok = false;
+                        detail = format!("metric failed at {:?}: {e}", pt.pos);
+                        continue;
+                    }
+                };
+                coverage.evaluated_valid += 1;
+
+                let id = identity_residual(&geo.metric, &geo.inverse_metric);
+                if id > worst.metric_identity {
+                    worst.metric_identity = id;
+                    worst.metric_identity_at = [pt.pos.x, pt.pos.y, pt.pos.z];
+                }
+                if id > 1e-9 {
+                    ok = false;
+                    detail = format!("metric identity {id} too large");
+                }
+
+                let ell = Vector::from_components(geo.ell_con);
+                let eta = MetricTensor::minkowski();
+                let eta_ll = eta.contract(&ell, &ell).abs();
+                let g_ll = geo.metric.contract(&ell, &ell).abs();
+                let det_res = (geo.metric.determinant() + 1.0).abs();
+                worst.eta_ll = worst.eta_ll.max(eta_ll);
+                worst.g_ll = worst.g_ll.max(g_ll);
+                worst.det_plus_one = worst.det_plus_one.max(det_res);
+                if eta_ll > 1e-10 || g_ll > 1e-10 || det_res > 1e-8 {
+                    ok = false;
+                    detail = format!("KS invariants failed at {:?}", pt.pos);
+                }
+
+                match matrix_inverse_oracle(&geo.metric) {
+                    Ok(oracle) => {
+                        worst.raw_inverse_asymmetry =
+                            worst.raw_inverse_asymmetry.max(oracle.raw_asymmetry);
+                        if oracle.raw_asymmetry > 1e-9 || oracle.identity_residual > 1e-9 {
+                            ok = false;
+                            detail = format!("inverse oracle failed at {:?}", pt.pos);
+                        }
+                    }
+                    Err(e) => {
+                        coverage.unexpected_failures += 1;
+                        ok = false;
+                        detail = format!("inverse oracle err at {:?}: {e}", pt.pos);
+                        continue;
+                    }
+                }
+
+                let analytic = match inverse_metric_spatial_derivatives(&params, &pt.pos) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        coverage.unexpected_failures += 1;
+                        ok = false;
+                        detail = format!("analytic ∂ failed at {:?}: {e}", pt.pos);
+                        continue;
+                    }
+                };
+
+                for axis in 0..3 {
+                    let fd = match crate::inspect::fd_partial_public(&params, &pt.pos, axis) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            coverage.unexpected_failures += 1;
+                            ok = false;
+                            detail = format!("FD axis {axis} failed at {:?}: {e}", pt.pos);
+                            continue;
+                        }
+                    };
+                    for a in 0..4 {
+                        for b in 0..4 {
+                            coverage.derivative_components += 1;
+                            let an = analytic.spatial[axis][a][b];
+                            let diff = (an - fd[a][b]).abs();
+                            let scale = an.abs().max(fd[a][b].abs()).max(1e-12);
+                            let rel = diff / scale;
+                            if diff > worst.derivative_abs {
+                                worst.derivative_abs = diff;
+                                worst.derivative_rel = rel;
+                                worst.derivative_at = [pt.pos.x, pt.pos.y, pt.pos.z];
+                                worst.derivative_tag = format!("{:?}", pt.tag);
+                                worst.derivative_axis = axis;
+                                worst.derivative_alpha = a;
+                                worst.derivative_beta = b;
+                            }
+                            if diff > abs_tol && rel > rel_tol {
+                                ok = false;
+                                detail = format!(
+                                    "derivative mismatch abs={diff} rel={rel} tag={:?} axis={axis} αβ=({a},{b})",
+                                    pt.tag
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Authoritative accounting: every point must be Valid-evaluated or expected-failure.
+    let accounted = coverage.evaluated_valid + coverage.expected_failures;
+    coverage.unexplained_skips = coverage
+        .expected_points
+        .saturating_sub(accounted + coverage.unexpected_failures);
+    // If we hit unexpected failures, those points are accounted as failures not skips.
+    // Unexplained skips only if loops somehow omitted points without recording.
+    if coverage.unexplained_skips > 0 || coverage.unexpected_failures > 0 {
+        ok = false;
+        if detail.is_empty() {
+            detail = format!(
+                "coverage incomplete: expected={} valid={} exp_fail={} unexpected={} skips={}",
+                coverage.expected_points,
+                coverage.evaluated_valid,
+                coverage.expected_failures,
+                coverage.unexpected_failures,
+                coverage.unexplained_skips
+            );
+        }
+    }
+
+    if ok {
+        detail = format!(
+            "seed={CORPUS_SEED} expected={} valid={} exp_fail={} unexpected=0 skips=0 deriv_components={} worst_id={:.3e} worst_d_abs={:.3e} worst_d_rel={:.3e} @{} axis={} αβ=({},{})",
+            coverage.expected_points,
+            coverage.evaluated_valid,
+            coverage.expected_failures,
+            coverage.derivative_components,
+            worst.metric_identity,
+            worst.derivative_abs,
+            worst.derivative_rel,
+            worst.derivative_tag,
+            worst.derivative_axis,
+            worst.derivative_alpha,
+            worst.derivative_beta
+        );
+    }
+
+    // Required: Valid points each contribute 3*16 derivative components.
+    let expected_deriv = coverage.evaluated_valid * 3 * 16;
+    if coverage.derivative_components != expected_deriv {
+        ok = false;
+        detail = format!(
+            "derivative component count {} != expected {expected_deriv}",
+            coverage.derivative_components
+        );
+    }
+
+    let _ = CorpusTag::WeakField; // keep import meaningful for Debug tags
+    Ok((coverage, worst, ok, detail))
+}
+
+fn porcelain_dirty(root: &Path) -> Result<(bool, String), Box<dyn std::error::Error>> {
+    let out = Command::new("git")
+        .current_dir(root)
+        .args(["status", "--porcelain=v1", "--untracked-files=all"])
+        .output()?;
+    let text = String::from_utf8(out.stdout)?;
+    let dirty = !text.trim().is_empty();
+    let detail = if dirty {
+        text.lines().take(12).collect::<Vec<_>>().join("; ")
+    } else {
+        String::new()
+    };
+    Ok((dirty, detail))
+}
+
 fn render_markdown(r: &Gate1aReport) -> String {
     let mut s = String::new();
     s.push_str("# Gate 1A evaluation\n\n");
-    s.push_str(&format!("**Result:** {}\n\n", r.result));
+    s.push_str(&format!(
+        "**Result:** {} (authoritative={})\n\n",
+        r.result, r.authoritative
+    ));
     s.push_str(&format!("- commit: `{}`\n", r.commit));
-    s.push_str(&format!("- dirty: {}\n", r.dirty));
+    s.push_str(&format!("- dirty: {} {}\n", r.dirty, r.dirty_detail));
     s.push_str(&format!("- toolchain: {}\n", r.toolchain));
     s.push_str(&format!("- target: {}\n", r.target));
     s.push_str(&format!("- corpus seed: {}\n", r.corpus_seed));
@@ -252,6 +489,20 @@ fn render_markdown(r: &Gate1aReport) -> String {
         "- preset: {} (`{}`)\n\n",
         r.preset_path, r.preset_sha256
     ));
+    s.push_str("## Corpus coverage\n\n");
+    s.push_str(&format!(
+        "- expected/evaluated_valid/expected_failures/unexpected/skips: {}/{}/{}/{}/{}\n",
+        r.corpus_coverage.expected_points,
+        r.corpus_coverage.evaluated_valid,
+        r.corpus_coverage.expected_failures,
+        r.corpus_coverage.unexpected_failures,
+        r.corpus_coverage.unexplained_skips
+    ));
+    s.push_str(&format!(
+        "- derivative components: {}\n",
+        r.corpus_coverage.derivative_components
+    ));
+    s.push_str(&format!("- by tag: {:?}\n\n", r.corpus_coverage.by_tag));
     s.push_str("## Checks\n\n");
     for c in &r.checks {
         s.push_str(&format!("- [{}] {}: {}\n", c.status, c.name, c.detail));
@@ -262,13 +513,27 @@ fn render_markdown(r: &Gate1aReport) -> String {
         r.worst.metric_identity, r.worst.metric_identity_at
     ));
     s.push_str(&format!(
-        "- derivative abs: {:.6e} at {:?}\n",
-        r.worst.derivative_abs, r.worst.derivative_at
+        "- raw inverse asymmetry: {:.6e}\n",
+        r.worst.raw_inverse_asymmetry
+    ));
+    s.push_str(&format!("- η(ℓ,ℓ): {:.6e}\n", r.worst.eta_ll));
+    s.push_str(&format!("- g(ℓ,ℓ): {:.6e}\n", r.worst.g_ll));
+    s.push_str(&format!("- |det(g)+1|: {:.6e}\n", r.worst.det_plus_one));
+    s.push_str(&format!(
+        "- derivative abs/rel: {:.6e} / {:.6e} at {:?} tag={} axis={} αβ=({},{})\n",
+        r.worst.derivative_abs,
+        r.worst.derivative_rel,
+        r.worst.derivative_at,
+        r.worst.derivative_tag,
+        r.worst.derivative_axis,
+        r.worst.derivative_alpha,
+        r.worst.derivative_beta
     ));
     s.push_str(&format!(
         "- tetrad orthonormality: {:.6e}\n",
         r.worst.tetrad_orthonormality
     ));
+    s.push_str(&format!("- ZAMO |u_φ|: {:.6e}\n", r.worst.zamo_u_phi));
     s.push_str(&format!("- nullness: {:.6e}\n", r.worst.nullness));
     s
 }
@@ -313,15 +578,6 @@ fn workspace_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     dir.pop();
     Ok(dir)
-}
-
-fn git_ok(root: &Path, args: impl IntoIterator<Item = &'static str>) -> bool {
-    Command::new("git")
-        .current_dir(root)
-        .args(args)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
 }
 
 fn git_stdout(

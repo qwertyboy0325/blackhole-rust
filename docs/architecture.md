@@ -5,7 +5,7 @@
 | Concern | Selected decision | Why |
 |---|---|---|
 | Primary geodesics | Canonical 8D Hamilton equations | First order, coordinate-generic, null Hamiltonian is a direct diagnostic |
-| Coordinates | Cartesian Kerr-Schild | Horizon-penetrating and axis-regular; demonstrated by GRay2 and Skylight |
+| Coordinates | Cartesian Kerr-Schild (ingoing; via spherical KS `(T,r,θ,ψ)`) | Horizon-penetrating and axis-regular; demonstrated by GRay2 and Skylight; BL↔KS uses `dT/dt,dψ/dφ` radial terms |
 | CPU integration | Adaptive DOP853 in Rust `f64` | High-order non-stiff oracle with embedded error estimate and dense output |
 | Events | Bracket plus dense-output root localization; subdivide ambiguous steps | Prevents endpoint-only disk/horizon misses and produces ordered events |
 | Camera | Local orthonormal tetrad attached to an explicit observer four-velocity | Separates local optics from coordinates and supports moving observers |

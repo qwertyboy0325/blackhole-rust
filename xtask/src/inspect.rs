@@ -44,9 +44,14 @@ pub fn inspect_point(
     let mut oracle_diff = 0.0_f64;
     for i in 0..4 {
         for j in 0..4 {
-            oracle_diff = oracle_diff.max((geo.inverse_metric.get(i, j) - oracle.get(i, j)).abs());
+            oracle_diff =
+                oracle_diff.max((geo.inverse_metric.get(i, j) - oracle.inverse.get(i, j)).abs());
         }
     }
+    notes.push(format!(
+        "raw inverse asymmetry {:.3e}",
+        oracle.raw_asymmetry
+    ));
     let analytic = inverse_metric_spatial_derivatives(&params, &pos)?;
     let fd_diff = fd_max_diff(&params, &pos, &analytic)?;
     if !geo.radius.used_direct_branch {
@@ -76,12 +81,41 @@ pub fn inspect_point(
     emit(&report, format)
 }
 
-pub(crate) fn fd_max_public(
+pub(crate) fn fd_partial_public(
     params: &KerrParams,
     pos: &PositionKs,
-    analytic: &relativity_core::InverseMetricDerivatives,
-) -> Result<f64, Box<dyn std::error::Error>> {
-    fd_max_diff(params, pos, analytic)
+    axis: usize,
+) -> Result<[[f64; 4]; 4], Box<dyn std::error::Error>> {
+    let r = evaluate_kerr_schild(params, pos)?.radius.r;
+    let coord = [pos.x, pos.y, pos.z][axis];
+    let scale = coord.abs().max(r).max(1e-16);
+    let h = (1e-6 * scale).clamp(1e-14, 1e-4);
+    let mut plus = *pos;
+    let mut minus = *pos;
+    match axis {
+        0 => {
+            plus.x += h;
+            minus.x -= h;
+        }
+        1 => {
+            plus.y += h;
+            minus.y -= h;
+        }
+        2 => {
+            plus.z += h;
+            minus.z -= h;
+        }
+        _ => return Err("bad axis".into()),
+    }
+    let gp = evaluate_kerr_schild(params, &plus)?.inverse_metric;
+    let gm = evaluate_kerr_schild(params, &minus)?.inverse_metric;
+    let mut out = [[0.0; 4]; 4];
+    for a in 0..4 {
+        for b in 0..4 {
+            out[a][b] = (gp.get(a, b) - gm.get(a, b)) / (2.0 * h);
+        }
+    }
+    Ok(out)
 }
 
 fn fd_max_diff(
@@ -89,35 +123,12 @@ fn fd_max_diff(
     pos: &PositionKs,
     analytic: &relativity_core::InverseMetricDerivatives,
 ) -> Result<f64, Box<dyn std::error::Error>> {
-    let r = evaluate_kerr_schild(params, pos)?.radius.r;
     let mut max = 0.0_f64;
     for axis in 0..3 {
-        let coord = [pos.x, pos.y, pos.z][axis];
-        let scale = coord.abs().max(r).max(1e-16);
-        let h = (1e-6 * scale).clamp(1e-14, 1e-4);
-        let mut plus = *pos;
-        let mut minus = *pos;
-        match axis {
-            0 => {
-                plus.x += h;
-                minus.x -= h;
-            }
-            1 => {
-                plus.y += h;
-                minus.y -= h;
-            }
-            2 => {
-                plus.z += h;
-                minus.z -= h;
-            }
-            _ => {}
-        }
-        let gp = evaluate_kerr_schild(params, &plus)?.inverse_metric;
-        let gm = evaluate_kerr_schild(params, &minus)?.inverse_metric;
+        let fd = fd_partial_public(params, pos, axis)?;
         for a in 0..4 {
             for b in 0..4 {
-                let fd = (gp.get(a, b) - gm.get(a, b)) / (2.0 * h);
-                max = max.max((analytic.spatial[axis][a][b] - fd).abs());
+                max = max.max((analytic.spatial[axis][a][b] - fd[a][b]).abs());
             }
         }
     }

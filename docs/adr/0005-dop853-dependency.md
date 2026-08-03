@@ -2,38 +2,40 @@
 
 - Status: Proposed
 - Date: 2026-08-03
+- Updated: 2026-08-03 (PR #1 owner review)
 
 ## Context
 
 ADR 0002 selects adaptive DOP853 with dense-output event localization for the
-CPU `f64` geodesic oracle. Gate 1A must audit Rust crates before adopting one.
-A from-scratch DOP853 implementation is not approved unless the audit shows no
-credible crate can meet the contract.
+CPU `f64` geodesic oracle. Gate 1A audits crates only. Owner review requires a
+Gate 1B0 spike proving the exact callback, dense-output/coefficient,
+stop/restart, guard, and statistics contract before selection.
 
-## Decision (proposed)
+## Decision (proposed — not adopted)
 
-Adopt `ode_solvers` (Apache-2.0) behind an internal integrator adapter in a
-future `relativity-integrate` crate, subject to a Gate 1B spike that proves:
+Defer crate selection until a Gate 1B0 spike compares `ode_solvers::Dop853` and
+`ivp` DOP853 against the frozen checklist in
+`docs/research/dop853-rust-dependency-audit.md`.
 
-- component-scaled tolerances for the 8D Hamiltonian state;
-- dense-output coefficient access adequate for disk/horizon/sky root finding;
-- solout-driven geometry `h_max` guards;
-- deterministic step statistics in evaluation reports.
+Notes from the survey (not a selection):
 
-Do not add the dependency in Gate 1A.
+- `ode_solvers` provides DOP853 with scalar tolerances; public accepted-step
+  dense-coefficient access for an external localizer is unproven.
+- `ivp` exposes vector tolerances, `SolOut`, DOP853 interpolation, and
+  statistics, but is younger and also requires the spike.
+- `diffsol` lacks DOP853.
+
+Do not add an ODE dependency in Gate 1A.
 
 ## Alternatives
 
-- `ivp`: also provides DOP853; younger ecosystem; keep as backup.
-- `diffsol`: MIT, strong events/dense output, but no DOP853 — requires revisiting
-  ADR 0002.
-- From-scratch DOP853: rejected unless the spike shows both crates fail the
-  contract.
+- From-scratch DOP853: rejected unless both crates fail the 1B0 contract and
+  the owner approves a later ADR.
 
 ## Consequences
 
-Gate 1B owns the adapter and calibration. Physics RHS evaluation remains in
-`relativity-core` and must not depend on the ODE crate.
+Gate 1B owns the adapter and calibration after 1B0 evidence. Physics RHS
+evaluation remains in `relativity-core` and must not depend on the ODE crate.
 
 ## References
 

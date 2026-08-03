@@ -1,80 +1,81 @@
-# DOP853 Rust dependency audit (Gate 1A)
+# DOP853 Rust dependency audit (Gate 1A remediation)
 
-**Status:** research only — no production ODE dependency added in Gate 1A.  
-**Date:** 2026-08-03  
-**Related ADR:** `docs/adr/0005-dop853-dependency.md` (Proposed)
+**Status:** research only — no production ODE dependency added.  
+**Date:** 2026-08-03 (updated under PR #1 owner review)  
+**Related ADR:** `docs/adr/0005-dop853-dependency.md` (**Proposed**)
 
 ## Contract required by Gate 0 / ADR 0002
 
 - Adaptive DOP853 (order 8(5,3)) in Rust `f64`
 - Component-scaled absolute/relative tolerances (position vs momentum)
-- Dense output suitable for event localization (order-7 continuous extension)
+- Dense output suitable for **project-owned** event localization
 - Accepted-step callbacks / solout-style inspection
 - Access to step statistics (accepted/rejected, last step, nfcn)
 - Ability to impose geometry-specific maximum-step guards
 - Deterministic behavior on a pinned toolchain
 - Compatible license with `MIT OR Apache-2.0`
-- Prefer `forbid(unsafe_code)` in our integrator crate, or audited unsafe
+
+## Distinction required by owner review
+
+| Capability | Meaning |
+|---|---|
+| Mathematical dense output | Method has order-7 continuous extension coefficients in the literature/code |
+| Public accepted-step dense coefficients | API exposes the coefficient vectors / interpolant state after each accepted step for an external root finder |
+| Sampled output at requested points | API can evaluate `y(x*)` on a grid / continuous model without exposing coefficients |
+| Callback timing | When `solout`/hooks run (accepted step only vs stage) |
+| Dynamic step-guard control | Ability to shrink `h` from a callback based on geometry |
+| Vector tolerance support | Per-component `atol`/`rtol` without external state rescaling |
 
 ## Candidates
 
-### 1. `ode_solvers` 0.6.2
+### 1. `ode_solvers` 0.6.2 (Apache-2.0)
 
 | Criterion | Finding |
 |---|---|
-| License | Apache-2.0 ([crates.io](https://crates.io/crates/ode_solvers)) |
-| Provenance | [srenevey/ode-solvers](https://github.com/srenevey/ode-solvers); Hairer-style DOP853 |
-| Maintenance | Active; 0.6.2 published 2026-06-07; long history since 2018 |
-| Unsafe | Depends on `nalgebra`; crate itself is mostly safe Rust (verify at pin) |
-| Vector/component tolerances | Scalar `rtol`/`atol` in constructors; per-component scales need wrapper/state scaling |
-| Accepted-step callback | `System::solout` after successful steps; can halt |
-| Dense output | DOP853 dense output order 7; continuous output model APIs present for Dopri5 and related paths — confirm Dop853 continuous-output parity at pin |
-| Event localization | No first-class event API; suitable as dense-output primitive under our bracket/root layer |
-| Determinism | Pure `f64` RK; deterministic given identical steps/RHS |
-| Stats | Exposes integration result / step bookkeeping via solver state |
-| `h_max` / domain guards | `from_param` exposes `h_max`, `n_max`, safety factors |
-| API stability | 0.x; nalgebra coupling; adaptation cost moderate |
-| Fit | **Best direct DOP853 match** among surveyed crates |
+| License / provenance | Apache-2.0; [srenevey/ode-solvers](https://github.com/srenevey/ode-solvers) |
+| DOP853 | Present (order 8(5,3), dense output order 7 mathematically) |
+| Tolerances | **Scalar** `rtol`/`atol` in public `Dop853::new` / `from_param` |
+| Callback | `System::solout` after successful steps; can halt |
+| Dense coefficients | **Not proven** for public `Dop853`: continuous-output helpers are documented primarily for Dopri5 paths; accepted-step coefficient access for an external localizer is **unproven** at this audit |
+| Sampled output | Dense/`ContinuousOutputModel` style APIs exist in the crate family; Dop853 parity must be spiked |
+| Step guards | `h_max`, `n_max`, safety factors via `from_param` |
+| Stats | Integration result / bookkeeping via solver state |
+| Event localization contract | **Not established** by public API survey alone |
 
-### 2. `ivp` 0.6.0
+### 2. `ivp` 0.6.0 (Apache-2.0)
 
 | Criterion | Finding |
 |---|---|
-| License | Apache-2.0 ([crates.io](https://crates.io/crates/ivp)) |
-| Provenance | [Ryan-D-Gast/ivp](https://github.com/Ryan-D-Gast/ivp); SciPy-like `solve_ivp` port |
-| Maintenance | Young (2025–2026) but actively versioned; DOP853 listed |
-| Unsafe | Pure-Rust intent; audit at pin |
-| Tolerances | Builder `rtol`/`atol`; vector atol support should be verified against our 8-component state |
-| Callbacks / dense output | Dense output advertised for DOP853/DOPRI5 |
-| Events | SciPy-style events evolving; symplectic path currently lacks events |
-| `h_max` | Likely via builder; confirm at pin |
-| API stability | Early 0.x; lower download/ecosystem mileage than `ode_solvers` |
-| Fit | Strong feature surface; higher adoption risk for Gate 1B |
+| License / provenance | Apache-2.0; [Ryan-D-Gast/ivp](https://github.com/Ryan-D-Gast/ivp) |
+| DOP853 | Listed |
+| Tolerances | Exposes **vector** tolerances |
+| Callback | `SolOut` |
+| Dense / interpolation | DOP853 interpolation advertised |
+| Stats | Step/evaluation statistics exposed |
+| Maturity | Younger ecosystem; requires Gate **1B0** source-level spike |
+| Event localization contract | Promising on paper; **not adopted** until spike proves stop/restart, guards, and coefficient/interpolant access |
 
 ### 3. `diffsol` (MIT)
 
 | Criterion | Finding |
 |---|---|
-| License | MIT ([crates.io](https://crates.io/crates/diffsol)) |
-| Provenance | [martinjrobins/diffsol](https://github.com/martinjrobins/diffsol); JOSS 2026 |
-| Maintenance | Active scientific ODE/DAE library |
-| Methods | BDF, SDIRK/ESDIRK, ERK (TSIT45), etc. — **no DOP853** |
-| Dense output / events | Yes (interpolation + event stop) |
-| Fit | Excellent general ODE toolkit, **wrong method family** for ADR 0002’s DOP853 oracle |
+| Methods | BDF/SDIRK/ERK — **no DOP853** |
+| Fit | Wrong method family for ADR 0002 unless that ADR is revised |
 
-## Recommendation (Proposed, not adopted)
+## Recommendation (still Proposed)
 
-1. Prefer **`ode_solvers`** as the first Gate 1B integration candidate: native DOP853, Apache-2.0, `h_max`, solout, dense output, mature downloads.
-2. Plan an adapter that:
-   - maps our `RayState` ↔ `SVector<f64, 8>` / `DVector<f64>`;
-   - applies component scales for position/momentum tolerances;
-   - wraps solout for metric-domain `h` guards and invariant sampling;
-   - feeds dense output into our bracket/root event localizer (owned by us).
-3. Keep **`ivp`** as a backup if `ode_solvers` dense-output/event ergonomics fail a spike.
-4. Do **not** choose `diffsol` for the primary null-geodesic oracle unless ADR 0002 is revised away from DOP853.
-5. A from-scratch DOP853 is **not** justified by this audit: existing crates can meet the contract with an adapter layer.
+1. **Do not select a production ODE crate in Gate 1A.**
+2. Require a Gate **1B0** implementation spike that, for **both** `ode_solvers::Dop853` and `ivp` DOP853, demonstrates against a frozen checklist:
+   - vector or equivalently scaled component tolerances for the 8D state;
+   - accepted-step callback timing;
+   - either public dense coefficients **or** an interpolant API sufficient for bracketed root finding owned by this repo;
+   - dynamic `h` guards from geometry;
+   - rejected/accepted step statistics;
+   - deterministic replay on the pinned toolchain.
+3. Until that spike lands, ADR 0005 remains **Proposed** with **no preference locked**.
+4. From-scratch DOP853 remains unapproved.
 
 ## Explicit Gate 1A action
 
-- No ODE crate added to workspace dependencies.
-- ADR 0005 left **Proposed** pending owner review and a Gate 1B spike.
+- No ODE crate in workspace dependencies.
+- Prior “prefer `ode_solvers`” language is **withdrawn** as a selection decision; it is only a survey note pending 1B0 evidence.

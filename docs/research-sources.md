@@ -123,10 +123,16 @@ tests, rather than transcribed from an incompatibly licensed repository.
 - **Stable oblate-radius rationalization** `r² = 2 a² z² / (D − A)` when `A < 0`
   follows from multiplying `(A+D)/2` by `(D−A)/(D−A)`. Project derivation; see
   `crates/relativity-core/src/radius.rs` and work-log conditioning notes.
+- **Ingoing Kerr–Schild / BL differentials** used in Gate 1A remediation:
+  `dT = dt + 2Mr/Δ dr`, `dψ = dφ + a/Δ dr`, and
+  `x+iy = (r+ia)e^{iψ}sinθ`, chosen to match the project `ℓ_μ` signs.
+  Documented in `crates/relativity-core/src/coords/` and
+  `docs/physics-assumptions.md`. Access/derivation notes 2026-08-03; no
+  third-party code reused.
 - **ODE crate survey** for future DOP853 adoption:
   `ode_solvers` (Apache-2.0), `ivp` (Apache-2.0), `diffsol` (MIT). Details in
-  `docs/research/dop853-rust-dependency-audit.md`. Access checked 2026-08-03;
-  no crate vendored in Gate 1A.
+  `docs/research/dop853-rust-dependency-audit.md` (updated: no locked preference;
+  Gate 1B0 spike required). Access checked 2026-08-03; no crate vendored.
 
 ## Formats and GPU capability
 

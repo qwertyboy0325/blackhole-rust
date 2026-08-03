@@ -157,24 +157,80 @@ impl LocalComponents {
     }
 }
 
-/// Symmetric `(0,2)` tensor stored as a full 4×4 (symmetry enforced by constructors).
+/// Raw 4×4 matrix for numerical oracles (may be asymmetric).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RawMatrix4 {
+    pub data: [[f64; 4]; 4],
+}
+
+impl RawMatrix4 {
+    #[must_use]
+    pub fn from_components(data: [[f64; 4]; 4]) -> Self {
+        Self { data }
+    }
+
+    #[must_use]
+    pub fn get(&self, i: usize, j: usize) -> f64 {
+        self.data[i][j]
+    }
+
+    #[must_use]
+    pub fn max_abs_asymmetry(&self) -> f64 {
+        let mut m: f64 = 0.0;
+        for i in 0..4 {
+            for j in (i + 1)..4 {
+                m = m.max((self.data[i][j] - self.data[j][i]).abs());
+            }
+        }
+        m
+    }
+
+    #[must_use]
+    pub fn is_finite(&self) -> bool {
+        self.data.iter().flatten().all(|v| v.is_finite())
+    }
+}
+
+/// Symmetric `(0,2)` tensor stored as a full 4×4.
+///
+/// Construction never silently averages asymmetric input.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MetricTensor {
     data: [[f64; 4]; 4],
 }
 
 impl MetricTensor {
-    #[must_use]
-    pub fn from_symmetric(lower: [[f64; 4]; 4]) -> Self {
-        let mut data = lower;
+    /// Mirror the lower triangle (including diagonal) into a symmetric tensor.
+    ///
+    /// Upper-triangle entries of `lower` are **ignored** (not averaged).
+    pub fn from_lower_triangle(lower: [[f64; 4]; 4]) -> Result<Self, CoreError> {
+        let mut data = [[0.0; 4]; 4];
         for i in 0..4 {
-            for j in (i + 1)..4 {
-                let avg = 0.5 * (data[i][j] + data[j][i]);
-                data[i][j] = avg;
-                data[j][i] = avg;
+            for j in 0..=i {
+                let v = lower[i][j];
+                if !v.is_finite() {
+                    return Err(CoreError::NonFinite {
+                        context: "metric component",
+                    });
+                }
+                data[i][j] = v;
+                data[j][i] = v;
             }
         }
-        Self { data }
+        Ok(Self { data })
+    }
+
+    /// Checked conversion from a raw matrix: rejects excessive asymmetry.
+    ///
+    /// On success, uses the lower triangle (no silent averaging of disagreement).
+    pub fn try_from_raw(raw: &RawMatrix4, tol: f64) -> Result<Self, CoreError> {
+        let asym = raw.max_abs_asymmetry();
+        if asym > tol {
+            return Err(CoreError::Unresolved {
+                context: "raw matrix asymmetry exceeds tolerance",
+            });
+        }
+        Self::from_lower_triangle(raw.data)
     }
 
     #[must_use]
@@ -187,6 +243,12 @@ impl MetricTensor {
                 [0.0, 0.0, 0.0, 1.0],
             ],
         }
+    }
+
+    /// Determinant via Leibniz expansion (4×4).
+    #[must_use]
+    pub fn determinant(&self) -> f64 {
+        det4(self.data)
     }
 
     #[must_use]
@@ -299,4 +361,38 @@ pub fn identity_residual(g: &MetricTensor, g_inv: &MetricTensor) -> f64 {
         }
     }
     max
+}
+
+fn det4(m: [[f64; 4]; 4]) -> f64 {
+    let mut det = 0.0;
+    let perm = [
+        ([0usize, 1, 2, 3], 1.0),
+        ([0, 1, 3, 2], -1.0),
+        ([0, 2, 1, 3], -1.0),
+        ([0, 2, 3, 1], 1.0),
+        ([0, 3, 1, 2], 1.0),
+        ([0, 3, 2, 1], -1.0),
+        ([1, 0, 2, 3], -1.0),
+        ([1, 0, 3, 2], 1.0),
+        ([1, 2, 0, 3], 1.0),
+        ([1, 2, 3, 0], -1.0),
+        ([1, 3, 0, 2], -1.0),
+        ([1, 3, 2, 0], 1.0),
+        ([2, 0, 1, 3], 1.0),
+        ([2, 0, 3, 1], -1.0),
+        ([2, 1, 0, 3], -1.0),
+        ([2, 1, 3, 0], 1.0),
+        ([2, 3, 0, 1], 1.0),
+        ([2, 3, 1, 0], -1.0),
+        ([3, 0, 1, 2], -1.0),
+        ([3, 0, 2, 1], 1.0),
+        ([3, 1, 0, 2], 1.0),
+        ([3, 1, 2, 0], -1.0),
+        ([3, 2, 0, 1], -1.0),
+        ([3, 2, 1, 0], 1.0),
+    ];
+    for (p, s) in perm {
+        det += s * m[0][p[0]] * m[1][p[1]] * m[2][p[2]] * m[3][p[3]];
+    }
+    det
 }

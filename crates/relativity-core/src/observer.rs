@@ -3,7 +3,7 @@
 //! Projection, observer motion, and coordinate transformation remain separate.
 //! Sources: BPT1972 (ZAMO/LNRF); James2015 (camera tetrads); ADR 0003.
 
-use crate::coords::{bl_to_ks_position, vector_bl_to_ks};
+use crate::coords::{bl_metric, bl_to_ks_position, vector_bl_to_ks};
 use crate::error::CoreError;
 use crate::kerr::KerrParams;
 use crate::metric::evaluate_kerr_schild;
@@ -11,6 +11,9 @@ use crate::metric::MinkowskiMetric;
 use crate::types::{LocalComponents, MetricTensor, PositionBl, PositionKs, Vector};
 
 /// Orthonormal tetrad `e_(a)^μ` with `e_(0) = u`.
+///
+/// Camera convention: local `−e₃` looks toward the black hole for the baseline
+/// ZAMO (so sensor center maps to the BH direction). `e₁` = right, `e₂` = up.
 #[derive(Debug, Clone, Copy)]
 pub struct Tetrad {
     pub legs: [Vector; 4],
@@ -43,6 +46,8 @@ pub struct Observer {
     pub event: PositionKs,
     pub four_velocity: Vector,
     pub tetrad: Tetrad,
+    /// BL covariant angular momentum residual `u_φ` (0 for ZAMO).
+    pub bl_u_phi: Option<f64>,
 }
 
 /// Minkowski static observer with standard orthonormal frame.
@@ -63,6 +68,7 @@ pub fn minkowski_static_observer(event: PositionKs) -> Result<Observer, CoreErro
         event,
         four_velocity: u,
         tetrad,
+        bl_u_phi: None,
     })
 }
 
@@ -110,17 +116,31 @@ pub fn zamo_observer(params: &KerrParams, bl: &PositionBl) -> Result<Observer, C
     }
     let u_bl = Vector::new(u_t, 0.0, 0.0, u_phi);
 
-    // Spatial BL legs before Gram-Schmidt in KS: ∂_r, ∂_θ, ∂_φ directions.
-    // Build in BL, push to KS, then orthonormalize against KS metric.
-    let e_r_bl = Vector::new(0.0, 1.0, 0.0, 0.0);
-    let e_theta_bl = Vector::new(0.0, 0.0, 1.0, 0.0);
-    let e_phi_bl = Vector::new(0.0, 0.0, 0.0, 1.0);
+    // Independent BL check: ZAMO has u_φ = g_φμ u^μ = 0.
+    let g_bl = bl_metric(params, bl)?;
+    let u_phi_cov = g_bl.mul_vec(&u_bl).z; // BL index order (t,r,θ,φ) → z slot is φ
+                                           // Wait: Covector uses (t,x,y,z) naming but for BL we store (t,r,θ,φ) in those slots.
+    let u_cov_bl = g_bl.mul_vec(&u_bl);
+    let bl_u_phi = u_cov_bl.z; // φ component in our BL packing
+    let _ = u_phi_cov;
+
+    let uu_bl = g_bl.contract(&u_bl, &u_bl);
+    if (uu_bl + 1.0).abs() > 1e-10 {
+        return Err(CoreError::InvalidObserver {
+            context: "ZAMO not normalized in BL metric",
+        });
+    }
+
+    // Camera frame in BL: look = −∂_r (toward BH), up ~ ∂_θ, right ~ ∂_φ.
+    let look_bl = Vector::new(0.0, -1.0, 0.0, 0.0);
+    let up_bl = Vector::new(0.0, 0.0, 1.0, 0.0);
+    let right_bl = Vector::new(0.0, 0.0, 0.0, 1.0);
 
     let event = bl_to_ks_position(params, bl)?;
     let u = vector_bl_to_ks(params, bl, &u_bl)?;
-    let v1 = vector_bl_to_ks(params, bl, &e_r_bl)?;
-    let v2 = vector_bl_to_ks(params, bl, &e_theta_bl)?;
-    let v3 = vector_bl_to_ks(params, bl, &e_phi_bl)?;
+    let look_ks = vector_bl_to_ks(params, bl, &look_bl)?;
+    let up_ks = vector_bl_to_ks(params, bl, &up_bl)?;
+    let right_ks = vector_bl_to_ks(params, bl, &right_bl)?;
 
     let g = evaluate_kerr_schild(params, &event)?.metric;
     let uu = g.contract(&u, &u);
@@ -129,16 +149,28 @@ pub fn zamo_observer(params: &KerrParams, bl: &PositionBl) -> Result<Observer, C
             context: "ZAMO not timelike after KS push",
         });
     }
-    // Renormalize in KS metric (Jacobian path can leave tiny drift).
     let u = normalize_timelike(&g, u)?;
 
-    let tetrad = gram_schmidt_tetrad(&g, u, [v1, v2, v3])?;
+    // Order candidates so GS yields: e1≈right, e2≈up, and e3 = −look
+    // (ray_init looks along −e3 → toward BH).
+    let outward = look_ks.scale(-1.0); // +∂_r direction in chart
+    let tetrad = gram_schmidt_tetrad(&g, u, [right_ks, up_ks, outward])?;
     check_tetrad(&g, &tetrad)?;
+
+    // Confirm look direction (−e3) has negative radial BL component.
+    let look_chart = tetrad.legs[3].scale(-1.0);
+    let look_back_bl = crate::coords::vector_ks_to_bl(params, bl, &look_chart)?;
+    if look_back_bl.x >= 0.0 {
+        return Err(CoreError::TetradFailure {
+            context: "camera look is not toward decreasing BL r",
+        });
+    }
 
     Ok(Observer {
         event,
         four_velocity: tetrad.time_leg(),
         tetrad,
+        bl_u_phi: Some(bl_u_phi),
     })
 }
 
@@ -151,7 +183,6 @@ fn normalize_timelike(g: &MetricTensor, u: Vector) -> Result<Vector, CoreError> 
     }
     let n = (-uu).sqrt();
     let out = u.scale(1.0 / n);
-    // Ensure future-directed: u^t > 0 in KS.
     if out.t <= 0.0 {
         return Err(CoreError::InvalidObserver {
             context: "observer not future-directed (u^t <= 0)",
@@ -172,8 +203,6 @@ fn gram_schmidt_tetrad(
         Vector::new(0.0, 0.0, 0.0, 0.0),
     ];
     for (idx, mut v) in candidates.into_iter().enumerate() {
-        // Metric Gram–Schmidt: v ← v − [g(v,e)/g(e,e)] e
-        // For timelike e0 with g(e0,e0)=−1: v ← v + g(v,e0) e0
         let gv0 = g.contract(&v, &legs[0]);
         v = add(v, legs[0].scale(gv0));
         for j in 1..=idx {
@@ -189,11 +218,9 @@ fn gram_schmidt_tetrad(
         legs[idx + 1] = v.scale(1.0 / vv.sqrt());
     }
 
-    // Enforce right-handed spatial triad relative to e0 via spacetime volume form
-    // approx: ε_{txyz} orientation with Minkowski-like check on components at weak field,
-    // and metric-aware scalar triple product on spatial parts projected orthogonally.
+    // Preserve e₃ (camera −look) when restoring right-handedness.
     if spacetime_handedness(g, &legs) < 0.0 {
-        legs[3] = legs[3].scale(-1.0);
+        legs[1] = legs[1].scale(-1.0);
     }
 
     Ok(Tetrad { legs })
@@ -204,7 +231,6 @@ fn add(a: Vector, b: Vector) -> Vector {
 }
 
 fn spacetime_handedness(g: &MetricTensor, legs: &[Vector; 4]) -> f64 {
-    // Oriented volume: det(e_a^μ) * sqrt(|det g|) sign. Use det of components.
     det4([
         legs[0].components(),
         legs[1].components(),
@@ -214,7 +240,6 @@ fn spacetime_handedness(g: &MetricTensor, legs: &[Vector; 4]) -> f64 {
 }
 
 fn det4_metric_sign(g: &MetricTensor) -> f64 {
-    // For Lorentzian (−+++) det g < 0; orientation factor uses sign(det e).
     let d = det4(g.components());
     if d < 0.0 {
         1.0
@@ -224,7 +249,6 @@ fn det4_metric_sign(g: &MetricTensor) -> f64 {
 }
 
 fn det4(m: [[f64; 4]; 4]) -> f64 {
-    // Leibniz formula
     let mut det = 0.0;
     let perm = [
         ([0, 1, 2, 3], 1.0),
@@ -273,7 +297,6 @@ pub fn check_tetrad(g: &MetricTensor, tetrad: &Tetrad) -> Result<(), CoreError> 
             max_err = max_err.max((gab - eta[a][b]).abs());
         }
     }
-    // Tolerance provenance: algebraic fp noise for orthonormalization; provisional smoke.
     if max_err > 1e-10 {
         return Err(CoreError::TetradFailure {
             context: "orthonormality residual exceeds 1e-10",
@@ -305,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn zamo_normalized_and_orthonormal() {
+    fn zamo_normalized_orthonormal_and_zero_angular_momentum() {
         let p = KerrParams::new(1.0, 0.999).unwrap();
         let bl = PositionBl::new(0.0, 20.0, 85.0_f64.to_radians(), 0.0);
         let obs = zamo_observer(&p, &bl).unwrap();
@@ -313,6 +336,18 @@ mod tests {
         let uu = g.contract(&obs.four_velocity, &obs.four_velocity);
         assert!((uu + 1.0).abs() < 1e-10, "uu={uu}");
         check_tetrad(&g, &obs.tetrad).unwrap();
+        let u_phi = obs.bl_u_phi.unwrap();
+        assert!(u_phi.abs() < 1e-12, "ZAMO u_φ residual {u_phi}");
+    }
+
+    #[test]
+    fn zamo_center_looks_toward_black_hole() {
+        let p = KerrParams::new(1.0, 0.5).unwrap();
+        let bl = PositionBl::new(0.0, 25.0, 1.0, 0.0);
+        let obs = zamo_observer(&p, &bl).unwrap();
+        let look = obs.tetrad.legs[3].scale(-1.0);
+        let look_bl = crate::coords::vector_ks_to_bl(&p, &bl, &look).unwrap();
+        assert!(look_bl.x < 0.0, "look BL radial component {}", look_bl.x);
     }
 
     #[test]

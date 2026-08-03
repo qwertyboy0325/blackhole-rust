@@ -8,7 +8,7 @@
 
 use relativity_core::{
     evaluate_kerr_schild, inverse_metric_spatial_derivatives, stratified_corpus, CorpusTag,
-    KerrParams, PositionKs, CORPUS_SEED,
+    ExpectedOutcome, KerrParams, PositionKs, CORPUS_SEED,
 };
 
 /// Central-difference step scaled to the local coordinate magnitude.
@@ -107,9 +107,12 @@ fn analytic_derivatives_match_fd_oracle() {
 
     let mut compared = 0u64;
     for pt in stratified_corpus() {
+        if !matches!(pt.expected, ExpectedOutcome::Valid) {
+            continue;
+        }
         let params = pt.params().unwrap();
         let Ok(analytic) = inverse_metric_spatial_derivatives(&params, &pt.pos) else {
-            continue;
+            panic!("valid corpus point failed analytic ∂ at {:?}", pt.pos);
         };
         for axis in 0..3 {
             let Some(fd) = fd_partial_ginv(&params, &pt.pos, axis) else {

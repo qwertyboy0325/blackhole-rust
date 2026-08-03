@@ -1,184 +1,221 @@
-//! Boyer–Lindquist ↔ Cartesian Kerr–Schild maps.
+//! Boyer–Lindquist ↔ Cartesian Kerr–Schild via spherical KS.
 //!
-//! Spatial KS embedding of BL coordinates (standard):
+//! ## Ingoing Kerr–Schild convention (project Gate 1A)
+//!
+//! Exterior differentials between BL `(t,r,θ,φ)` and spherical KS `(T,r,θ,ψ)`:
 //! ```text
-//! x = √(r²+a²) sinθ cosφ
-//! y = √(r²+a²) sinθ sinφ
+//! dT = dt_BL + (2 M r / Δ) dr
+//! dψ = dφ_BL + (a / Δ) dr
+//! Δ  = r² − 2 M r + a²
+//! ```
+//! with identity maps on `r` and `θ`.
+//!
+//! Spatial Cartesian embedding (matches `ℓ_μ` used by `metric::kerr_schild`):
+//! ```text
+//! x + i y = (r + i a) e^{iψ} sinθ
 //! z = r cosθ
-//! t_KS = t_BL   (same Killing time for this chart identification)
+//! t_cart = T
 //! ```
 //!
-//! Vector/covector transforms use the Jacobian; they are **not** interchangeable.
-//! Axis (`sinθ → 0`) and horizon (`Δ → 0` for some BL-dependent ops) return
-//! typed ill-conditioned / singular errors rather than silent NaNs.
+//! Event placement gauge: at a BL event we set `T = t_BL` and `ψ = φ_BL`
+//! (vanishing integration constants at that event). Vector/covector maps still
+//! use the full Jacobian including `∂T/∂r` and `∂ψ/∂r`.
 //!
-//! Sources: Boyer & Lindquist (1967); Carter (1968); project physics-assumptions.
+//! Do **not** treat `t`/`φ` as identical to `T`/`ψ` outside this gauge choice.
+//!
+//! Sources: Boyer & Lindquist (1967); Carter (1968); Kerr–Schild embedding as
+//! used with GRay2 `ℓ_μ`; owner Gate 1A remediation note.
 
-use crate::error::{CoreError, DomainReason};
+use crate::coords::kerr_schild_spherical::{
+    cartesian_from_spherical_ks, jacobian_cartesian_from_spherical_ks, spherical_ks_from_cartesian,
+    PositionSphericalKs,
+};
+use crate::error::CoreError;
 use crate::kerr::KerrParams;
-use crate::radius::evaluate_oblate_radius;
-use crate::types::{Covector, PositionBl, PositionKs, Vector};
+use crate::types::{Covector, MetricTensor, PositionBl, PositionKs, Vector};
 
 const AXIS_SIN_FLOOR: f64 = 1e-14;
+const HORIZON_DELTA_FLOOR: f64 = 1e-14;
 
-/// BL position → Cartesian KS position.
-pub fn bl_to_ks_position(params: &KerrParams, bl: &PositionBl) -> Result<PositionKs, CoreError> {
-    bl.require_finite("BL position")?;
+/// Independent Boyer–Lindquist Kerr metric at an exterior (or interior) BL event.
+///
+/// Standard components with signature `(-,+,+,+)`:
+/// ```text
+/// Σ = r² + a² cos²θ
+/// Δ = r² − 2 M r + a²
+/// A = (r²+a²)² − Δ a² sin²θ
+/// g_tt = −(1 − 2 M r / Σ)
+/// g_tφ = −2 M a r sin²θ / Σ
+/// g_rr = Σ/Δ
+/// g_θθ = Σ
+/// g_φφ = A sin²θ / Σ
+/// ```
+pub fn bl_metric(params: &KerrParams, bl: &PositionBl) -> Result<MetricTensor, CoreError> {
+    bl.require_finite("BL metric")?;
     if bl.r <= 0.0 {
         return Err(CoreError::IllConditioned {
-            context: "BL r must be > 0 for KS embedding used in Gate 1A",
+            context: "BL metric requires r > 0",
         });
     }
-    let a = params.spin();
     let sth = bl.theta.sin();
-    let cth = bl.theta.cos();
-    let sph = bl.phi.sin();
-    let cph = bl.phi.cos();
-    let ra = (bl.r * bl.r + a * a).sqrt();
-    if !ra.is_finite() {
-        return Err(CoreError::Unresolved {
-            context: "sqrt(r^2+a^2)",
-        });
-    }
-    Ok(PositionKs::new(
-        bl.t,
-        ra * sth * cph,
-        ra * sth * sph,
-        bl.r * cth,
-    ))
-}
-
-/// Cartesian KS → BL position (reporting chart).
-pub fn ks_to_bl_position(params: &KerrParams, ks: &PositionKs) -> Result<PositionBl, CoreError> {
-    ks.require_finite("KS position")?;
-    let obl = evaluate_oblate_radius(params, ks)?;
-    let r = obl.r;
-    let cth = ks.z / r;
-    if !cth.is_finite() || cth.abs() > 1.0 + 1e-12 {
-        return Err(CoreError::IllConditioned {
-            context: "KS to BL cosθ",
-        });
-    }
-    let cth = cth.clamp(-1.0, 1.0);
-    let theta = cth.acos();
-    let sth = theta.sin();
     if sth.abs() < AXIS_SIN_FLOOR {
-        return Err(CoreError::ChartDomain {
-            x: ks.x,
-            y: ks.y,
-            z: ks.z,
-            reason: DomainReason::BoyerLindquistSingular,
+        return Err(CoreError::IllConditioned {
+            context: "BL metric ill-conditioned on axis",
         });
     }
-    // φ from x,y with the a-twist removed via standard atan2 on cylindrical coords.
-    // x + i y = √(r²+a²) sinθ e^{iφ}
-    let phi = ks.y.atan2(ks.x);
-    if !phi.is_finite() || !theta.is_finite() {
-        return Err(CoreError::Unresolved {
-            context: "KS to BL angles",
-        });
-    }
-    Ok(PositionBl::new(ks.t, r, theta, phi))
-}
-
-/// Jacobian `∂x_KS^μ / ∂x_BL^ν` at a BL event (rows KS, cols BL).
-fn jacobian_ks_from_bl(params: &KerrParams, bl: &PositionBl) -> Result<[[f64; 4]; 4], CoreError> {
-    bl.require_finite("BL jacobian")?;
+    let m = params.mass();
     let a = params.spin();
     let r = bl.r;
-    let sth = bl.theta.sin();
     let cth = bl.theta.cos();
-    let sph = bl.phi.sin();
-    let cph = bl.phi.cos();
+    let sigma = r * r + a * a * cth * cth;
+    let delta = r * r - 2.0 * m * r + a * a;
+    if !(sigma > 0.0 && sigma.is_finite()) {
+        return Err(CoreError::Unresolved { context: "BL Σ" });
+    }
+    if delta.abs() < HORIZON_DELTA_FLOOR {
+        return Err(CoreError::IllConditioned {
+            context: "BL metric singular at horizon (Δ≈0)",
+        });
+    }
+    let sth2 = sth * sth;
+    let a_factor = (r * r + a * a).powi(2) - delta * a * a * sth2;
+    let g_tt = -(1.0 - 2.0 * m * r / sigma);
+    let g_tphi = -2.0 * m * a * r * sth2 / sigma;
+    let g_rr = sigma / delta;
+    let g_thth = sigma;
+    let g_phiphi = a_factor * sth2 / sigma;
+
+    // Lower triangle only; checked mirror constructor.
+    MetricTensor::from_lower_triangle([
+        [g_tt, 0.0, 0.0, g_tphi],
+        [0.0, g_rr, 0.0, 0.0],
+        [0.0, 0.0, g_thth, 0.0],
+        [g_tphi, 0.0, 0.0, g_phiphi],
+    ])
+}
+
+/// BL position → Cartesian KS using spherical-KS intermediate and placement gauge.
+pub fn bl_to_ks_position(params: &KerrParams, bl: &PositionBl) -> Result<PositionKs, CoreError> {
+    let sph = bl_to_spherical_ks_placement(params, bl)?;
+    cartesian_from_spherical_ks(params, &sph)
+}
+
+/// Cartesian KS → BL reporting coordinates under the placement gauge `ψ ↔ φ`, `T ↔ t`.
+pub fn ks_to_bl_position(params: &KerrParams, ks: &PositionKs) -> Result<PositionBl, CoreError> {
+    let sph = spherical_ks_from_cartesian(params, ks)?;
+    // Reporting gauge: identify φ with ψ and t with T at the event.
+    Ok(PositionBl::new(sph.t, sph.r, sph.theta, sph.psi))
+}
+
+fn bl_to_spherical_ks_placement(
+    params: &KerrParams,
+    bl: &PositionBl,
+) -> Result<PositionSphericalKs, CoreError> {
+    bl.require_finite("BL→spherical KS")?;
+    if bl.r <= 0.0 {
+        return Err(CoreError::IllConditioned {
+            context: "BL r must be > 0 for KS embedding",
+        });
+    }
+    let _ = params;
+    // Placement gauge: T=t, ψ=φ at this event.
+    Ok(PositionSphericalKs::new(bl.t, bl.r, bl.theta, bl.phi))
+}
+
+/// Jacobian `∂x_cart^μ / ∂x_BL^ν` at a BL event (rows Cartesian KS, cols BL).
+pub fn jacobian_cartesian_ks_from_bl(
+    params: &KerrParams,
+    bl: &PositionBl,
+) -> Result<[[f64; 4]; 4], CoreError> {
+    bl.require_finite("BL→KS jacobian")?;
+    let sth = bl.theta.sin();
     if sth.abs() < AXIS_SIN_FLOOR {
         return Err(CoreError::IllConditioned {
             context: "BL axis: jacobian ill-conditioned",
         });
     }
-    let ra2 = r * r + a * a;
-    let ra = ra2.sqrt();
-    let dra_dr = r / ra;
+    let m = params.mass();
+    let a = params.spin();
+    let r = bl.r;
+    let delta = r * r - 2.0 * m * r + a * a;
+    if delta.abs() < HORIZON_DELTA_FLOOR {
+        return Err(CoreError::IllConditioned {
+            context: "BL↔KS jacobian singular near horizon (Δ≈0)",
+        });
+    }
+    if delta < 0.0 {
+        // Interior: Δ < 0 is mathematically fine for the differential map, but
+        // BL reporting remains singular for many other operations. Allow with care.
+    }
 
-    // x = ra sinθ cosφ, y = ra sinθ sinφ, z = r cosθ, t = t
+    let sph = bl_to_spherical_ks_placement(params, bl)?;
+    let j_cs = jacobian_cartesian_from_spherical_ks(params, &sph)?;
+
+    // J_sph←BL: (T,r,θ,ψ) from (t,r,θ,φ)
+    // T_t=1, T_r=2Mr/Δ; r_r=1; θ_θ=1; ψ_φ=1, ψ_r=a/Δ
+    let mut j_sb = [[0.0; 4]; 4];
+    j_sb[0][0] = 1.0;
+    j_sb[0][1] = 2.0 * m * r / delta;
+    j_sb[1][1] = 1.0;
+    j_sb[2][2] = 1.0;
+    j_sb[3][1] = a / delta;
+    j_sb[3][3] = 1.0;
+
+    // J_cart←BL = J_cart←sph · J_sph←BL
     let mut j = [[0.0; 4]; 4];
-    j[0][0] = 1.0; // ∂t/∂t
+    for mu in 0..4 {
+        for nu in 0..4 {
+            let mut s = 0.0;
+            for k in 0..4 {
+                s += j_cs[mu][k] * j_sb[k][nu];
+            }
+            j[mu][nu] = s;
+        }
+    }
 
-    // ∂x/∂r, ∂x/∂θ, ∂x/∂φ
-    j[1][1] = dra_dr * sth * cph;
-    j[1][2] = ra * cth * cph;
-    j[1][3] = -ra * sth * sph;
-
-    j[2][1] = dra_dr * sth * sph;
-    j[2][2] = ra * cth * sph;
-    j[2][3] = ra * sth * cph;
-
-    j[3][1] = cth;
-    j[3][2] = -r * sth;
-    j[3][3] = 0.0;
+    // Explicit exterior radial time/azimuth terms must be present when a,M ≠ 0.
+    if m != 0.0 && (j[0][1] - 2.0 * m * r / delta).abs() > 1e-12 {
+        return Err(CoreError::Unresolved {
+            context: "jacobian ∂T/∂r mismatch",
+        });
+    }
 
     Ok(j)
 }
 
-/// Transform a BL contravariant vector to KS: `v_KS^μ = (∂x_KS^μ/∂x_BL^ν) v_BL^ν`.
+/// Transform a BL contravariant vector to Cartesian KS.
 pub fn vector_bl_to_ks(
     params: &KerrParams,
     bl: &PositionBl,
     v_bl: &Vector,
 ) -> Result<Vector, CoreError> {
-    let j = jacobian_ks_from_bl(params, bl)?;
-    let vb = v_bl.components();
-    let mut out = [0.0; 4];
-    for mu in 0..4 {
-        for nu in 0..4 {
-            out[mu] += j[mu][nu] * vb[nu];
-        }
-    }
-    let v = Vector::from_components(out);
-    if !v.is_finite() {
-        return Err(CoreError::Unresolved {
-            context: "vector BL→KS",
-        });
-    }
-    Ok(v)
+    let j = jacobian_cartesian_ks_from_bl(params, bl)?;
+    apply_jacobian_vector(&j, v_bl, "vector BL→KS")
 }
 
-/// Transform a KS contravariant vector to BL via inverse Jacobian.
+/// Transform a Cartesian KS contravariant vector to BL.
 pub fn vector_ks_to_bl(
     params: &KerrParams,
     bl: &PositionBl,
     v_ks: &Vector,
 ) -> Result<Vector, CoreError> {
-    let j = jacobian_ks_from_bl(params, bl)?;
+    let j = jacobian_cartesian_ks_from_bl(params, bl)?;
     let j_inv = invert4(&j)?;
-    let vk = v_ks.components();
-    let mut out = [0.0; 4];
-    for mu in 0..4 {
-        for nu in 0..4 {
-            out[mu] += j_inv[mu][nu] * vk[nu];
-        }
-    }
-    let v = Vector::from_components(out);
-    if !v.is_finite() {
-        return Err(CoreError::Unresolved {
-            context: "vector KS→BL",
-        });
-    }
-    Ok(v)
+    apply_jacobian_vector(&j_inv, v_ks, "vector KS→BL")
 }
 
-/// Covector BL → KS: `p_μ^KS = p_ν^BL (∂x_BL^ν / ∂x_KS^μ) = p_ν^BL (J^{-1})^ν_μ`.
+/// Covector BL → KS.
 pub fn covector_bl_to_ks(
     params: &KerrParams,
     bl: &PositionBl,
     p_bl: &Covector,
 ) -> Result<Covector, CoreError> {
-    let j = jacobian_ks_from_bl(params, bl)?;
+    let j = jacobian_cartesian_ks_from_bl(params, bl)?;
     let j_inv = invert4(&j)?;
     let pb = p_bl.components();
     let mut out = [0.0; 4];
     for mu in 0..4 {
         for nu in 0..4 {
-            // p_μ^KS = p_ν^BL * ∂x_BL^ν/∂x_KS^μ = p_ν * (J^{-1})^ν_μ
             out[mu] += pb[nu] * j_inv[nu][mu];
         }
     }
@@ -191,13 +228,13 @@ pub fn covector_bl_to_ks(
     Ok(p)
 }
 
-/// Covector KS → BL: `p_ν^BL = p_μ^KS (∂x_KS^μ / ∂x_BL^ν) = p_μ^KS J^μ_ν`.
+/// Covector KS → BL.
 pub fn covector_ks_to_bl(
     params: &KerrParams,
     bl: &PositionBl,
     p_ks: &Covector,
 ) -> Result<Covector, CoreError> {
-    let j = jacobian_ks_from_bl(params, bl)?;
+    let j = jacobian_cartesian_ks_from_bl(params, bl)?;
     let pk = p_ks.components();
     let mut out = [0.0; 4];
     for nu in 0..4 {
@@ -212,6 +249,25 @@ pub fn covector_ks_to_bl(
         });
     }
     Ok(p)
+}
+
+fn apply_jacobian_vector(
+    j: &[[f64; 4]; 4],
+    v: &Vector,
+    context: &'static str,
+) -> Result<Vector, CoreError> {
+    let vc = v.components();
+    let mut out = [0.0; 4];
+    for mu in 0..4 {
+        for nu in 0..4 {
+            out[mu] += j[mu][nu] * vc[nu];
+        }
+    }
+    let vout = Vector::from_components(out);
+    if !vout.is_finite() {
+        return Err(CoreError::Unresolved { context });
+    }
+    Ok(vout)
 }
 
 fn invert4(m: &[[f64; 4]; 4]) -> Result<[[f64; 4]; 4], CoreError> {
@@ -260,6 +316,7 @@ fn invert4(m: &[[f64; 4]; 4]) -> Result<[[f64; 4]; 4], CoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::{CoreError as CE, DomainReason};
 
     #[test]
     fn position_round_trip_off_axis() {
@@ -273,15 +330,45 @@ mod tests {
     }
 
     #[test]
-    fn axis_is_typed_failure() {
+    fn spatial_embedding_is_twisted_not_ra_form() {
+        let p = KerrParams::new(1.0, 0.9).unwrap();
+        let bl = PositionBl::new(0.0, 10.0, 1.0, 0.4);
+        let ks = bl_to_ks_position(&p, &bl).unwrap();
+        let ra = (bl.r * bl.r + p.spin() * p.spin()).sqrt();
+        let naive_x = ra * bl.theta.sin() * bl.phi.cos();
+        assert!(
+            (ks.x - naive_x).abs() > 1e-3,
+            "must not use √(r²+a²) embedding"
+        );
+    }
+
+    #[test]
+    fn jacobian_includes_radial_time_and_azimuth_terms() {
+        let p = KerrParams::new(1.0, 0.7).unwrap();
+        let bl = PositionBl::new(0.0, 8.0, 1.1, 0.2);
+        let j = jacobian_cartesian_ks_from_bl(&p, &bl).unwrap();
+        let delta = bl.r * bl.r - 2.0 * p.mass() * bl.r + p.spin() * p.spin();
+        assert!((j[0][1] - 2.0 * p.mass() * bl.r / delta).abs() < 1e-12);
+        // ∂ψ/∂r contributes to spatial columns via the spherical→Cartesian map.
+        assert!(j[1][1].is_finite() && j[2][1].is_finite());
+    }
+
+    #[test]
+    fn axis_and_horizon_are_typed_failures() {
         let p = KerrParams::new(1.0, 0.5).unwrap();
         let ks = PositionKs::spatial(0.0, 0.0, 10.0);
         assert!(matches!(
             ks_to_bl_position(&p, &ks),
-            Err(CoreError::ChartDomain {
+            Err(CE::ChartDomain {
                 reason: DomainReason::BoyerLindquistSingular,
                 ..
             })
+        ));
+        let r_plus = p.outer_horizon_radius();
+        let bl_h = PositionBl::new(0.0, r_plus, 1.0, 0.0);
+        assert!(matches!(
+            jacobian_cartesian_ks_from_bl(&p, &bl_h),
+            Err(CE::IllConditioned { .. })
         ));
     }
 
@@ -291,7 +378,6 @@ mod tests {
         let bl = PositionBl::new(0.0, 10.0, 1.2, 0.4);
         let v = Vector::new(1.0, 0.1, -0.2, 0.3);
         let v_ks = vector_bl_to_ks(&p, &bl, &v).unwrap();
-        // Treating v components as a covector must not match the vector map.
         let p_as_cov = Covector::new(v.t, v.x, v.y, v.z);
         let p_ks = covector_bl_to_ks(&p, &bl, &p_as_cov).unwrap();
         let same = (v_ks.t - p_ks.t).abs()

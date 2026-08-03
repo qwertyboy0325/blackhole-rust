@@ -20,7 +20,7 @@
 use crate::error::{CoreError, DomainReason};
 use crate::kerr::KerrParams;
 use crate::radius::{evaluate_oblate_radius, OblateRadius};
-use crate::types::{MetricTensor, PositionKs, Vector};
+use crate::types::{MetricTensor, PositionKs, RawMatrix4, Vector};
 
 /// Scalar, null covector/vector, and metric tensors at a KS event.
 #[derive(Debug, Clone, Copy)]
@@ -87,8 +87,8 @@ pub fn evaluate_kerr_schild(
     // ℓ^μ = η^{μν} ℓ_ν ⇒ (−1, ℓ_x, ℓ_y, ℓ_z)
     let ell_con = [-1.0, ell_x, ell_y, ell_z];
 
-    let metric = assemble_metric(true, h, &ell_cov);
-    let inverse_metric = assemble_metric(false, h, &ell_con);
+    let metric = assemble_metric(true, h, &ell_cov)?;
+    let inverse_metric = assemble_metric(false, h, &ell_con)?;
 
     if !metric.is_finite() || !inverse_metric.is_finite() {
         return Err(CoreError::Unresolved {
@@ -106,7 +106,7 @@ pub fn evaluate_kerr_schild(
     })
 }
 
-fn assemble_metric(covariant: bool, h: f64, ell: &[f64; 4]) -> MetricTensor {
+fn assemble_metric(covariant: bool, h: f64, ell: &[f64; 4]) -> Result<MetricTensor, CoreError> {
     let mut data = MetricTensor::minkowski().components();
     let sign = if covariant { 1.0 } else { -1.0 };
     let factor = sign * 2.0 * h;
@@ -115,14 +115,24 @@ fn assemble_metric(covariant: bool, h: f64, ell: &[f64; 4]) -> MetricTensor {
             data[mu][nu] += factor * ell[mu] * ell[nu];
         }
     }
-    MetricTensor::from_symmetric(data)
+    // Algebraically symmetric; use lower-triangle mirror (no averaging).
+    MetricTensor::from_lower_triangle(data)
+}
+
+/// Result of the independent numerical inverse oracle.
+#[derive(Debug, Clone, Copy)]
+pub struct MatrixInverseOracle {
+    pub raw_inverse: RawMatrix4,
+    pub raw_asymmetry: f64,
+    pub inverse: MetricTensor,
+    pub identity_residual: f64,
 }
 
 /// Independent numerical inverse of a 4×4 matrix (Gauss–Jordan).
 ///
-/// Used only as a test/diagnostic oracle; production `g^{μν}` uses the
-/// Kerr–Schild closed form above.
-pub fn matrix_inverse_oracle(m: &MetricTensor) -> Result<MetricTensor, CoreError> {
+/// Reports raw asymmetry before any symmetrization. Production `g^{μν}` uses
+/// the Kerr–Schild closed form, not this oracle.
+pub fn matrix_inverse_oracle(m: &MetricTensor) -> Result<MatrixInverseOracle, CoreError> {
     let mut a = m.components();
     let mut inv = [
         [1.0, 0.0, 0.0, 0.0],
@@ -162,7 +172,16 @@ pub fn matrix_inverse_oracle(m: &MetricTensor) -> Result<MetricTensor, CoreError
             }
         }
     }
-    Ok(MetricTensor::from_symmetric(inv))
+    let raw_inverse = RawMatrix4::from_components(inv);
+    let raw_asymmetry = raw_inverse.max_abs_asymmetry();
+    let inverse = MetricTensor::try_from_raw(&raw_inverse, 1e-9)?;
+    let identity_residual = crate::types::identity_residual(m, &inverse);
+    Ok(MatrixInverseOracle {
+        raw_inverse,
+        raw_asymmetry,
+        inverse,
+        identity_residual,
+    })
 }
 
 /// Lower a contravariant vector with the KS metric.
@@ -205,13 +224,44 @@ mod tests {
         let pos = PositionKs::spatial(6.0, -2.0, 1.0);
         let q = evaluate_kerr_schild(&p, &pos).unwrap();
         let oracle = matrix_inverse_oracle(&q.metric).unwrap();
+        assert!(
+            oracle.raw_asymmetry < 1e-10,
+            "raw inverse asymmetry {}",
+            oracle.raw_asymmetry
+        );
         let mut max: f64 = 0.0;
         for i in 0..4 {
             for j in 0..4 {
-                max = max.max((q.inverse_metric.get(i, j) - oracle.get(i, j)).abs());
+                max = max.max((q.inverse_metric.get(i, j) - oracle.inverse.get(i, j)).abs());
             }
         }
         assert!(max < 1e-10, "oracle disagreement {max}");
+    }
+
+    #[test]
+    fn ks_null_update_invariants() {
+        let p = KerrParams::new(1.0, 0.95).unwrap();
+        let pos = PositionKs::spatial(5.0, 1.0, 2.0);
+        let q = evaluate_kerr_schild(&p, &pos).unwrap();
+        let eta = MetricTensor::minkowski();
+        let ell = Vector::from_components(q.ell_con);
+        // η(ℓ,ℓ)=0 and g(ℓ,ℓ)=0 for Kerr–Schild null deformation.
+        assert!(eta.contract(&ell, &ell).abs() < 1e-12);
+        assert!(q.metric.contract(&ell, &ell).abs() < 1e-12);
+        // For g = η + 2H ℓ⊗ℓ with η-null ℓ, det(g)=det(η)=−1.
+        assert!((q.metric.determinant() + 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn rejects_asymmetric_raw_matrix() {
+        let raw = RawMatrix4::from_components([
+            [-1.0, 0.1, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]);
+        assert!(raw.max_abs_asymmetry() > 0.05);
+        assert!(MetricTensor::try_from_raw(&raw, 1e-14).is_err());
     }
 
     #[test]

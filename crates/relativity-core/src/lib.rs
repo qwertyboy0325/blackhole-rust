@@ -17,21 +17,23 @@ pub mod ray_init;
 pub mod types;
 
 pub use coords::{
-    bl_to_ks_position, covector_bl_to_ks, covector_ks_to_bl, ks_to_bl_position, vector_bl_to_ks,
-    vector_ks_to_bl,
+    bl_metric, bl_to_ks_position, cartesian_from_spherical_ks, covector_bl_to_ks,
+    covector_ks_to_bl, jacobian_cartesian_ks_from_bl, ks_to_bl_position,
+    spherical_ks_from_cartesian, vector_bl_to_ks, vector_ks_to_bl, PositionSphericalKs,
 };
-pub use corpus::{stratified_corpus, CorpusPoint, CorpusTag, CORPUS_SEED};
+pub use corpus::{stratified_corpus, CorpusPoint, CorpusTag, ExpectedOutcome, CORPUS_SEED};
 pub use error::{CoreError, DomainReason, EvalStatus};
 pub use hamiltonian::{evaluate_hamiltonian, HamiltonianEval};
 pub use kerr::KerrParams;
 pub use metric::{
     evaluate_kerr_schild, inverse_metric_spatial_derivatives, lower_vector, matrix_inverse_oracle,
-    raise_covector, InverseMetricDerivatives, KerrSchildQuantities, MinkowskiMetric,
-    SpatialDerivativeIndex,
+    raise_covector, InverseMetricDerivatives, KerrSchildQuantities, MatrixInverseOracle,
+    MinkowskiMetric, SpatialDerivativeIndex,
 };
 pub use observer::{check_tetrad, minkowski_static_observer, zamo_observer, Observer, Tetrad};
 pub use radius::{evaluate_oblate_radius, OblateRadius};
 pub use ray_init::{initialize_rectilinear_ray, CameraParams, InitialRay, SensorCoord};
 pub use types::{
-    identity_residual, Covector, LocalComponents, MetricTensor, PositionBl, PositionKs, Vector,
+    identity_residual, Covector, LocalComponents, MetricTensor, PositionBl, PositionKs, RawMatrix4,
+    Vector,
 };
