@@ -2,8 +2,10 @@
 
 ## Current gate
 
-Gate 0 is complete. Do not begin Gate 1 or implement ray integration, disk
-shading, image generation, GPU kernels, or a GUI without owner approval.
+Gate 0 is complete. Gate 1A (geometry kernel and null-ray initialization) is
+implemented on `gate-1a-geometry-kernel` pending owner review. Do not begin
+Gate 1B geodesic integration, disk shading, image generation, GPU kernels, or
+a GUI without owner approval.
 
 ## Authority and scope
 

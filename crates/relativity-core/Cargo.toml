@@ -1,0 +1,17 @@
+[package]
+name = "relativity-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Kerr geometry kernel, tetrads, and null-ray initialization (no I/O)"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = "2"
+
+[dev-dependencies]
+approx = "0.5"

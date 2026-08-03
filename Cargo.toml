@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/relativity-core",
+    "xtask",
+]
+default-members = [
+    "crates/relativity-core",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+repository = "https://github.com/qwertyboy0325/blackhole-rust"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "allow", priority = -1 }
+# Spacetime index algebra is clearer with explicit 0..4 loops and short names.
+needless_range_loop = "allow"
+many_single_char_names = "allow"
+similar_names = "allow"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+doc_markdown = "allow"
+unreadable_literal = "allow"
+float_cmp = "allow"
+neg_cmp_op_on_partial_ord = "allow"

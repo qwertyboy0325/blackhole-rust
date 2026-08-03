@@ -48,11 +48,32 @@ r^2 = 1/2 * ((rho^2 - a^2)
 rho^2 = x^2 + y^2 + z^2.
 ```
 
-Boyer-Lindquist coordinates remain an input/reporting chart and support an
-independent separated-equation oracle. Their `Delta` denominators are singular
-at the horizon, `phi` is ill-conditioned on the axis, and near-extremal
-`r_+ - r_-` magnifies cancellation. No production ray is allowed to rely on
-crossing the horizon in that chart.
+Gate 1A uses an **ingoing Kerr–Schild** identification with the project null
+covector `ℓ_μ = (1, (rx+ay)/(r²+a²), (ry−ax)/(r²+a²), z/r)`. The intermediate
+spherical KS chart is `(T, r, θ, ψ)` with
+
+```text
+x + i y = (r + i a) e^{iψ} sinθ
+z = r cosθ
+t = T
+```
+
+and exterior differentials from Boyer–Lindquist `(t,r,θ,φ)`:
+
+```text
+dT = dt + (2 M r / Δ) dr
+dψ = dφ + (a / Δ) dr
+Δ  = r² − 2 M r + a²
+```
+
+Event placement uses the gauge `T=t`, `ψ=φ` at that event; vector/covector maps
+still include the radial `∂T/∂r` and `∂ψ/∂r` terms. `t`/`φ` are **not**
+identified with `T`/`ψ` outside that gauge.
+
+Boyer-Lindquist remains an input/reporting chart and supports an independent
+metric/separated-equation oracle. `Δ=0`, the axis, and near-extremal
+cancellations are typed failures. No production ray may rely on crossing the
+horizon in BL.
 
 ## Null geodesics
 
