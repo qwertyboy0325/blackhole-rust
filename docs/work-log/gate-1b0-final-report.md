@@ -1,41 +1,41 @@
-# Gate 1B0 final report
+# Gate 1B0 final report (remediation)
 
 ## Identity
 
 - Branch: `gate-1b0-dop853-spike`
-- Base: Gate 1A tip (`f2782c3`) — PR #1 not merged to `main` at spike start
-- Scope: DOP853 dependency spike only (no production integrator)
-- Authoritative commit: `08eeecd060a0927aba68e75ee7b3f96878e4b706`
+- Rebased base: Gate 1A merge `dc38619` on `main` (PR #1 merged)
+- PR #2: Gate 1B0-only delta (7 commits on top of `main`)
+- Authoritative commit: `5180cfe42db6f344603c6cba0d0d388da555ea88`
 - Authoritative evaluate: **PASS** (`authoritative=true`)
 
-## Artifact digests (authoritative run)
+## Artifact digests
 
 | Artifact | SHA-256 |
 |---|---|
-| `ode-solvers.json` | `c606074982ca96d2a8706a00501eaa5c952b6cb20e2fe2b7e723e118698b47c4` |
-| `ivp.json` | `58c40733afd1afbf8ed9950b7315e585fe13074323794d370345a2eaaa4e48f2` |
+| `ode-solvers.json` | `19ae52bebdae0a1b81c2af87b2dd2fd8e5188c2b602fd559662fe9145ee00bb5` |
+| `ivp.json` | `c8ac650708a8f2c821f2373d5e8022e78fedfc28973d314c3af82d0cadf14e21` |
 
-Regenerate: `cargo xtask evaluate --scope gate-1b0` (clean worktree required).
+## Remediation addressed
+
+1. Strict evaluator + `validate_candidate_report` + 4 negative tests
+2. Split event evidence; no synthetic stop/restart in root finder
+3. ivp D: StepInterpolant probes with analytic errors
+4. ivp E: real SolOut event loop, interrupt, restart, x5 determinism
+5. ode_solvers: Unsupported for preferred dense/event/stop architecture
+6. F: callback stop + typed domain latch (both candidates)
+7. A–G: per-experiment determinism x5 + subprocess x5
+8. Executable dependency audit via `cargo metadata` + source scan
+
+## ADR 0005
+
+Status remains **Proposed**. Favor `ivp` on measured contract fit.
 
 ## Commands
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo xtask spike-dop853 --candidate ode-solvers
-cargo xtask spike-dop853 --candidate ivp
 cargo xtask evaluate --scope gate-1b0
 ```
 
-## ADR 0005
+## Gate boundary
 
-Status remains **Proposed**. Spike evidence documented in
-`docs/research/gate-1b0-dop853-spike-report.md`. Favor `ivp` on measured
-contract fit; no production dependency added.
-
-## Risks
-
-- `ivp` is younger; API stability requires Gate 1B1 adapter hardening
-- `ode_solvers` lacks public Dop853 dense coefficients for external localizer
-- Kerr probe G is diagnostic only — not a physical acceptance threshold
+No Gate 1B1. No ADR acceptance. PR #2 remains draft.
