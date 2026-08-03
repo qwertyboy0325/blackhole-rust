@@ -139,7 +139,7 @@ fn sho_determinism() -> RepeatSummary {
         let st = s.integrate().unwrap();
         let x_out = s.x_out().clone();
         let y_out = s.y_out().clone();
-        let x_final = *x_out.last().unwrap_or(&SHO_X_END);
+        let _x_final = *x_out.last().unwrap_or(&SHO_X_END);
         let endpoint = y_out
             .last()
             .map(|v| v.as_slice().to_vec())
