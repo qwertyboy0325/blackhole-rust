@@ -328,10 +328,10 @@ pub fn run_e() -> ExperimentResult {
     let mut lo = 0.0;
     let mut hi = SHO_EVENT_X + 1.0;
     let mut y_lo = y0.as_slice().to_vec();
-    let mut y_hi = interpolate_dense_state(&x_out, &y_out, hi).unwrap_or_else(|| y_lo.clone());
+    let mut y_hi = interpolate_dense_state(x_out, y_out, hi).unwrap_or_else(|| y_lo.clone());
     for _ in 0..48 {
         let mid = 0.5 * (lo + hi);
-        let y_mid = interpolate_dense_state(&x_out, &y_out, mid).expect("dense mid");
+        let y_mid = interpolate_dense_state(x_out, y_out, mid).expect("dense mid");
         if event(lo, &y_lo).signum() != event(mid, &y_mid).signum() {
             hi = mid;
             y_hi = y_mid;
