@@ -1,0 +1,11 @@
+/target/
+**/target/
+/artifacts/gate-1a/evaluation.json
+/artifacts/gate-1a/evaluation.md
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+*.exr
+*.png
