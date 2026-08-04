@@ -1,18 +1,21 @@
-//! Trace once, shade many diagnostic styles (Gate 2A0-3).
+//! Trace once, shade many diagnostic styles (Gate 2A0-3 / 2A0-4).
 
 use crate::build_meta::{
     require_release_execution, write_build_execution_report, BuildExecutionMetadata,
 };
+use crate::diagnostic_scene::{build_diagnostic_trace_scene, DiagnosticNumericalProfile};
 use crate::preset::load_preset;
+use crate::render_tier::{
+    resolve_render_plan, DiagnosticRenderTier, RenderAuthorityClass, ResolutionSource,
+    ResolvedRenderPlan,
+};
 use crate::trace_outcome_map::{
     resolve_execution, write_trace_execution_report, CliExecution, TRACE_EXECUTION_FILENAME,
 };
-use relativity_core::{CameraParams, KerrParams, PositionBl};
-use relativity_integrate::{Dop853Config, EventArmingPolicy, HorizonProximityPolicy};
 use relativity_trace::{
     encode_ppm, hex_sha, outcome_class_bytes, shade_many, trace_data_digest,
     trace_grid_with_execution, write_rhs_pgm, DiagnosticShadeStyle, OutcomeCounts,
-    ThinDiskGeometry, TraceExecutionMetadata, TraceGrid, TraceScene,
+    TraceExecutionMetadata, TraceGrid,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -32,6 +35,10 @@ pub struct TraceShadeReport {
     pub gate: String,
     pub width: u32,
     pub height: u32,
+    pub render_tier: Option<DiagnosticRenderTier>,
+    pub resolution_source: ResolutionSource,
+    pub authority_class: RenderAuthorityClass,
+    pub numerical_profile: DiagnosticNumericalProfile,
     pub build: BuildExecutionMetadata,
     pub execution: TraceExecutionMetadata,
     pub trace_invocations: u32,
@@ -49,14 +56,17 @@ pub struct TraceShadeReport {
     pub trace_wall_clock_seconds: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shade_wall_clock_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rays_per_second: Option<f64>,
     pub content_digest_excluding_digest_field: String,
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     preset_path: &str,
-    width: u32,
-    height: u32,
+    tier: Option<DiagnosticRenderTier>,
+    width: Option<u32>,
+    height: Option<u32>,
     output_dir: &str,
     require_release: bool,
     execution: CliExecution,
@@ -77,6 +87,7 @@ pub fn run(
         }
     }
 
+    let plan = resolve_render_plan(tier, width, height)?;
     let trace_execution = resolve_execution(execution, threads)?;
     let exec_meta = trace_execution.metadata();
 
@@ -96,41 +107,14 @@ pub fn run(
     let _preset_digest = hex::encode(Sha256::digest(std::fs::read(&preset_full)?));
     let preset = load_preset(&preset_full)?;
 
-    let mass = preset.spacetime.mass;
-    let spin = preset.spacetime.spin_a_over_m * mass;
-    let kerr = KerrParams::new(mass, spin)?;
-    let r_plus = kerr.outer_horizon_radius();
-    let disk = ThinDiskGeometry::new((r_plus + 1.5).max(3.0 * mass), preset.disk.outer_radius_m);
-    disk.validate(&kerr)?;
-
-    let mut integrator = Dop853Config::diagnostic_default();
-    integrator.relative_tolerance = [1e-8; 8];
-    integrator.absolute_tolerance = [1e-9, 1e-9, 1e-9, 1e-9, 1e-10, 1e-10, 1e-10, 1e-10];
-    integrator.affine_limit = 120.0;
-    integrator.max_accepted_steps = 2_000;
-    integrator.max_step = 2.0;
-    integrator.horizon_proximity = HorizonProximityPolicy::enabled(1e-4)?;
-    integrator.event_arming = EventArmingPolicy::after(1e-12)?;
-
-    let scene = TraceScene {
-        kerr,
-        observer: PositionBl::new(
-            0.0,
-            preset.observer.boyer_lindquist_r,
-            preset.observer.boyer_lindquist_theta_degrees.to_radians(),
-            preset.observer.boyer_lindquist_phi_degrees.to_radians(),
-        ),
-        camera: CameraParams {
-            horizontal_fov: preset.camera.horizontal_field_of_view_degrees.to_radians(),
-            roll: preset.camera.roll_degrees.to_radians(),
+    // load preset → resolve plan → one common diagnostic scene → trace once → shade many
+    let (scene, numerical_profile) = build_diagnostic_trace_scene(
+        &preset,
+        TraceGrid {
+            width: plan.width,
+            height: plan.height,
         },
-        disk,
-        escape_radius: preset.celestial_sphere.radius_m.min(80.0),
-        event_arming: integrator.event_arming.clone(),
-        integrator,
-        grid: TraceGrid { width, height },
-    };
-    scene.validate()?;
+    )?;
 
     // ---- Phase 1: trace exactly once ----
     let t_trace = Instant::now();
@@ -151,6 +135,12 @@ pub fn run(
     std::fs::write(out_dir.join("rhs-evaluations.pgm"), &pgm)?;
 
     let (counts, total_acc, total_rej, total_rhs) = summarize_bundle(&bundle);
+    let ray_count = (plan.width as u64) * (plan.height as u64);
+    let rays_per_second = if trace_wall > 0.0 {
+        Some(ray_count as f64 / trace_wall)
+    } else {
+        None
+    };
 
     // ---- Phase 2: shade many (no tracing) ----
     let t_shade = Instant::now();
@@ -176,8 +166,12 @@ pub fn run(
 
     let mut report = TraceShadeReport {
         gate: "gate-2a0-trace-shade".into(),
-        width,
-        height,
+        width: plan.width,
+        height: plan.height,
+        render_tier: plan.tier,
+        resolution_source: plan.resolution_source,
+        authority_class: plan.authority_class,
+        numerical_profile,
         build,
         execution: exec_meta,
         trace_invocations,
@@ -193,6 +187,7 @@ pub fn run(
         total_rhs_evaluations: total_rhs,
         trace_wall_clock_seconds: Some(trace_wall),
         shade_wall_clock_seconds: Some(shade_wall),
+        rays_per_second,
         content_digest_excluding_digest_field: String::new(),
     };
     report.content_digest_excluding_digest_field = content_digest(&report);
@@ -201,11 +196,18 @@ pub fn run(
         out_dir.join("trace-shade-report.json"),
         serde_json::to_vec_pretty(&report)?,
     )?;
-    // Keep TRACE_EXECUTION_FILENAME symbol referenced for clarity of adjacency.
     let _ = TRACE_EXECUTION_FILENAME;
+    let _ = plan_summary(&plan);
 
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
+}
+
+fn plan_summary(plan: &ResolvedRenderPlan) -> String {
+    format!(
+        "{}×{} {:?} {:?}",
+        plan.width, plan.height, plan.resolution_source, plan.authority_class
+    )
 }
 
 fn summarize_bundle(bundle: &relativity_trace::TraceBundle) -> (OutcomeCounts, u64, u64, u64) {
@@ -263,6 +265,10 @@ fn content_digest(report: &TraceShadeReport) -> String {
         gate: &'a str,
         width: u32,
         height: u32,
+        render_tier: Option<DiagnosticRenderTier>,
+        resolution_source: ResolutionSource,
+        authority_class: RenderAuthorityClass,
+        numerical_profile_digest: &'a str,
         build: &'a BuildExecutionMetadata,
         execution: &'a TraceExecutionMetadata,
         trace_invocations: u32,
@@ -282,6 +288,10 @@ fn content_digest(report: &TraceShadeReport) -> String {
         gate: &report.gate,
         width: report.width,
         height: report.height,
+        render_tier: report.render_tier,
+        resolution_source: report.resolution_source,
+        authority_class: report.authority_class,
+        numerical_profile_digest: &report.numerical_profile.digest,
         build: &report.build,
         execution: &report.execution,
         trace_invocations: report.trace_invocations,
@@ -310,9 +320,11 @@ fn workspace_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostic_scene::{
+        gate_1b2_diagnostic_integrator, numerical_profile_from_integrator,
+    };
 
-    #[test]
-    fn timing_excluded_from_report_digest() {
+    fn sample_report() -> TraceShadeReport {
         let build = BuildExecutionMetadata {
             cargo_profile: "release".into(),
             opt_level: "3".into(),
@@ -321,12 +333,18 @@ mod tests {
             toolchain: "t".into(),
         };
         let exec = TraceExecutionMetadata::serial();
-        let mut a = TraceShadeReport {
+        let numerical_profile =
+            numerical_profile_from_integrator(&gate_1b2_diagnostic_integrator().unwrap());
+        TraceShadeReport {
             gate: "gate-2a0-trace-shade".into(),
             width: 32,
             height: 32,
-            build: build.clone(),
-            execution: exec.clone(),
+            render_tier: Some(DiagnosticRenderTier::Smoke),
+            resolution_source: ResolutionSource::NamedTier,
+            authority_class: RenderAuthorityClass::NonAuthoritative,
+            numerical_profile,
+            build,
+            execution: exec,
             trace_invocations: 1,
             shade_passes: 2,
             styles: vec![
@@ -350,13 +368,41 @@ mod tests {
             total_rhs_evaluations: 0,
             trace_wall_clock_seconds: Some(1.0),
             shade_wall_clock_seconds: Some(0.01),
+            rays_per_second: Some(1024.0),
             content_digest_excluding_digest_field: String::new(),
-        };
+        }
+    }
+
+    #[test]
+    fn timing_excluded_from_report_digest() {
+        let mut a = sample_report();
         let mut b = a.clone();
         b.trace_wall_clock_seconds = Some(99.0);
         b.shade_wall_clock_seconds = Some(9.0);
+        b.rays_per_second = Some(1.0);
         assert_eq!(content_digest(&a), content_digest(&b));
         a.styles.pop();
+        assert_ne!(content_digest(&a), content_digest(&b));
+    }
+
+    #[test]
+    fn render_tier_changes_content_digest() {
+        let a = sample_report();
+        let mut b = a.clone();
+        b.render_tier = Some(DiagnosticRenderTier::Preview);
+        b.width = 64;
+        b.height = 64;
+        assert_ne!(content_digest(&a), content_digest(&b));
+    }
+
+    #[test]
+    fn dimensions_change_content_digest() {
+        let a = sample_report();
+        let mut b = a.clone();
+        b.width = 48;
+        b.height = 48;
+        b.render_tier = None;
+        b.resolution_source = ResolutionSource::CustomDimensions;
         assert_ne!(content_digest(&a), content_digest(&b));
     }
 }
