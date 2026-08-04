@@ -2,15 +2,17 @@
 
 ## Result
 
-Authoritative evaluate **PASS** at commit `f880e77c172415b343eb07371bb20839f75c78ed`.
+Authoritative evaluate **PASS** at implementation tip `f880e77c172415b343eb07371bb20839f75c78ed`.
 
-V1 validation closure (frozen exact `validate()`, sector>8 → `Err` not panic) follows on this branch; digests below must remain unchanged.
+V1 validation closure **PASS** at `480d5875bca02770494d3c05785867cf2c633b74`
+(`validate()` = frozen exact V1; `longitude_sectors > 8` → typed `Err`, no panic).
+Texture / reference / opaque / disk-omitted / showcase digests unchanged.
 
 | Field | Value |
 | --- | --- |
 | Approved base | `bab17d21b9e5ff5d153a0f1a7dc7ec46e861df87` |
 | Branch | `gate-2a2-first-lensed-celestial-image` |
-| Evaluate digest | `4accefb2bcb18fd6b24b59d3c5f5fe309f894a2c7f8d57c4957703dec2047711` |
+| Evaluate digest (validation closure) | `a0f156768c2d2bf8fc2a74476a530285ba8cef1e2633a9d0960453d773f5834f` |
 | Texture spec digest | `6b06bf21a607510a981c5ec7d2521e4d4d9beccb7d5354d29dbbb1520edf495a` |
 | Reference atlas (512×256) | `783aba0cde1020045b9a60a5fcd080ad0ecbaed712f9ec482dac744623b41c4c` |
 
