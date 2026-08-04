@@ -48,9 +48,12 @@ Digests:
 
 ## 16–18. Evaluator / CI
 
-- `cargo xtask evaluate --scope gate-1b2` implemented (includes ×3 subprocess maps)
-- fmt / clippy / workspace tests green on tip
-- Full authoritative evaluate + CI confirmation pending clean tip run
+- `cargo xtask evaluate --scope gate-1b2` → **PASS** (`authoritative: true`) at `48a539b`
+- Content digest: `80486e02ade94c3c21b5bace27cce775669084f237cc9b496945c0c4fb842f63`
+- Map class digest (×3 subprocess identical): `64462a83927b111ed808a38292e2d5b1393b4045b580f1b416b1dc001cd452c4`
+- fmt / clippy / workspace tests green
+
+Root cause of earlier `PASS_NON_AUTHORITATIVE`: Gate 1B2 `.gitignore` edit dropped `/artifacts/gate-1b1/*` rules; restored in `48a539b`.
 
 ## 19. Limitations
 
