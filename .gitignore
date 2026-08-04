@@ -23,6 +23,11 @@
 /artifacts/gate-2a0-parallel/**/*.sha256
 /artifacts/gate-2a0-parallel/**/*.ppm
 /artifacts/gate-2a0-parallel/**/*.pgm
+/artifacts/gate-2a0-trace-shade/**/*.json
+/artifacts/gate-2a0-trace-shade/**/*.md
+/artifacts/gate-2a0-trace-shade/**/*.sha256
+/artifacts/gate-2a0-trace-shade/**/*.ppm
+/artifacts/gate-2a0-trace-shade/**/*.pgm
 .DS_Store
 *.swp
 *.swo

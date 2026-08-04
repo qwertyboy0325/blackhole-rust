@@ -10,16 +10,26 @@ mod evaluate_gate1b1;
 mod evaluate_gate1b2;
 mod evaluate_gate2a0;
 mod evaluate_gate2a0_parallel;
+mod evaluate_gate2a0_trace_shade;
 mod inspect;
 mod integrate_ray;
 mod preset;
 mod spike_dop853;
 mod trace_outcome_map;
+mod trace_shade_many;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum ExecutionArg {
     Serial,
     Parallel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ShadeStyleArg {
+    #[value(name = "gate1b2-categorical")]
+    Gate1b2Categorical,
+    #[value(name = "disk-suppressed")]
+    DiskSuppressed,
 }
 
 #[derive(Parser)]
@@ -57,7 +67,7 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
-    /// Gate evaluator (Gate 1A / 1B0 / 1B1 / 1B2 / 2A0-release / 2A0-parallel).
+    /// Gate evaluator (1A / 1B0–1B2 / 2A0-release / 2A0-parallel / 2A0-trace-shade).
     Evaluate {
         #[arg(long)]
         preset: Option<String>,
@@ -100,6 +110,26 @@ enum Commands {
         #[arg(long)]
         threads: Option<usize>,
     },
+    /// Trace once and shade many diagnostic styles (Gate 2A0-3).
+    TraceShadeMany {
+        #[arg(long)]
+        preset: String,
+        #[arg(long, default_value_t = 128)]
+        width: u32,
+        #[arg(long, default_value_t = 128)]
+        height: u32,
+        #[arg(long)]
+        output_dir: String,
+        #[arg(long, default_value_t = false)]
+        require_release: bool,
+        #[arg(long, value_enum, default_value_t = ExecutionArg::Serial)]
+        execution: ExecutionArg,
+        #[arg(long)]
+        threads: Option<usize>,
+        /// Repeatable; order preserved; duplicates rejected.
+        #[arg(long = "style", value_enum)]
+        styles: Vec<ShadeStyleArg>,
+    },
     /// Emit canonical Gate 1B1 corpus JSON (numerical records; for determinism).
     CorpusReport {
         #[arg(long)]
@@ -135,6 +165,8 @@ fn main() {
                 evaluate_gate2a0::evaluate()
             } else if scope == "gate-2a0-parallel" {
                 evaluate_gate2a0_parallel::evaluate()
+            } else if scope == "gate-2a0-trace-shade" {
+                evaluate_gate2a0_trace_shade::evaluate()
             } else {
                 match preset {
                     Some(p) => evaluate::evaluate(&p, &scope),
@@ -169,6 +201,42 @@ fn main() {
                 require_release,
                 exec,
                 threads,
+            )
+        }
+        Commands::TraceShadeMany {
+            preset,
+            width,
+            height,
+            output_dir,
+            require_release,
+            execution,
+            threads,
+            styles,
+        } => {
+            let exec = match execution {
+                ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
+                ExecutionArg::Parallel => trace_outcome_map::CliExecution::Parallel,
+            };
+            let styles: Vec<_> = styles
+                .into_iter()
+                .map(|s| match s {
+                    ShadeStyleArg::Gate1b2Categorical => {
+                        relativity_trace::DiagnosticShadeStyle::Gate1b2Categorical
+                    }
+                    ShadeStyleArg::DiskSuppressed => {
+                        relativity_trace::DiagnosticShadeStyle::DiskSuppressed
+                    }
+                })
+                .collect();
+            trace_shade_many::run(
+                &preset,
+                width,
+                height,
+                &output_dir,
+                require_release,
+                exec,
+                threads,
+                &styles,
             )
         }
         Commands::CorpusReport { scope } => {
