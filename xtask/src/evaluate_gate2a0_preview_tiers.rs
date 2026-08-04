@@ -1,8 +1,11 @@
-//! Gate 2A0-3 trace-once / shade-many evaluator.
+//! Gate 2A0-4 named preview quality tiers evaluator.
 
 use crate::build_meta::{
     is_optimized_release_execution, read_build_execution_report, require_release_execution,
     BuildExecutionMetadata,
+};
+use crate::render_tier::{
+    DiagnosticRenderTier, RenderAuthorityClass, ResolutionSource, LEGACY_DEFAULT_AXIS,
 };
 use crate::trace_outcome_map::read_trace_execution_report;
 use crate::trace_shade_many::TraceShadeReport;
@@ -31,7 +34,19 @@ struct Check {
 }
 
 #[derive(Serialize, Clone)]
-struct Gate2a0TraceShadeEval {
+struct TierTiming {
+    label: String,
+    width: u32,
+    height: u32,
+    ray_count: u64,
+    thread_count: usize,
+    trace_wall_clock_seconds: Option<f64>,
+    shade_wall_clock_seconds: Option<f64>,
+    rays_per_second: Option<f64>,
+}
+
+#[derive(Serialize, Clone)]
+struct Gate2a0PreviewTiersEval {
     gate: String,
     result: String,
     authoritative: bool,
@@ -43,8 +58,13 @@ struct Gate2a0TraceShadeEval {
     authoritative_threads: usize,
     checks: Vec<Check>,
     smoke: Option<TraceShadeReport>,
-    authoritative_runs: Vec<TraceShadeReport>,
+    preview: Option<TraceShadeReport>,
+    gate_runs: Vec<TraceShadeReport>,
+    showcase: Option<TraceShadeReport>,
+    custom_authority_negative: Option<TraceShadeReport>,
+    shared_numerical_profile_digest: Option<String>,
     disk_suppressed_changed_pixels: Option<u64>,
+    tier_timings: Vec<TierTiming>,
     content_digest_excluding_digest_field: String,
 }
 
@@ -76,7 +96,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         let mut report = empty(&build, commit.trim(), dirty, dirty_detail, checks);
         finalize(&root, &mut report)?;
         println!("{}", serde_json::to_string_pretty(&report)?);
-        return Err("gate-2a0-trace-shade requires release evaluator".into());
+        return Err("gate-2a0-preview-tiers requires release evaluator".into());
     }
     require_release_execution(&build)?;
 
@@ -108,61 +128,180 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             .args(["test", "--workspace", "--all-features"]),
     )?;
 
+    // Unit-level CLI resolution invariants (no subprocess).
+    let legacy = crate::render_tier::resolve_render_plan(None, None, None)?;
+    push(
+        &mut checks,
+        "legacy_default_resolution_128",
+        legacy.width == LEGACY_DEFAULT_AXIS
+            && legacy.height == LEGACY_DEFAULT_AXIS
+            && legacy.resolution_source == ResolutionSource::LegacyDefault
+            && legacy.authority_class == RenderAuthorityClass::NonAuthoritative,
+        format!("{legacy:?}"),
+    );
+
     let available = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
     let authoritative_threads = available;
-    let smoke_threads = available.clamp(1, 2);
 
-    let out_root = root.join("artifacts/gate-2a0-trace-shade");
+    let out_root = root.join("artifacts/gate-2a0-preview-tiers");
     std::fs::create_dir_all(&out_root)?;
 
-    let smoke = run_worker(
+    let smoke = run_worker_tier(
         &root,
-        32,
-        32,
-        "artifacts/gate-2a0-trace-shade/smoke-32",
-        smoke_threads,
+        Some(DiagnosticRenderTier::Smoke),
+        None,
+        None,
+        "artifacts/gate-2a0-preview-tiers/smoke",
+        authoritative_threads,
     )?;
-    check_worker(&mut checks, "smoke", &smoke, 2)?;
+    check_named_tier(
+        &mut checks,
+        "smoke",
+        &smoke,
+        DiagnosticRenderTier::Smoke,
+        RenderAuthorityClass::NonAuthoritative,
+    )?;
 
-    let mut runs = Vec::new();
+    let preview = run_worker_tier(
+        &root,
+        Some(DiagnosticRenderTier::Preview),
+        None,
+        None,
+        "artifacts/gate-2a0-preview-tiers/preview",
+        authoritative_threads,
+    )?;
+    check_named_tier(
+        &mut checks,
+        "preview",
+        &preview,
+        DiagnosticRenderTier::Preview,
+        RenderAuthorityClass::NonAuthoritative,
+    )?;
+
+    let mut gate_runs = Vec::new();
     for i in 0..2 {
-        runs.push(run_worker(
+        gate_runs.push(run_worker_tier(
             &root,
-            128,
-            128,
-            &format!("artifacts/gate-2a0-trace-shade/authoritative-128-run-{i}"),
+            Some(DiagnosticRenderTier::Gate),
+            None,
+            None,
+            &format!("artifacts/gate-2a0-preview-tiers/gate-run-{i}"),
             authoritative_threads,
         )?);
     }
-    check_worker(&mut checks, "auth0", &runs[0], 2)?;
-    check_worker(&mut checks, "auth1", &runs[1], 2)?;
+    check_named_tier(
+        &mut checks,
+        "gate0",
+        &gate_runs[0],
+        DiagnosticRenderTier::Gate,
+        RenderAuthorityClass::AuthoritativeCandidate,
+    )?;
+    check_named_tier(
+        &mut checks,
+        "gate1",
+        &gate_runs[1],
+        DiagnosticRenderTier::Gate,
+        RenderAuthorityClass::AuthoritativeCandidate,
+    )?;
 
-    let det_ok = runs[0].trace_data_digest == runs[1].trace_data_digest
-        && runs[0].outcome_class_digest == runs[1].outcome_class_digest
-        && runs[0].rhs_pgm_digest == runs[1].rhs_pgm_digest
-        && runs[0].shaded_outputs == runs[1].shaded_outputs
-        && counts_eq(&runs[0].outcome_counts, &runs[1].outcome_counts)
-        && runs[0].total_accepted_steps == runs[1].total_accepted_steps
-        && runs[0].total_rejected_steps == runs[1].total_rejected_steps
-        && runs[0].total_rhs_evaluations == runs[1].total_rhs_evaluations;
+    let showcase = run_worker_tier(
+        &root,
+        Some(DiagnosticRenderTier::Showcase),
+        None,
+        None,
+        "artifacts/gate-2a0-preview-tiers/showcase",
+        authoritative_threads,
+    )?;
+    check_named_tier(
+        &mut checks,
+        "showcase",
+        &showcase,
+        DiagnosticRenderTier::Showcase,
+        RenderAuthorityClass::NonAuthoritative,
+    )?;
+
+    let custom = run_worker_tier(
+        &root,
+        None,
+        Some(128),
+        Some(128),
+        "artifacts/gate-2a0-preview-tiers/custom-authority-negative",
+        authoritative_threads,
+    )?;
     push(
         &mut checks,
-        "authoritative_128_subprocess_determinism",
+        "custom_128_resolution_source",
+        custom.resolution_source == ResolutionSource::CustomDimensions
+            && custom.width == 128
+            && custom.height == 128
+            && custom.render_tier.is_none(),
+        format!(
+            "source={:?} {}×{} tier={:?}",
+            custom.resolution_source, custom.width, custom.height, custom.render_tier
+        ),
+    );
+    push(
+        &mut checks,
+        "custom_128_non_authoritative",
+        custom.authority_class == RenderAuthorityClass::NonAuthoritative,
+        format!("{:?}", custom.authority_class),
+    );
+    check_worker_common(&mut checks, "custom", &custom)?;
+
+    let profiles = [
+        smoke.numerical_profile.digest.clone(),
+        preview.numerical_profile.digest.clone(),
+        gate_runs[0].numerical_profile.digest.clone(),
+        gate_runs[1].numerical_profile.digest.clone(),
+        showcase.numerical_profile.digest.clone(),
+        custom.numerical_profile.digest.clone(),
+    ];
+    let shared = profiles[0].clone();
+    let profile_ok = profiles.iter().all(|d| *d == shared);
+    push(
+        &mut checks,
+        "shared_numerical_profile_digest",
+        profile_ok,
+        shared.clone(),
+    );
+
+    let one_sample = std::fs::read_to_string(root.join("crates/relativity-trace/src/trace.rs"))?
+        .contains("sensor_at_pixel_center")
+        && std::fs::read_to_string(root.join("crates/relativity-trace/src/trace.rs"))?
+            .contains("one sample per pixel center");
+    push(
+        &mut checks,
+        "one_sample_per_pixel_center",
+        one_sample,
+        "trace_grid documents/uses pixel-center sampling".into(),
+    );
+
+    let det_ok = gate_runs[0].trace_data_digest == gate_runs[1].trace_data_digest
+        && gate_runs[0].outcome_class_digest == gate_runs[1].outcome_class_digest
+        && gate_runs[0].rhs_pgm_digest == gate_runs[1].rhs_pgm_digest
+        && gate_runs[0].shaded_outputs == gate_runs[1].shaded_outputs
+        && counts_eq(&gate_runs[0].outcome_counts, &gate_runs[1].outcome_counts)
+        && gate_runs[0].total_accepted_steps == gate_runs[1].total_accepted_steps
+        && gate_runs[0].total_rejected_steps == gate_runs[1].total_rejected_steps
+        && gate_runs[0].total_rhs_evaluations == gate_runs[1].total_rhs_evaluations;
+    push(
+        &mut checks,
+        "gate_128_subprocess_determinism",
         det_ok,
         format!(
             "trace_data={} class={}",
-            runs[0].trace_data_digest, runs[0].outcome_class_digest
+            gate_runs[0].trace_data_digest, gate_runs[0].outcome_class_digest
         ),
     );
 
-    let legacy = runs[0]
+    let legacy_ppm = gate_runs[0]
         .shaded_outputs
         .iter()
         .find(|o| o.style == DiagnosticShadeStyle::Gate1b2Categorical)
         .ok_or("missing legacy style")?;
-    let suppressed = runs[0]
+    let suppressed = gate_runs[0]
         .shaded_outputs
         .iter()
         .find(|o| o.style == DiagnosticShadeStyle::DiskSuppressed)
@@ -170,75 +309,98 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
 
     push(
         &mut checks,
-        "legacy_ppm_matches_1b2",
-        legacy.ppm_digest == REF_PPM,
-        legacy.ppm_digest.clone(),
+        "gate_class_matches_1b2",
+        gate_runs[0].outcome_class_digest == REF_CLASS,
+        gate_runs[0].outcome_class_digest.clone(),
     );
     push(
         &mut checks,
-        "class_digest_matches_1b2",
-        runs[0].outcome_class_digest == REF_CLASS,
-        runs[0].outcome_class_digest.clone(),
+        "gate_ppm_matches_1b2",
+        legacy_ppm.ppm_digest == REF_PPM,
+        legacy_ppm.ppm_digest.clone(),
     );
     push(
         &mut checks,
-        "pgm_matches_1b2",
-        runs[0].rhs_pgm_digest == REF_PGM,
-        runs[0].rhs_pgm_digest.clone(),
+        "gate_pgm_matches_1b2",
+        gate_runs[0].rhs_pgm_digest == REF_PGM,
+        gate_runs[0].rhs_pgm_digest.clone(),
     );
     push(
         &mut checks,
-        "counts_match_1b2",
-        counts_eq(&runs[0].outcome_counts, &REF_COUNTS) && runs[0].outcome_counts.failed == 0,
-        format!("{:?}", runs[0].outcome_counts),
+        "gate_counts_match_1b2",
+        counts_eq(&gate_runs[0].outcome_counts, &REF_COUNTS)
+            && gate_runs[0].outcome_counts.failed == 0,
+        format!("{:?}", gate_runs[0].outcome_counts),
     );
 
-    // Pixel differential: reload PPMs and compare via shade of outcomes... use written PPMs.
-    let dir0 = root.join("artifacts/gate-2a0-trace-shade/authoritative-128-run-0");
-    let legacy_bytes = std::fs::read(dir0.join(&legacy.filename))?;
+    let dir0 = root.join("artifacts/gate-2a0-preview-tiers/gate-run-0");
+    let legacy_bytes = std::fs::read(dir0.join(&legacy_ppm.filename))?;
     let supp_bytes = std::fs::read(dir0.join(&suppressed.filename))?;
     let (changed, non_disk_ok) = ppm_disk_diff(&legacy_bytes, &supp_bytes, 128, 128)?;
     push(
         &mut checks,
         "disk_suppressed_diff_equals_disk_hit_count",
-        changed == runs[0].outcome_counts.disk_hit && non_disk_ok,
+        changed == gate_runs[0].outcome_counts.disk_hit && non_disk_ok,
         format!(
             "changed={changed} disk_hit={} non_disk_identical={non_disk_ok}",
-            runs[0].outcome_counts.disk_hit
+            gate_runs[0].outcome_counts.disk_hit
         ),
-    );
-    push(
-        &mut checks,
-        "alternate_style_same_trace_data",
-        true,
-        "both styles share worker trace_data_digest by construction".into(),
     );
 
     let no_sky = !std::fs::read_to_string(root.join("crates/relativity-trace/src/shade.rs"))?
         .contains("celestial")
-        && !std::fs::read_to_string(root.join("crates/relativity-trace/Cargo.toml"))?
-            .contains("openexr");
+        && !std::fs::read_to_string(root.join("xtask/src/render_tier.rs"))?.contains("openexr");
     push(
         &mut checks,
         "no_celestial_sphere_or_radiometry",
         no_sky,
-        "shade module remains diagnostic-only".into(),
+        "preview tiers remain diagnostic-only".into(),
     );
 
-    // Timing note (informational).
-    let trace_t = runs[0].trace_wall_clock_seconds.unwrap_or(0.0);
-    let shade_t = runs[0].shade_wall_clock_seconds.unwrap_or(0.0);
+    let only_gate_auth = smoke.authority_class == RenderAuthorityClass::NonAuthoritative
+        && preview.authority_class == RenderAuthorityClass::NonAuthoritative
+        && showcase.authority_class == RenderAuthorityClass::NonAuthoritative
+        && custom.authority_class == RenderAuthorityClass::NonAuthoritative
+        && gate_runs[0].authority_class == RenderAuthorityClass::AuthoritativeCandidate;
     push(
         &mut checks,
-        "trace_time_dominates_shade_time",
-        trace_t > shade_t,
-        format!("trace={trace_t:.4}s shade={shade_t:.4}s"),
+        "only_explicit_gate_authoritative_candidate",
+        only_gate_auth,
+        "smoke/preview/showcase/custom non-auth; gate candidate".into(),
     );
+
+    let gate_plan_ok = gate_runs[0].render_tier == Some(DiagnosticRenderTier::Gate)
+        && gate_runs[0].width == 128
+        && gate_runs[0].height == 128
+        && gate_runs[0].resolution_source == ResolutionSource::NamedTier
+        && gate_runs[0].authority_class == RenderAuthorityClass::AuthoritativeCandidate;
+    push(
+        &mut checks,
+        "gate_authority_plan_complete",
+        gate_plan_ok,
+        format!(
+            "tier={:?} {}×{} source={:?} auth={:?}",
+            gate_runs[0].render_tier,
+            gate_runs[0].width,
+            gate_runs[0].height,
+            gate_runs[0].resolution_source,
+            gate_runs[0].authority_class
+        ),
+    );
+
+    let tier_timings = vec![
+        timing_of("smoke", &smoke),
+        timing_of("preview", &preview),
+        timing_of("gate-run-0", &gate_runs[0]),
+        timing_of("showcase", &showcase),
+        timing_of("custom-128", &custom),
+    ];
 
     let hard_fail = checks
         .iter()
         .any(|c| c.status == "FAIL" && c.name != "worktree_clean");
-    let authoritative = !dirty && !hard_fail && self_release;
+    let authority_ok = gate_plan_ok && !hard_fail && self_release && !dirty;
+    let authoritative = authority_ok;
     let result = if hard_fail {
         "FAIL"
     } else if authoritative {
@@ -247,8 +409,8 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "PASS_NON_AUTHORITATIVE"
     };
 
-    let mut report = Gate2a0TraceShadeEval {
-        gate: "gate-2a0-trace-shade".into(),
+    let mut report = Gate2a0PreviewTiersEval {
+        gate: "gate-2a0-preview-tiers".into(),
         result: result.into(),
         authoritative,
         commit: commit.trim().into(),
@@ -259,13 +421,19 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         authoritative_threads,
         checks,
         smoke: Some(smoke),
-        authoritative_runs: runs,
+        preview: Some(preview),
+        gate_runs,
+        showcase: Some(showcase),
+        custom_authority_negative: Some(custom),
+        shared_numerical_profile_digest: Some(shared),
         disk_suppressed_changed_pixels: Some(changed),
+        tier_timings,
         content_digest_excluding_digest_field: String::new(),
     };
+
     let digest = eval_digest(&report);
     report.content_digest_excluding_digest_field = digest.clone();
-    let verify = eval_digest(&Gate2a0TraceShadeEval {
+    let verify = eval_digest(&Gate2a0PreviewTiersEval {
         content_digest_excluding_digest_field: String::new(),
         ..report.clone()
     });
@@ -278,7 +446,19 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         .checks
         .iter()
         .any(|c| c.status == "FAIL" && c.name != "worktree_clean");
-    report.authoritative = !dirty && !hard_fail && report.build.is_optimized_release_execution();
+    let gate0_ok = report
+        .gate_runs
+        .first()
+        .map(|g| {
+            g.render_tier == Some(DiagnosticRenderTier::Gate)
+                && g.width == 128
+                && g.height == 128
+                && g.resolution_source == ResolutionSource::NamedTier
+                && g.authority_class == RenderAuthorityClass::AuthoritativeCandidate
+        })
+        .unwrap_or(false);
+    report.authoritative =
+        !dirty && !hard_fail && report.build.is_optimized_release_execution() && gate0_ok;
     report.result = if hard_fail {
         "FAIL".into()
     } else if report.authoritative {
@@ -293,16 +473,62 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     finalize(&root, &mut report)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     if hard_fail || report.result == "FAIL" {
-        return Err("gate-2a0-trace-shade evaluation FAIL".into());
+        return Err("gate-2a0-preview-tiers evaluation FAIL".into());
     }
     Ok(())
 }
 
-fn check_worker(
+fn timing_of(label: &str, r: &TraceShadeReport) -> TierTiming {
+    TierTiming {
+        label: label.into(),
+        width: r.width,
+        height: r.height,
+        ray_count: u64::from(r.width) * u64::from(r.height),
+        thread_count: r.execution.thread_count,
+        trace_wall_clock_seconds: r.trace_wall_clock_seconds,
+        shade_wall_clock_seconds: r.shade_wall_clock_seconds,
+        rays_per_second: r.rays_per_second,
+    }
+}
+
+fn check_named_tier(
     checks: &mut Vec<Check>,
     label: &str,
     report: &TraceShadeReport,
-    expected_styles: u32,
+    expected: DiagnosticRenderTier,
+    auth: RenderAuthorityClass,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (ew, eh) = expected.dimensions();
+    push(
+        checks,
+        &format!("{label}_dimensions"),
+        report.width == ew && report.height == eh,
+        format!("{}×{} (expected {ew}×{eh})", report.width, report.height),
+    );
+    push(
+        checks,
+        &format!("{label}_named_tier_source"),
+        report.render_tier == Some(expected)
+            && report.resolution_source == ResolutionSource::NamedTier,
+        format!(
+            "tier={:?} source={:?}",
+            report.render_tier, report.resolution_source
+        ),
+    );
+    push(
+        checks,
+        &format!("{label}_authority_class"),
+        report.authority_class == auth,
+        format!("{:?}", report.authority_class),
+    );
+    check_worker_common(checks, label, report)?;
+    Ok(())
+}
+
+fn check_worker_common(
+    checks: &mut Vec<Check>,
+    label: &str,
+    report: &TraceShadeReport,
 ) -> Result<(), Box<dyn std::error::Error>> {
     push(
         checks,
@@ -313,7 +539,7 @@ fn check_worker(
     push(
         checks,
         &format!("{label}_shade_passes"),
-        report.shade_passes == expected_styles,
+        report.shade_passes == 2,
         format!("shade_passes={}", report.shade_passes),
     );
     let order_ok = report.styles
@@ -342,41 +568,52 @@ fn check_worker(
     Ok(())
 }
 
-fn run_worker(
+fn run_worker_tier(
     root: &Path,
-    width: u32,
-    height: u32,
+    tier: Option<DiagnosticRenderTier>,
+    width: Option<u32>,
+    height: Option<u32>,
     output_dir: &str,
     threads: usize,
 ) -> Result<TraceShadeReport, Box<dyn std::error::Error>> {
+    let mut args = vec![
+        "run".into(),
+        "--release".into(),
+        "-q".into(),
+        "-p".into(),
+        "xtask".into(),
+        "--".into(),
+        "trace-shade-many".into(),
+        "--preset".into(),
+        "presets/gargantua-baseline.toml".into(),
+        "--output-dir".into(),
+        output_dir.into(),
+        "--execution".into(),
+        "parallel".into(),
+        "--threads".into(),
+        threads.to_string(),
+        "--style".into(),
+        "gate1b2-categorical".into(),
+        "--style".into(),
+        "disk-suppressed".into(),
+        "--require-release".into(),
+    ];
+    if let Some(t) = tier {
+        args.push("--tier".into());
+        args.push(t.as_str().into());
+    }
+    if let Some(w) = width {
+        args.push("--width".into());
+        args.push(w.to_string());
+    }
+    if let Some(h) = height {
+        args.push("--height".into());
+        args.push(h.to_string());
+    }
+
     let out = Command::new("cargo")
         .current_dir(root)
-        .args([
-            "run",
-            "--release",
-            "-q",
-            "-p",
-            "xtask",
-            "--",
-            "trace-shade-many",
-            "--preset",
-            "presets/gargantua-baseline.toml",
-            "--width",
-            &width.to_string(),
-            "--height",
-            &height.to_string(),
-            "--output-dir",
-            output_dir,
-            "--execution",
-            "parallel",
-            "--threads",
-            &threads.to_string(),
-            "--style",
-            "gate1b2-categorical",
-            "--style",
-            "disk-suppressed",
-            "--require-release",
-        ])
+        .args(&args)
         .output()?;
     if !out.status.success() {
         return Err(format!(
@@ -406,7 +643,6 @@ fn run_worker(
     Ok(report)
 }
 
-/// Compare two P6 PPMs: DiskHit orange→black changes; other pixels identical.
 fn ppm_disk_diff(
     legacy: &[u8],
     suppressed: &[u8],
@@ -456,9 +692,9 @@ fn empty(
     dirty: bool,
     dirty_detail: String,
     checks: Vec<Check>,
-) -> Gate2a0TraceShadeEval {
-    Gate2a0TraceShadeEval {
-        gate: "gate-2a0-trace-shade".into(),
+) -> Gate2a0PreviewTiersEval {
+    Gate2a0PreviewTiersEval {
+        gate: "gate-2a0-preview-tiers".into(),
         result: "FAIL".into(),
         authoritative: false,
         commit: commit.into(),
@@ -469,39 +705,61 @@ fn empty(
         authoritative_threads: 0,
         checks,
         smoke: None,
-        authoritative_runs: vec![],
+        preview: None,
+        gate_runs: vec![],
+        showcase: None,
+        custom_authority_negative: None,
+        shared_numerical_profile_digest: None,
         disk_suppressed_changed_pixels: None,
+        tier_timings: vec![],
         content_digest_excluding_digest_field: String::new(),
     }
 }
 
 fn finalize(
     root: &Path,
-    report: &mut Gate2a0TraceShadeEval,
+    report: &mut Gate2a0PreviewTiersEval,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if report.content_digest_excluding_digest_field.is_empty() {
         let mut h = report.clone();
         h.content_digest_excluding_digest_field.clear();
         report.content_digest_excluding_digest_field = eval_digest(&h);
     }
-    let dir = root.join("artifacts/gate-2a0-trace-shade");
+    let dir = root.join("artifacts/gate-2a0-preview-tiers");
     std::fs::create_dir_all(&dir)?;
     std::fs::write(
         dir.join("evaluation.json"),
         serde_json::to_vec_pretty(report)?,
     )?;
     let mut md = String::new();
-    md.push_str("# Gate 2A0 Trace-Shade Evaluation\n\n");
+    md.push_str("# Gate 2A0 Preview Tiers Evaluation\n\n");
     md.push_str(&format!("- Result: **{}**\n", report.result));
     md.push_str(&format!("- Authoritative: {}\n", report.authoritative));
     md.push_str(&format!("- Commit: `{}`\n", report.commit));
     md.push_str(&format!(
-        "- Digest: `{}`\n\n",
+        "- Digest: `{}`\n",
         report.content_digest_excluding_digest_field
     ));
-    md.push_str("## Checks\n\n");
+    if let Some(d) = &report.shared_numerical_profile_digest {
+        md.push_str(&format!("- Numerical profile: `{d}`\n"));
+    }
+    md.push_str("\n## Checks\n\n");
     for c in &report.checks {
         md.push_str(&format!("- [{}] {}: {}\n", c.status, c.name, c.detail));
+    }
+    md.push_str("\n## Tier timings\n\n");
+    for t in &report.tier_timings {
+        md.push_str(&format!(
+            "- {}: {}×{} rays={} trace={:?}s shade={:?}s rays/s={:?} threads={}\n",
+            t.label,
+            t.width,
+            t.height,
+            t.ray_count,
+            t.trace_wall_clock_seconds,
+            t.shade_wall_clock_seconds,
+            t.rays_per_second,
+            t.thread_count
+        ));
     }
     std::fs::write(dir.join("evaluation.md"), md)?;
     std::fs::write(
@@ -511,7 +769,7 @@ fn finalize(
     Ok(())
 }
 
-fn eval_digest(report: &Gate2a0TraceShadeEval) -> String {
+fn eval_digest(report: &Gate2a0PreviewTiersEval) -> String {
     #[derive(Serialize)]
     struct Proj<'a> {
         gate: &'a str,
@@ -524,7 +782,11 @@ fn eval_digest(report: &Gate2a0TraceShadeEval) -> String {
         authoritative_threads: usize,
         checks: Vec<DigestCheck<'a>>,
         smoke: Option<&'a TraceShadeReport>,
-        authoritative_runs: &'a [TraceShadeReport],
+        preview: Option<&'a TraceShadeReport>,
+        gate_runs: &'a [TraceShadeReport],
+        showcase: Option<&'a TraceShadeReport>,
+        custom_authority_negative: Option<&'a TraceShadeReport>,
+        shared_numerical_profile_digest: Option<&'a str>,
         disk_suppressed_changed_pixels: Option<u64>,
         content_digest_excluding_digest_field: &'a str,
     }
@@ -533,9 +795,11 @@ fn eval_digest(report: &Gate2a0TraceShadeEval) -> String {
         name: &'a str,
         status: &'a str,
     }
-    // Strip timing from nested reports for projection.
     let smoke = report.smoke.as_ref().map(strip_timing);
-    let runs: Vec<_> = report.authoritative_runs.iter().map(strip_timing).collect();
+    let preview = report.preview.as_ref().map(strip_timing);
+    let gate_runs: Vec<_> = report.gate_runs.iter().map(strip_timing).collect();
+    let showcase = report.showcase.as_ref().map(strip_timing);
+    let custom = report.custom_authority_negative.as_ref().map(strip_timing);
     let proj = Proj {
         gate: &report.gate,
         result: &report.result,
@@ -554,7 +818,11 @@ fn eval_digest(report: &Gate2a0TraceShadeEval) -> String {
             })
             .collect(),
         smoke: smoke.as_ref(),
-        authoritative_runs: &runs,
+        preview: preview.as_ref(),
+        gate_runs: &gate_runs,
+        showcase: showcase.as_ref(),
+        custom_authority_negative: custom.as_ref(),
+        shared_numerical_profile_digest: report.shared_numerical_profile_digest.as_deref(),
         disk_suppressed_changed_pixels: report.disk_suppressed_changed_pixels,
         content_digest_excluding_digest_field: "",
     };
@@ -623,18 +891,6 @@ fn git_stdout(root: &Path, args: &[&str]) -> Result<String, Box<dyn std::error::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use relativity_trace::{encode_ppm, shade_diagnostic, DiagnosticShadeStyle};
-
-    #[test]
-    fn write_outcome_ppm_equals_encode_legacy_shade_path() {
-        // Smoke: API equivalence is covered by image wrapper; ensure digests of empty
-        // aren't used — use encode_ppm(shade) identity in unit of shade module.
-        let _ = (
-            encode_ppm,
-            shade_diagnostic,
-            DiagnosticShadeStyle::Gate1b2Categorical,
-        );
-    }
 
     #[test]
     fn timing_detail_excluded_from_eval_digest() {
@@ -653,11 +909,11 @@ mod tests {
             vec![Check {
                 name: "x".into(),
                 status: "PASS",
-                detail: "trace=1.0s shade=0.01s".into(),
+                detail: "trace=1.0s".into(),
             }],
         );
         let mut b = a.clone();
-        b.checks[0].detail = "trace=99s shade=9s".into();
+        b.checks[0].detail = "trace=99s".into();
         a.available_threads = 8;
         b.available_threads = 8;
         a.authoritative_threads = 8;

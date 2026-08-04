@@ -28,6 +28,11 @@
 /artifacts/gate-2a0-trace-shade/**/*.sha256
 /artifacts/gate-2a0-trace-shade/**/*.ppm
 /artifacts/gate-2a0-trace-shade/**/*.pgm
+/artifacts/gate-2a0-preview-tiers/**/*.json
+/artifacts/gate-2a0-preview-tiers/**/*.md
+/artifacts/gate-2a0-preview-tiers/**/*.sha256
+/artifacts/gate-2a0-preview-tiers/**/*.ppm
+/artifacts/gate-2a0-preview-tiers/**/*.pgm
 .DS_Store
 *.swp
 *.swo

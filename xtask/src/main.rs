@@ -4,16 +4,19 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 mod build_meta;
 mod corpus_report;
+mod diagnostic_scene;
 mod evaluate;
 mod evaluate_gate1b0;
 mod evaluate_gate1b1;
 mod evaluate_gate1b2;
 mod evaluate_gate2a0;
 mod evaluate_gate2a0_parallel;
+mod evaluate_gate2a0_preview_tiers;
 mod evaluate_gate2a0_trace_shade;
 mod inspect;
 mod integrate_ray;
 mod preset;
+mod render_tier;
 mod spike_dop853;
 mod trace_outcome_map;
 mod trace_shade_many;
@@ -67,7 +70,7 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
-    /// Gate evaluator (1A / 1B0–1B2 / 2A0-release / 2A0-parallel / 2A0-trace-shade).
+    /// Gate evaluator (1A / 1B0–1B2 / 2A0 scopes).
     Evaluate {
         #[arg(long)]
         preset: Option<String>,
@@ -110,14 +113,19 @@ enum Commands {
         #[arg(long)]
         threads: Option<usize>,
     },
-    /// Trace once and shade many diagnostic styles (Gate 2A0-3).
+    /// Trace once and shade many diagnostic styles (Gate 2A0-3 / 2A0-4).
     TraceShadeMany {
         #[arg(long)]
         preset: String,
-        #[arg(long, default_value_t = 128)]
-        width: u32,
-        #[arg(long, default_value_t = 128)]
-        height: u32,
+        /// Named diagnostic tier (`smoke`/`preview`/`gate`/`showcase`). Mutually exclusive with width/height.
+        #[arg(long, value_enum)]
+        tier: Option<render_tier::DiagnosticRenderTier>,
+        /// Custom width (legacy default axis 128 if omitted with --height). Rejected with --tier.
+        #[arg(long)]
+        width: Option<u32>,
+        /// Custom height (legacy default axis 128 if omitted with --width). Rejected with --tier.
+        #[arg(long)]
+        height: Option<u32>,
         #[arg(long)]
         output_dir: String,
         #[arg(long, default_value_t = false)]
@@ -167,6 +175,8 @@ fn main() {
                 evaluate_gate2a0_parallel::evaluate()
             } else if scope == "gate-2a0-trace-shade" {
                 evaluate_gate2a0_trace_shade::evaluate()
+            } else if scope == "gate-2a0-preview-tiers" {
+                evaluate_gate2a0_preview_tiers::evaluate()
             } else {
                 match preset {
                     Some(p) => evaluate::evaluate(&p, &scope),
@@ -205,6 +215,7 @@ fn main() {
         }
         Commands::TraceShadeMany {
             preset,
+            tier,
             width,
             height,
             output_dir,
@@ -230,6 +241,7 @@ fn main() {
                 .collect();
             trace_shade_many::run(
                 &preset,
+                tier,
                 width,
                 height,
                 &output_dir,
