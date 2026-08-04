@@ -745,9 +745,7 @@ fn finalize(root: &Path, report: &mut Gate2a2Eval) -> Result<(), Box<dyn std::er
     }
     if let Some(s) = &report.showcase {
         md.push_str("\n## Showcase\n\n");
-        md.push_str(
-            "- path: `artifacts/gate-2a2-lensed-celestial/showcase-disk-omitted/`\n",
-        );
+        md.push_str("- path: `artifacts/gate-2a2-lensed-celestial/showcase-disk-omitted/`\n");
         md.push_str(&format!("- lensed: `{}`\n", s.lensed_ppm_digest));
     }
     std::fs::write(dir.join("evaluation.md"), md)?;

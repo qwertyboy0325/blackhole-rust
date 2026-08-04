@@ -44,7 +44,7 @@
 /artifacts/gate-2a2-lensed-celestial/**/*.ppm
 /artifacts/gate-2a2-lensed-celestial/**/*.pgm
 /artifacts/manual-lensed-opaque/
-/artifacts/manual-lensed-sky/.DS_Store
+/artifacts/manual-lensed-sky/
 *.swp
 *.swo
 .idea/
