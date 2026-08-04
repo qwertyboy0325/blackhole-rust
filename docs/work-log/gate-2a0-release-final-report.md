@@ -4,8 +4,8 @@
 
 - Base `main`: `286edce06d4234d640fa1b96674c793104b18d66` (Gate 1B2 merge)
 - Branch: `gate-2a0-release-execution`
-- Implementation tip evaluated: `d8e04af`
-- Draft PR: (opened after push)
+- Prior measured implementation: `d8e04af`
+- Tip docs commit (re-evaluated for authority): see HEAD after this file lands
 
 ## 2. Build metadata mechanism
 
@@ -23,16 +23,18 @@
 
 ## 4–9. Measured benchmark matrix
 
+Numbers from tip evaluate at `39ae37e` (docs commit that recorded `d8e04af`); final tip re-evaluate follows this report update.
+
 | Run | Wall (s) | Rays/s |
 |---|---:|---:|
-| release 32×32 smoke | 0.475 | — |
-| dev 64×64 | 53.610 | 76.4 |
-| release 64×64 run-0 | 1.924 | 2128.6 |
-| release 64×64 run-1 | 1.940 | 2111.8 |
-| release 64×64 run-2 | 1.917 | 2136.5 |
-| median release 64×64 | 1.924 | — |
-| **speedup vs dev** | **27.86×** | evidence only |
-| release 128×128 | 7.586 | 2159.7 |
+| release 32×32 smoke | 0.470 | — |
+| dev 64×64 | 53.883 | 76.0 |
+| release 64×64 run-0 | 1.889 | 2167.9 |
+| release 64×64 run-1 | 1.891 | 2165.6 |
+| release 64×64 run-2 | 1.890 | 2167.3 |
+| median release 64×64 | 1.890 | — |
+| **speedup vs dev** | **28.51×** | evidence only |
+| release 128×128 | 7.547 | 2170.9 |
 
 Historical Gate 1B2 debug 128×128 ≈ 210 s (prior run; not remeasured here).
 
@@ -40,9 +42,9 @@ Historical Gate 1B2 debug 128×128 ≈ 210 s (prior run; not remeasured here).
 
 | Channel | Status |
 |---|---|
-| classification | MATCH `64462a83…52c4` |
-| PPM | MATCH `ac058d5a…184c` |
-| PGM | MATCH `2df22639…5db5` |
+| classification | MATCH `64462a83927b111ed808a38292e2d5b1393b4045b580f1b416b1dc001cd452c4` |
+| PPM | MATCH `ac058d5af01b425e411b5c33017210bf888aa52918cfd085bb863d7ddc99184c` |
+| PGM | MATCH `2df226390057bb87b64d172cd258087b0ef4c1ad0ce0d4378e003b5861a75db5` |
 | counts | MATCH disk 12307 / escaped 2442 / horizon_event 1462 / horizon_approach 173 / affine 0 / failed 0 |
 
 ## 12. Release determinism (64×64 ×3)
@@ -53,11 +55,14 @@ Dev vs release 64×64 classifications/PPM/counts agree; PGM identical across pro
 
 ## 13–14. Evaluator digest / authority
 
+At `39ae37e`:
+
 - `result: PASS`
 - `authoritative: true`
 - `dirty: false`
-- commit: `d8e04afeeefa3e813f6272f96544e5ba8d5ecf53`
-- content digest: `7cfc798d6f44ee8a6749d2d4aec8162f6a9b70faf59f38bc124cad6f197d147b`
+- content digest: `84afcc67f0a0b36fed9986aa07deab2aa0c93b0aa8a8084499d528a9a7b7111c`
+
+Final tip digest after this docs commit is filled by the subsequent release evaluate (must remain PASS / authoritative).
 
 ## 15. CI
 
