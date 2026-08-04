@@ -1,6 +1,6 @@
 //! Gate 1A orchestration: inspect-point, inspect-initial-ray, evaluate.
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 mod build_meta;
 mod corpus_report;
@@ -9,11 +9,18 @@ mod evaluate_gate1b0;
 mod evaluate_gate1b1;
 mod evaluate_gate1b2;
 mod evaluate_gate2a0;
+mod evaluate_gate2a0_parallel;
 mod inspect;
 mod integrate_ray;
 mod preset;
 mod spike_dop853;
 mod trace_outcome_map;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ExecutionArg {
+    Serial,
+    Parallel,
+}
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "blackhole-rust task runner")]
@@ -50,7 +57,7 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
-    /// Gate evaluator (Gate 1A / Gate 1B0 / Gate 1B1 / Gate 1B2 / Gate 2A0 scope).
+    /// Gate evaluator (Gate 1A / 1B0 / 1B1 / 1B2 / 2A0-release / 2A0-parallel).
     Evaluate {
         #[arg(long)]
         preset: Option<String>,
@@ -86,6 +93,12 @@ enum Commands {
         /// Reject non-release builds before any tracing or artifact writes.
         #[arg(long, default_value_t = false)]
         require_release: bool,
+        /// Camera-grid execution mode (default serial).
+        #[arg(long, value_enum, default_value_t = ExecutionArg::Serial)]
+        execution: ExecutionArg,
+        /// Required for `--execution parallel`; rejected with serial.
+        #[arg(long)]
+        threads: Option<usize>,
     },
     /// Emit canonical Gate 1B1 corpus JSON (numerical records; for determinism).
     CorpusReport {
@@ -120,6 +133,8 @@ fn main() {
                 evaluate_gate1b2::evaluate()
             } else if scope == "gate-2a0-release" {
                 evaluate_gate2a0::evaluate()
+            } else if scope == "gate-2a0-parallel" {
+                evaluate_gate2a0_parallel::evaluate()
             } else {
                 match preset {
                     Some(p) => evaluate::evaluate(&p, &scope),
@@ -139,7 +154,23 @@ fn main() {
             height,
             output,
             require_release,
-        } => trace_outcome_map::run(&preset, width, height, &output, require_release),
+            execution,
+            threads,
+        } => {
+            let exec = match execution {
+                ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
+                ExecutionArg::Parallel => trace_outcome_map::CliExecution::Parallel,
+            };
+            trace_outcome_map::run(
+                &preset,
+                width,
+                height,
+                &output,
+                require_release,
+                exec,
+                threads,
+            )
+        }
         Commands::CorpusReport { scope } => {
             if scope == "gate-1b1" {
                 corpus_report::run()

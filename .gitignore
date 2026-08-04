@@ -18,6 +18,11 @@
 /artifacts/gate-2a0-release/**/*.sha256
 /artifacts/gate-2a0-release/**/*.ppm
 /artifacts/gate-2a0-release/**/*.pgm
+/artifacts/gate-2a0-parallel/**/*.json
+/artifacts/gate-2a0-parallel/**/*.md
+/artifacts/gate-2a0-parallel/**/*.sha256
+/artifacts/gate-2a0-parallel/**/*.ppm
+/artifacts/gate-2a0-parallel/**/*.pgm
 .DS_Store
 *.swp
 *.swo

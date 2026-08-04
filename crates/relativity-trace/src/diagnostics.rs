@@ -3,8 +3,17 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::execution::TraceExecutionMetadata;
 use crate::outcome::{OutcomeClass, RayOutcome};
 use crate::trace::TraceBundle;
+
+fn default_thread_count() -> usize {
+    1
+}
+
+fn default_scheduler() -> String {
+    "serial-row-major".into()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PixelCoord {
@@ -59,6 +68,10 @@ pub struct OutcomeMapReport {
     pub most_expensive_rays: Vec<PixelCoord>,
     pub failure_counts: Vec<FailureCount>,
     pub execution_mode: String,
+    #[serde(default = "default_thread_count")]
+    pub thread_count: usize,
+    #[serde(default = "default_scheduler")]
+    pub scheduler: String,
     /// Wall-clock; excluded from content digest.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wall_clock_seconds: Option<f64>,
@@ -107,6 +120,7 @@ pub fn build_outcome_map_report(
     toolchain: &str,
     target: &str,
     wall_clock_seconds: Option<f64>,
+    execution: &TraceExecutionMetadata,
 ) -> OutcomeMapReport {
     let mut counts = OutcomeCounts {
         disk_hit: 0,
@@ -229,7 +243,9 @@ pub fn build_outcome_map_report(
         rhs,
         most_expensive_rays,
         failure_counts,
-        execution_mode: "serial".into(),
+        execution_mode: execution.mode.as_str().into(),
+        thread_count: execution.thread_count,
+        scheduler: execution.scheduler.clone(),
         wall_clock_seconds,
         rays_per_second,
         content_digest_excluding_digest_field: String::new(),
@@ -260,6 +276,8 @@ fn content_digest(report: &OutcomeMapReport) -> String {
         most_expensive_rays: &'a [PixelCoord],
         failure_counts: &'a [FailureCount],
         execution_mode: &'a str,
+        thread_count: usize,
+        scheduler: &'a str,
         content_digest_excluding_digest_field: &'a str,
     }
     let proj = Proj {
@@ -282,6 +300,8 @@ fn content_digest(report: &OutcomeMapReport) -> String {
         most_expensive_rays: &report.most_expensive_rays,
         failure_counts: &report.failure_counts,
         execution_mode: &report.execution_mode,
+        thread_count: report.thread_count,
+        scheduler: &report.scheduler,
         content_digest_excluding_digest_field: "",
     };
     let bytes = serde_json::to_vec(&proj).expect("serialize");

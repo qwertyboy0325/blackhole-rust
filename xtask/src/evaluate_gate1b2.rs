@@ -220,6 +220,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         &toolchain,
         &target,
         Some(elapsed),
+        &relativity_trace::TraceExecutionMetadata::serial(),
     );
     std::fs::write(
         out_dir.join("outcome-map.json"),
