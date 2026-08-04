@@ -33,6 +33,11 @@
 /artifacts/gate-2a0-preview-tiers/**/*.sha256
 /artifacts/gate-2a0-preview-tiers/**/*.ppm
 /artifacts/gate-2a0-preview-tiers/**/*.pgm
+/artifacts/gate-2a1-celestial-directions/**/*.json
+/artifacts/gate-2a1-celestial-directions/**/*.md
+/artifacts/gate-2a1-celestial-directions/**/*.sha256
+/artifacts/gate-2a1-celestial-directions/**/*.ppm
+/artifacts/gate-2a1-celestial-directions/**/*.pgm
 .DS_Store
 *.swp
 *.swo

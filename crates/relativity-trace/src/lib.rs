@@ -3,6 +3,9 @@
 //! Gate 1B2: diagnostic classification image only — no radiometry, textures,
 //! OpenEXR, GPU, or GUI.
 //!
+//! Gate 2A1 adds finite celestial-boundary coordinate mapping (UV from escape
+//! positions). It does not sample textures or compute radiance.
+//!
 //! # Event limitations
 //!
 //! Only roots visible via accepted-step endpoint sign change or exact endpoint
@@ -12,6 +15,7 @@
 #![forbid(unsafe_code)]
 
 pub mod camera;
+pub mod celestial;
 pub mod convergence;
 pub mod corpus;
 pub mod diagnostics;
@@ -25,6 +29,16 @@ pub mod trace;
 pub mod trace_digest;
 
 pub use camera::{pixel_index, sensor_at_pixel_center, TraceGrid};
+pub use celestial::{
+    build_celestial_coordinate_frame, build_celestial_coordinate_map_artifact,
+    build_celestial_regression_corpus, celestial_coordinate_digest, celestial_sample_from_escape,
+    celestial_sample_from_position, shade_celestial_uv_debug, validate_celestial_seam,
+    worst_boundary_residual_pixels, wrap_psi_0_2pi, CelestialBoundarySample,
+    CelestialCoordinateConvention, CelestialCoordinateFrame, CelestialCoordinateMapArtifact,
+    CelestialCoordinatePixel, CelestialCoordinatePixelRecord, CelestialDirectionSource,
+    CelestialMappingError, CelestialRegressionSample, CelestialUv, ACCEPTED_SEAM,
+    CELESTIAL_CONVENTION_ID, RADIUS_POLICY_GATE_1B2_CAP,
+};
 pub use convergence::{
     run_convergence_probe, ConvergenceCandidateResult, ConvergenceProbeReport,
     ConvergenceProbeStatus,

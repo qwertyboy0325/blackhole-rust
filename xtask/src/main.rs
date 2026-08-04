@@ -13,6 +13,7 @@ mod evaluate_gate2a0;
 mod evaluate_gate2a0_parallel;
 mod evaluate_gate2a0_preview_tiers;
 mod evaluate_gate2a0_trace_shade;
+mod evaluate_gate2a1_celestial;
 mod inspect;
 mod integrate_ray;
 mod preset;
@@ -137,6 +138,9 @@ enum Commands {
         /// Repeatable; order preserved; duplicates rejected.
         #[arg(long = "style", value_enum)]
         styles: Vec<ShadeStyleArg>,
+        /// Derive finite celestial-boundary UV coordinates from the same TraceBundle (Gate 2A1).
+        #[arg(long, default_value_t = false)]
+        emit_celestial_coordinates: bool,
     },
     /// Emit canonical Gate 1B1 corpus JSON (numerical records; for determinism).
     CorpusReport {
@@ -177,6 +181,8 @@ fn main() {
                 evaluate_gate2a0_trace_shade::evaluate()
             } else if scope == "gate-2a0-preview-tiers" {
                 evaluate_gate2a0_preview_tiers::evaluate()
+            } else if scope == "gate-2a1-celestial-directions" {
+                evaluate_gate2a1_celestial::evaluate()
             } else {
                 match preset {
                     Some(p) => evaluate::evaluate(&p, &scope),
@@ -223,6 +229,7 @@ fn main() {
             execution,
             threads,
             styles,
+            emit_celestial_coordinates,
         } => {
             let exec = match execution {
                 ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
@@ -249,6 +256,7 @@ fn main() {
                 exec,
                 threads,
                 &styles,
+                emit_celestial_coordinates,
             )
         }
         Commands::CorpusReport { scope } => {

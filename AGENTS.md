@@ -2,10 +2,10 @@
 
 ## Current gate
 
-Gate 0, 1A, 1B0, and 1B1 are complete. ADR 0005 **Accepted** (`ivp = "=0.6.0"`).
-Gate 1B2 (thin-disk termination + outcome preview) is in progress on
-`gate-1b2-ray-termination-preview`. Do not begin radiometry, celestial textures,
-OpenEXR, GPU, wgpu, or egui until Gate 1B2 owner review completes.
+Gate 0, 1A, 1B0, 1B1, 1B2 and Gate 2A0-1 through 2A0-4 are complete.
+Gate 2A1 finite celestial-boundary coordinate mapping is in progress.
+Do not begin celestial texture sampling, radiometry, redshift, disk emission,
+OpenEXR, GPU, wgpu or egui work in this gate.
 
 ## Authority and scope
 

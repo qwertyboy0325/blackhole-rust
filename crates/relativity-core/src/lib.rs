@@ -19,7 +19,9 @@ pub mod types;
 pub use coords::{
     bl_metric, bl_to_ks_position, cartesian_from_spherical_ks, covector_bl_to_ks,
     covector_ks_to_bl, jacobian_cartesian_ks_from_bl, ks_to_bl_position,
-    spherical_ks_from_cartesian, vector_bl_to_ks, vector_ks_to_bl, PositionSphericalKs,
+    spherical_ks_direction_from_cartesian, spherical_ks_from_cartesian, vector_bl_to_ks,
+    vector_ks_to_bl, PositionSphericalKs, SphericalKsAzimuthStatus, SphericalKsDirection,
+    AXIS_SIN_FLOOR,
 };
 pub use corpus::{stratified_corpus, CorpusPoint, CorpusTag, ExpectedOutcome, CORPUS_SEED};
 pub use error::{CoreError, DomainReason, EvalStatus};
