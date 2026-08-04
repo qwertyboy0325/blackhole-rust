@@ -13,6 +13,11 @@
 /artifacts/gate-1b2/*.ppm
 /artifacts/gate-1b2/*.pgm
 /artifacts/gate-1b2/subprocess-*/
+/artifacts/gate-2a0-release/**/*.json
+/artifacts/gate-2a0-release/**/*.md
+/artifacts/gate-2a0-release/**/*.sha256
+/artifacts/gate-2a0-release/**/*.ppm
+/artifacts/gate-2a0-release/**/*.pgm
 .DS_Store
 *.swp
 *.swo

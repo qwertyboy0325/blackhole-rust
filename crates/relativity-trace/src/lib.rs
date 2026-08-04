@@ -27,7 +27,10 @@ pub use convergence::{
     ConvergenceProbeStatus,
 };
 pub use corpus::{camera_corpus, run_camera_corpus, CameraCorpusCase, CorpusId};
-pub use diagnostics::{build_outcome_map_report, hex_sha, outcome_class_bytes, OutcomeMapReport};
+pub use diagnostics::{
+    build_outcome_map_report, hex_sha, outcome_class_bytes, OutcomeCounts, OutcomeMapReport,
+    PixelCoord, RhsDistribution,
+};
 pub use disk::{ThinDisk, ThinDiskGeometry};
 pub use image::{class_rgb, write_outcome_ppm, write_rhs_pgm};
 pub use outcome::{

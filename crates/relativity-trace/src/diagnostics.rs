@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use crate::outcome::{OutcomeClass, RayOutcome};
 use crate::trace::TraceBundle;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PixelCoord {
     pub col: u32,
     pub row: u32,
