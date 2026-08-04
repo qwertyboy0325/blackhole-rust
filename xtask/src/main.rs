@@ -6,10 +6,12 @@ mod corpus_report;
 mod evaluate;
 mod evaluate_gate1b0;
 mod evaluate_gate1b1;
+mod evaluate_gate1b2;
 mod inspect;
 mod integrate_ray;
 mod preset;
 mod spike_dop853;
+mod trace_outcome_map;
 
 #[derive(Parser)]
 #[command(name = "xtask", about = "blackhole-rust task runner")]
@@ -69,6 +71,17 @@ enum Commands {
         #[arg(long, default_value_t = 100.0)]
         affine_limit: f64,
     },
+    /// Gate 1B2 categorical outcome map (PPM) + cost PGM + JSON.
+    TraceOutcomeMap {
+        #[arg(long)]
+        preset: String,
+        #[arg(long, default_value_t = 128)]
+        width: u32,
+        #[arg(long, default_value_t = 128)]
+        height: u32,
+        #[arg(long)]
+        output: String,
+    },
     /// Emit canonical Gate 1B1 corpus JSON (numerical records; for determinism).
     CorpusReport {
         #[arg(long)]
@@ -98,6 +111,8 @@ fn main() {
                 evaluate_gate1b0::evaluate()
             } else if scope == "gate-1b1" {
                 evaluate_gate1b1::evaluate()
+            } else if scope == "gate-1b2" {
+                evaluate_gate1b2::evaluate()
             } else {
                 match preset {
                     Some(p) => evaluate::evaluate(&p, &scope),
@@ -111,6 +126,12 @@ fn main() {
             sensor_y,
             affine_limit,
         } => integrate_ray::run(&preset, sensor_x, sensor_y, affine_limit),
+        Commands::TraceOutcomeMap {
+            preset,
+            width,
+            height,
+            output,
+        } => trace_outcome_map::run(&preset, width, height, &output),
         Commands::CorpusReport { scope } => {
             if scope == "gate-1b1" {
                 corpus_report::run()

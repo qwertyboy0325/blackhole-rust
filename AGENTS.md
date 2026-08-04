@@ -2,10 +2,10 @@
 
 ## Current gate
 
-Gate 0 and Gate 1A are complete. Gate 1B0 PASS; ADR 0005 **Accepted**
-(`ivp = "=0.6.0"`). Gate 1B1 production integrator is on
-`gate-1b1-production-integrator`. Do not begin disk, radiometry, image, GPU,
-or GUI work until Gate 1B1 owner review completes.
+Gate 0, 1A, 1B0, and 1B1 are complete. ADR 0005 **Accepted** (`ivp = "=0.6.0"`).
+Gate 1B2 (thin-disk termination + outcome preview) is in progress on
+`gate-1b2-ray-termination-preview`. Do not begin radiometry, celestial textures,
+OpenEXR, GPU, wgpu, or egui until Gate 1B2 owner review completes.
 
 ## Authority and scope
 

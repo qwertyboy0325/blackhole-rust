@@ -1,6 +1,6 @@
 //! Project-owned integration outcomes.
 
-use crate::event::{EventId, EventLocalizationStats};
+use crate::event::{EventId, EventLocalizationStats, EventMetadata};
 use crate::state::{AffineParameter, GeodesicState};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -26,6 +26,7 @@ pub struct EventHit {
     pub event_value: f64,
     pub localization: EventLocalizationStats,
     pub integration: IntegrationStats,
+    pub metadata: EventMetadata,
 }
 
 /// Opt-in near-surface termination that is **not** an exact event crossing.

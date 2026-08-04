@@ -15,7 +15,7 @@ pub enum IntegrationStage {
     Outcome,
 }
 
-#[derive(Debug, Error, Clone)]
+#[derive(Debug, Error, Clone, PartialEq)]
 pub enum IntegrationError {
     #[error("invalid config field `{field}`")]
     InvalidConfig { field: &'static str },

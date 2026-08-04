@@ -2,6 +2,47 @@
 
 use crate::error::IntegrationError;
 
+/// Controls when event candidates become armed (no geometry mutation).
+///
+/// Does not move surfaces or alter ray state — only whether a localized
+/// candidate at affine λ may terminate the ray.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct EventArmingPolicy {
+    /// Finite, non-negative. Candidates with `lambda < minimum_affine_parameter`
+    /// are ignored (remain disarmed).
+    pub minimum_affine_parameter: f64,
+}
+
+impl EventArmingPolicy {
+    pub fn immediate() -> Self {
+        Self {
+            minimum_affine_parameter: 0.0,
+        }
+    }
+
+    pub fn after(minimum_affine_parameter: f64) -> Result<Self, IntegrationError> {
+        let p = Self {
+            minimum_affine_parameter,
+        };
+        p.validate()?;
+        Ok(p)
+    }
+
+    pub fn validate(&self) -> Result<(), IntegrationError> {
+        if !self.minimum_affine_parameter.is_finite() || self.minimum_affine_parameter < 0.0 {
+            return Err(IntegrationError::InvalidConfig {
+                field: "event_arming.minimum_affine_parameter",
+            });
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub fn is_armed(&self, lambda: f64) -> bool {
+        lambda >= self.minimum_affine_parameter
+    }
+}
+
 /// Opt-in policy for OuterHorizon proximity termination only.
 ///
 /// Distinct from `event_value_tolerance` (root-localization convergence).
@@ -56,6 +97,8 @@ pub struct Dop853Config {
     pub max_accepted_steps: u64,
     /// Opt-in OuterHorizon-only proximity policy (default: disabled).
     pub horizon_proximity: HorizonProximityPolicy,
+    /// Event arming threshold (default: armed from λ = 0).
+    pub event_arming: EventArmingPolicy,
 }
 
 impl Dop853Config {
@@ -73,6 +116,7 @@ impl Dop853Config {
             event_value_tolerance: 1e-12,
             max_accepted_steps: 100_000,
             horizon_proximity: HorizonProximityPolicy::disabled(),
+            event_arming: EventArmingPolicy::immediate(),
         }
     }
 
@@ -116,6 +160,7 @@ impl Dop853Config {
             });
         }
         self.horizon_proximity.validate()?;
+        self.event_arming.validate()?;
         Ok(())
     }
 
@@ -131,6 +176,11 @@ impl Dop853Config {
 
     pub fn with_horizon_proximity(mut self, policy: HorizonProximityPolicy) -> Self {
         self.horizon_proximity = policy;
+        self
+    }
+
+    pub fn with_event_arming(mut self, policy: EventArmingPolicy) -> Self {
+        self.event_arming = policy;
         self
     }
 }

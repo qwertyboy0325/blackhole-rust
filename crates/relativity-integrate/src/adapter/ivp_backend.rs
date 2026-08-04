@@ -12,7 +12,8 @@ use std::rc::Rc;
 use crate::config::Dop853Config;
 use crate::error::{IntegrationError, IntegrationStage};
 use crate::event::{
-    is_eligible_crossing, localize_sign_change, EventId, EventLocalizationStats, EventSurface,
+    is_eligible_crossing, localize_sign_change, EventId, EventLocalizationStats, EventMetadata,
+    EventSurface, LocalizedSurfaceHit,
 };
 use crate::outcome::{
     EventHit, IntegrationStats, RawSolverStop, SurfaceApproach, SurfaceApproachReason,
@@ -38,6 +39,7 @@ pub(crate) struct PendingEvent {
     pub raw: RawSolverStop,
     pub event_value: f64,
     pub localization: EventLocalizationStats,
+    pub metadata: EventMetadata,
 }
 
 #[derive(Clone)]
@@ -219,6 +221,30 @@ impl SolOut for EventSolOut<'_> {
                     self.config.event_value_tolerance,
                 ) {
                     Ok((lam, st, fv, loc)) => {
+                        if !self.config.event_arming.is_armed(lam.0) {
+                            continue;
+                        }
+                        let localized = LocalizedSurfaceHit {
+                            event_id: surface.id(),
+                            lambda: lam,
+                            state: st,
+                            event_value: fv,
+                            localization: loc.clone(),
+                            f0,
+                            f1,
+                        };
+                        let meta = match surface.classify_localized_hit(&localized) {
+                            Ok(Some(m)) => m,
+                            Ok(None) => {
+                                // Rejected candidate (e.g. disk plane outside annulus).
+                                continue;
+                            }
+                            Err(e) => {
+                                self.latch.set(e);
+                                *self.interrupted.borrow_mut() = true;
+                                return ControlFlag::Interrupt;
+                            }
+                        };
                         let cand = PendingEvent {
                             event_id: surface.id(),
                             lambda: lam,
@@ -226,6 +252,7 @@ impl SolOut for EventSolOut<'_> {
                             raw: raw.clone(),
                             event_value: fv,
                             localization: loc,
+                            metadata: meta,
                         };
                         let take = match &best_event {
                             None => true,
@@ -410,6 +437,7 @@ pub(crate) fn pending_to_event_hit(p: PendingEvent, stats: IntegrationStats) -> 
         event_value: p.event_value,
         localization: p.localization,
         integration: stats,
+        metadata: p.metadata,
     }
 }
 
