@@ -4,6 +4,8 @@
 
 Authoritative evaluate **PASS** at commit `f880e77c172415b343eb07371bb20839f75c78ed`.
 
+V1 validation closure (frozen exact `validate()`, sector>8 → `Err` not panic) follows on this branch; digests below must remain unchanged.
+
 | Field | Value |
 | --- | --- |
 | Approved base | `bab17d21b9e5ff5d153a0f1a7dc7ec46e861df87` |

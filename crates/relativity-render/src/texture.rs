@@ -83,50 +83,24 @@ pub fn procedural_coordinate_grid_v1() -> ProceduralCelestialTextureSpec {
 }
 
 impl ProceduralCelestialTextureSpec {
+    /// Reject any deviation from the frozen `procedural-coordinate-grid-v1` values.
+    ///
+    /// V1 is an exact specification: non-canonical field mutations must not reach
+    /// sampling (fixed 8-entry north/south palettes).
     pub fn validate(&self) -> Result<(), CelestialRenderError> {
-        if self.schema_version != 1 {
-            return Err(CelestialRenderError::InvalidTextureSpec(
-                "schema_version must be 1".into(),
-            ));
-        }
         if self.texture_id != TEXTURE_ID_V1 {
             return Err(CelestialRenderError::UnsupportedTextureId(
                 self.texture_id.clone(),
             ));
         }
-        for (name, v) in [
-            ("longitude_sectors", self.longitude_sectors),
-            ("latitude_cells", self.latitude_cells),
-            ("minor_longitude_divisions", self.minor_longitude_divisions),
-            ("minor_latitude_divisions", self.minor_latitude_divisions),
-            ("major_longitude_stride", self.major_longitude_stride),
-            ("major_latitude_stride", self.major_latitude_stride),
-            (
-                "marker_radius_millidegrees",
-                self.marker_radius_millidegrees,
-            ),
-        ] {
-            if v == 0 {
-                return Err(CelestialRenderError::InvalidTextureSpec(format!(
-                    "{name} must be > 0"
-                )));
-            }
-        }
-        if !self
-            .minor_longitude_divisions
-            .is_multiple_of(self.longitude_sectors)
-        {
+        let canonical = procedural_coordinate_grid_v1();
+        if self != &canonical {
             return Err(CelestialRenderError::InvalidTextureSpec(
-                "minor_longitude_divisions must be multiple of longitude_sectors".into(),
+                "procedural-coordinate-grid-v1 is a frozen exact specification; all fields must match canonical V1".into(),
             ));
         }
-        if self.major_longitude_stride > self.minor_longitude_divisions
-            || self.major_latitude_stride > self.minor_latitude_divisions
-        {
-            return Err(CelestialRenderError::InvalidTextureSpec(
-                "major stride exceeds minor divisions".into(),
-            ));
-        }
+        debug_assert_eq!(NORTH_PALETTE.len(), canonical.longitude_sectors as usize);
+        debug_assert_eq!(SOUTH_PALETTE.len(), canonical.longitude_sectors as usize);
         Ok(())
     }
 }
@@ -257,12 +231,21 @@ fn sample_uv_direction(
         return Ok(COLOR_MINOR_GRID);
     }
 
-    // Base sector + checker
+    // Base sector + checker (palette length is frozen at 8 by validate()).
     let sector = ((u * spec.longitude_sectors as f64).floor() as u32) % spec.longitude_sectors;
+    let sector = sector as usize;
     let base = if v < 0.5 {
-        NORTH_PALETTE[sector as usize]
+        *NORTH_PALETTE.get(sector).ok_or_else(|| {
+            CelestialRenderError::InvalidTextureSpec(format!(
+                "north palette index {sector} out of range"
+            ))
+        })?
     } else {
-        SOUTH_PALETTE[sector as usize]
+        *SOUTH_PALETTE.get(sector).ok_or_else(|| {
+            CelestialRenderError::InvalidTextureSpec(format!(
+                "south palette index {sector} out of range"
+            ))
+        })?
     };
     let lon_cell = ((u * spec.minor_longitude_divisions as f64).floor() as u32)
         % spec.minor_longitude_divisions;
@@ -428,6 +411,65 @@ mod tests {
             s.validate(),
             Err(CelestialRenderError::UnsupportedTextureId(_))
         ));
+        // Formerly-accepted non-canonical combinations must now fail.
+        s = procedural_coordinate_grid_v1();
+        s.longitude_sectors = 16;
+        s.minor_longitude_divisions = 16;
+        assert!(matches!(
+            s.validate(),
+            Err(CelestialRenderError::InvalidTextureSpec(_))
+        ));
+        s = procedural_coordinate_grid_v1();
+        s.latitude_cells = 24;
+        assert!(s.validate().is_err());
+        s = procedural_coordinate_grid_v1();
+        s.marker_radius_millidegrees = 5000;
+        assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn longitude_sectors_above_palette_len_returns_err_not_panic() {
+        let mut s = procedural_coordinate_grid_v1();
+        // Would have passed the pre-closure multiple-of / nonzero checks.
+        s.longitude_sectors = 16;
+        s.minor_longitude_divisions = 16;
+        assert!(s.validate().is_err());
+        // High-u sample would index sector 14 under a 16-sector chart.
+        let sample = sample_at(0.9, 0.25);
+        assert!(
+            sample_procedural_celestial(&s, &sample).is_err(),
+            "non-canonical longitude_sectors must return Err, not panic on palette index"
+        );
+    }
+
+    #[test]
+    fn every_non_canonical_field_mutation_rejected() {
+        let base = procedural_coordinate_grid_v1();
+        assert!(base.validate().is_ok());
+        let mut s = base.clone();
+        s.schema_version = 2;
+        assert!(s.validate().is_err());
+        s = base.clone();
+        s.longitude_sectors = 4;
+        assert!(s.validate().is_err());
+        s = base.clone();
+        s.latitude_cells = 6;
+        assert!(s.validate().is_err());
+        s = base.clone();
+        s.minor_longitude_divisions = 16;
+        assert!(s.validate().is_err());
+        s = base.clone();
+        s.minor_latitude_divisions = 6;
+        assert!(s.validate().is_err());
+        s = base.clone();
+        s.major_longitude_stride = 2;
+        assert!(s.validate().is_err());
+        s = base.clone();
+        s.major_latitude_stride = 2;
+        assert!(s.validate().is_err());
+        s = base.clone();
+        s.marker_radius_millidegrees = 5000;
+        assert!(s.validate().is_err());
     }
 
     #[test]

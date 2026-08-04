@@ -25,7 +25,8 @@ Not asymptotic directions at null infinity. No asymptotic correction is applied.
 procedural-coordinate-grid-v1
 ```
 
-Canonical specification fields:
+Canonical specification fields (frozen exact V1 — `validate()` rejects any
+mutation of these values):
 
 | Field | Value |
 | --- | --- |
@@ -39,6 +40,8 @@ Canonical specification fields:
 | marker_radius_millidegrees | 7000 (7°) |
 
 No external texture assets. No star catalogs. No copyrighted sky maps.
+Non-canonical specs must fail with a typed `CelestialRenderError` before any
+palette indexing; they must not panic.
 
 ## Algorithm
 
