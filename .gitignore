@@ -4,6 +4,9 @@
 /artifacts/gate-1a/evaluation.md
 /artifacts/gate-1b0/*.json
 /artifacts/gate-1b0/*.md
+/artifacts/gate-1b1/*.json
+/artifacts/gate-1b1/*.md
+/artifacts/gate-1b1/*.sha256
 /artifacts/gate-1b2/*.json
 /artifacts/gate-1b2/*.md
 /artifacts/gate-1b2/*.sha256
