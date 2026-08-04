@@ -16,6 +16,7 @@ pub mod convergence;
 pub mod corpus;
 pub mod diagnostics;
 pub mod disk;
+pub mod execution;
 pub mod image;
 pub mod outcome;
 pub mod scene;
@@ -28,14 +29,18 @@ pub use convergence::{
 };
 pub use corpus::{camera_corpus, run_camera_corpus, CameraCorpusCase, CorpusId};
 pub use diagnostics::{
-    build_outcome_map_report, hex_sha, outcome_class_bytes, OutcomeCounts, OutcomeMapReport,
-    PixelCoord, RhsDistribution,
+    build_outcome_map_report, hex_sha, outcome_class_bytes, FailureCount, OutcomeCounts,
+    OutcomeMapReport, PixelCoord, RhsDistribution,
 };
 pub use disk::{ThinDisk, ThinDiskGeometry};
+pub use execution::{TraceExecution, TraceExecutionMetadata, TraceExecutionMode};
 pub use image::{class_rgb, write_outcome_ppm, write_rhs_pgm};
 pub use outcome::{
     map_integration_report, AffineLimitOutcome, DiskHit, EscapeHit, OutcomeClass, RayFailure,
     RayOutcome,
 };
 pub use scene::TraceScene;
-pub use trace::{trace_grid, trace_ray_pixel, trace_ray_sensor, TraceBundle};
+pub use trace::{
+    fold_indexed_results, trace_grid, trace_grid_with_execution, trace_ray_pixel, trace_ray_sensor,
+    TraceBundle,
+};
