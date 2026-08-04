@@ -1,7 +1,8 @@
 //! Gate 2A0 release-execution foundation evaluator.
 
 use crate::build_meta::{
-    is_optimized_release_execution, require_release_execution, BuildExecutionMetadata,
+    is_optimized_release_execution, read_build_execution_report, require_release_execution,
+    BuildExecutionMetadata,
 };
 use relativity_trace::{OutcomeCounts, PixelCoord, RhsDistribution};
 use serde::{Deserialize, Serialize};
@@ -239,14 +240,20 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "artifacts/gate-2a0-release/release-32/outcome-map.ppm",
         true,
     )?;
-    let smoke_ok = smoke.counts.failed == 0 && smoke.width == 32 && smoke.height == 32;
+    let smoke_ok = smoke.counts.failed == 0
+        && smoke.width == 32
+        && smoke.height == 32
+        && smoke.build.is_optimized_release_execution();
     push(
         &mut checks,
         "smoke_release_32",
         smoke_ok,
         format!(
-            "class={} failed={} wall={:.3}s",
-            smoke.outcome_class_digest, smoke.counts.failed, smoke.wall_clock_seconds
+            "class={} failed={} wall={:.3}s build={}",
+            smoke.outcome_class_digest,
+            smoke.counts.failed,
+            smoke.wall_clock_seconds,
+            smoke.build.describe()
         ),
     );
 
@@ -409,6 +416,26 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         format!(
             "wall={:.3}s rps={:.1}; historical_1b2_debug≈{HISTORICAL_1B2_DEBUG_SECONDS}s (prior run)",
             rel128.wall_clock_seconds, rel128.rays_per_second
+        ),
+    );
+
+    // Worker metadata came from adjacent build-execution.json (validated in loader).
+    let worker_meta_ok = smoke.build.is_optimized_release_execution()
+        && !dev64.build.is_optimized_release_execution()
+        && rel64
+            .iter()
+            .all(|r| r.build.is_optimized_release_execution())
+        && rel128.build.is_optimized_release_execution();
+    push(
+        &mut checks,
+        "worker_build_metadata_from_worker_report",
+        worker_meta_ok,
+        format!(
+            "smoke={} dev={} rel64={} rel128={}",
+            smoke.build.describe(),
+            dev64.build.describe(),
+            rel64[0].build.describe(),
+            rel128.build.describe()
         ),
     );
 
@@ -579,16 +606,15 @@ fn run_trace_subprocess(
         .into());
     }
 
-    let json_path = {
+    let out_dir = {
         let ppm = if Path::new(output).is_absolute() {
             PathBuf::from(output)
         } else {
             root.join(output)
         };
-        ppm.parent()
-            .unwrap_or(Path::new("."))
-            .join("outcome-map.json")
+        ppm.parent().unwrap_or(Path::new(".")).to_path_buf()
     };
+    let json_path = out_dir.join("outcome-map.json");
     let json: OutcomeMapJson = serde_json::from_slice(&std::fs::read(&json_path)?)?;
     let wall = sanitize_timing(json.wall_clock_seconds.unwrap_or(0.0));
     let rps = sanitize_timing(json.rays_per_second.unwrap_or_else(|| {
@@ -600,24 +626,23 @@ fn run_trace_subprocess(
         }
     }));
 
-    // Worker build metadata: release flag dictates expected profile label.
-    let worker_build = if release {
-        BuildExecutionMetadata {
-            cargo_profile: "release".into(),
-            opt_level: "3".into(),
-            debug_assertions: false,
-            target: BuildExecutionMetadata::current().target.clone(),
-            toolchain: BuildExecutionMetadata::current().toolchain.clone(),
+    // Actual worker compile-time metadata (adjacent report); never inferred here.
+    let worker_build = read_build_execution_report(&out_dir)?;
+    if release {
+        if !worker_build.is_optimized_release_execution() {
+            return Err(format!(
+                "release worker reported non-release build metadata ({})",
+                worker_build.describe()
+            )
+            .into());
         }
-    } else {
-        BuildExecutionMetadata {
-            cargo_profile: "debug".into(),
-            opt_level: "0".into(),
-            debug_assertions: true,
-            target: BuildExecutionMetadata::current().target.clone(),
-            toolchain: BuildExecutionMetadata::current().toolchain.clone(),
-        }
-    };
+    } else if worker_build.is_optimized_release_execution() {
+        return Err(format!(
+            "dev worker unexpectedly reported release build metadata ({})",
+            worker_build.describe()
+        )
+        .into());
+    }
 
     Ok(BenchmarkRun {
         width: json.width,
@@ -758,6 +783,32 @@ struct DigestBenchmark<'a> {
     most_expensive_rays: &'a [PixelCoord],
 }
 
+/// Checks contribute name+status only — `detail` may embed wall-clock / rps / speedup.
+#[derive(Serialize, Clone)]
+struct DigestCheck<'a> {
+    name: &'a str,
+    status: &'a str,
+}
+
+/// Reference comparison without historical wall-clock context fields.
+#[derive(Serialize, Clone)]
+struct DigestReferenceComparison<'a> {
+    classification_match: bool,
+    ppm_match: bool,
+    counts_match: bool,
+    failed_zero: bool,
+    pgm_match: bool,
+    pgm_status: &'a str,
+    reference_class_digest: &'a str,
+    reference_ppm_digest: &'a str,
+    reference_pgm_digest: &'a str,
+    observed_class_digest: &'a str,
+    observed_ppm_digest: &'a str,
+    observed_pgm_digest: &'a str,
+    reference_counts: &'a OutcomeCounts,
+    observed_counts: &'a OutcomeCounts,
+}
+
 #[derive(Serialize)]
 struct DigestProjection<'a> {
     gate: &'a str,
@@ -766,12 +817,12 @@ struct DigestProjection<'a> {
     commit: &'a str,
     dirty: bool,
     build: &'a BuildExecutionMetadata,
-    checks: &'a [Check],
+    checks: Vec<DigestCheck<'a>>,
     smoke_release_32: Option<DigestBenchmark<'a>>,
     dev_serial_64: Option<DigestBenchmark<'a>>,
     release_serial_64: Vec<DigestBenchmark<'a>>,
     release_serial_128: Option<DigestBenchmark<'a>>,
-    reference_comparison_128: Option<&'a ReferenceComparison>,
+    reference_comparison_128: Option<DigestReferenceComparison<'a>>,
     content_digest_excluding_digest_field: &'a str,
 }
 
@@ -784,7 +835,14 @@ impl<'a> DigestProjection<'a> {
             commit: &report.commit,
             dirty: report.dirty,
             build: &report.build,
-            checks: &report.checks,
+            checks: report
+                .checks
+                .iter()
+                .map(|c| DigestCheck {
+                    name: &c.name,
+                    status: c.status,
+                })
+                .collect(),
             smoke_release_32: report.smoke_release_32.as_ref().map(DigestBenchmark::from),
             dev_serial_64: report.dev_serial_64.as_ref().map(DigestBenchmark::from),
             release_serial_64: report
@@ -796,7 +854,24 @@ impl<'a> DigestProjection<'a> {
                 .release_serial_128
                 .as_ref()
                 .map(DigestBenchmark::from),
-            reference_comparison_128: report.reference_comparison_128.as_ref(),
+            reference_comparison_128: report.reference_comparison_128.as_ref().map(|c| {
+                DigestReferenceComparison {
+                    classification_match: c.classification_match,
+                    ppm_match: c.ppm_match,
+                    counts_match: c.counts_match,
+                    failed_zero: c.failed_zero,
+                    pgm_match: c.pgm_match,
+                    pgm_status: &c.pgm_status,
+                    reference_class_digest: &c.reference_class_digest,
+                    reference_ppm_digest: &c.reference_ppm_digest,
+                    reference_pgm_digest: &c.reference_pgm_digest,
+                    observed_class_digest: &c.observed_class_digest,
+                    observed_ppm_digest: &c.observed_ppm_digest,
+                    observed_pgm_digest: &c.observed_pgm_digest,
+                    reference_counts: &c.reference_counts,
+                    observed_counts: &c.observed_counts,
+                }
+            }),
             content_digest_excluding_digest_field: "",
         }
     }
@@ -1008,6 +1083,79 @@ mod tests {
         b.release_speedup_vs_dev = 9.9;
         a.release_serial_64_median_seconds = 1.0;
         b.release_serial_64_median_seconds = 50.0;
+        assert_eq!(content_digest(&a), content_digest(&b));
+    }
+
+    #[test]
+    fn timing_bearing_check_detail_excluded_from_content_digest() {
+        let mut a = sample_report(REF_CLASS_DIGEST, "release");
+        let mut b = a.clone();
+        a.checks = vec![
+            Check {
+                name: "smoke_release_32".into(),
+                status: "PASS",
+                detail: "class=abc failed=0 wall=0.475s".into(),
+            },
+            Check {
+                name: "release_speedup_vs_dev".into(),
+                status: "PASS",
+                detail: "status=PASS; speedup=28.1781; dev=54.111s median_release=1.920s".into(),
+            },
+            Check {
+                name: "release_128_timing_recorded".into(),
+                status: "PASS",
+                detail: "wall=7.652s rps=2141.1; historical_1b2_debug≈210s (prior run)".into(),
+            },
+        ];
+        b.checks = vec![
+            Check {
+                name: "smoke_release_32".into(),
+                status: "PASS",
+                detail: "class=abc failed=0 wall=9.999s".into(),
+            },
+            Check {
+                name: "release_speedup_vs_dev".into(),
+                status: "PASS",
+                detail: "status=PASS; speedup=1.0001; dev=99.000s median_release=98.900s".into(),
+            },
+            Check {
+                name: "release_128_timing_recorded".into(),
+                status: "PASS",
+                detail: "wall=999.000s rps=1.0; historical_1b2_debug≈210s (prior run)".into(),
+            },
+        ];
+        assert_eq!(content_digest(&a), content_digest(&b));
+    }
+
+    #[test]
+    fn check_status_change_alters_content_digest() {
+        let mut a = sample_report(REF_CLASS_DIGEST, "release");
+        let mut b = a.clone();
+        a.checks = vec![Check {
+            name: "release_speedup_vs_dev".into(),
+            status: "PASS",
+            detail: "speedup=28.0; wall=1s".into(),
+        }];
+        b.checks = vec![Check {
+            name: "release_speedup_vs_dev".into(),
+            status: "FAIL",
+            detail: "speedup=28.0; wall=1s".into(),
+        }];
+        assert_ne!(content_digest(&a), content_digest(&b));
+    }
+
+    #[test]
+    fn historical_reference_timing_excluded_from_content_digest() {
+        let mut a = sample_report(REF_CLASS_DIGEST, "release");
+        let mut b = a.clone();
+        if let Some(c) = a.reference_comparison_128.as_mut() {
+            c.historical_gate_1b2_debug_wall_clock_seconds = 210.0;
+            c.historical_note = "prior".into();
+        }
+        if let Some(c) = b.reference_comparison_128.as_mut() {
+            c.historical_gate_1b2_debug_wall_clock_seconds = 999.0;
+            c.historical_note = "other host note with 1.23s".into();
+        }
         assert_eq!(content_digest(&a), content_digest(&b));
     }
 

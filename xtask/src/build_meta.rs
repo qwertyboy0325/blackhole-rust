@@ -1,6 +1,10 @@
 //! Project-owned build-execution metadata for Gate 2A0 release authority.
 
 use serde::{Deserialize, Serialize};
+use std::path::Path;
+
+/// Adjacent worker report written beside `outcome-map.json`.
+pub const BUILD_EXECUTION_FILENAME: &str = "build-execution.json";
 
 /// Compile-time / runtime build profile facts for an xtask binary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,6 +59,29 @@ pub fn require_release_execution(
         meta.describe()
     )
     .into())
+}
+
+/// Persist compile-time metadata for the current worker binary.
+pub fn write_build_execution_report(
+    dir: &Path,
+    meta: &BuildExecutionMetadata,
+) -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(
+        dir.join(BUILD_EXECUTION_FILENAME),
+        serde_json::to_vec_pretty(meta)?,
+    )?;
+    Ok(())
+}
+
+/// Load worker metadata written by `trace-outcome-map` (never inferred by the parent).
+pub fn read_build_execution_report(
+    dir: &Path,
+) -> Result<BuildExecutionMetadata, Box<dyn std::error::Error>> {
+    let path = dir.join(BUILD_EXECUTION_FILENAME);
+    let bytes = std::fs::read(&path)
+        .map_err(|e| format!("missing worker build report {}: {e}", path.display()))?;
+    Ok(serde_json::from_slice(&bytes)?)
 }
 
 #[cfg(test)]
@@ -124,5 +151,16 @@ mod tests {
         let mut m = sample_release();
         m.opt_level = "0".into();
         assert!(!m.is_optimized_release_execution());
+    }
+
+    #[test]
+    fn build_execution_report_round_trip() {
+        let dir = std::env::temp_dir().join(format!("bh-build-meta-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let meta = sample_release();
+        write_build_execution_report(&dir, &meta).unwrap();
+        let loaded = read_build_execution_report(&dir).unwrap();
+        assert_eq!(loaded, meta);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1,6 +1,8 @@
 //! Generate Gate 1B2 categorical outcome map (PPM) + cost PGM + JSON.
 
-use crate::build_meta::{require_release_execution, BuildExecutionMetadata};
+use crate::build_meta::{
+    require_release_execution, write_build_execution_report, BuildExecutionMetadata,
+};
 use crate::preset::load_preset;
 use relativity_core::{CameraParams, KerrParams, PositionBl};
 use relativity_integrate::{Dop853Config, EventArmingPolicy, HorizonProximityPolicy};
@@ -129,6 +131,8 @@ pub fn run(
         out_dir.join("outcome-map.content_digest.sha256"),
         format!("{}\n", report.content_digest_excluding_digest_field),
     )?;
+    // Adjacent worker report: compile-time metadata of *this* binary (not inferred by parent).
+    write_build_execution_report(&out_dir, &build)?;
 
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
