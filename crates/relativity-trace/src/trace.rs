@@ -50,6 +50,11 @@ pub fn trace_ray_pixel(
 }
 
 #[derive(Debug, Clone)]
+/// Ordered camera-grid trace frame (row-major).
+///
+/// Contains traced physical/numerical outcomes.
+/// It does not contain display colors.
+/// It may be shaded repeatedly without retracing.
 pub struct TraceBundle {
     pub grid: TraceGrid,
     pub outcomes: Vec<RayOutcome>,

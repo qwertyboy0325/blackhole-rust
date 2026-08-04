@@ -20,7 +20,9 @@ pub mod execution;
 pub mod image;
 pub mod outcome;
 pub mod scene;
+pub mod shade;
 pub mod trace;
+pub mod trace_digest;
 
 pub use camera::{pixel_index, sensor_at_pixel_center, TraceGrid};
 pub use convergence::{
@@ -34,13 +36,18 @@ pub use diagnostics::{
 };
 pub use disk::{ThinDisk, ThinDiskGeometry};
 pub use execution::{TraceExecution, TraceExecutionMetadata, TraceExecutionMode};
-pub use image::{class_rgb, write_outcome_ppm, write_rhs_pgm};
+pub use image::{class_rgb, encode_ppm, write_outcome_ppm, write_rhs_pgm};
 pub use outcome::{
     map_integration_report, AffineLimitOutcome, DiskHit, EscapeHit, OutcomeClass, RayFailure,
     RayOutcome,
 };
 pub use scene::TraceScene;
+pub use shade::{
+    categorical_rgb, disk_suppressed_rgb, rgb_frame_diff_count, shade_diagnostic, shade_many,
+    shade_outcome, shade_trace_bundle, DiagnosticShadeStyle, RgbFrame, ShadedFrame,
+};
 pub use trace::{
     fold_indexed_results, trace_grid, trace_grid_with_execution, trace_ray_pixel, trace_ray_sensor,
     TraceBundle,
 };
+pub use trace_digest::trace_data_digest;

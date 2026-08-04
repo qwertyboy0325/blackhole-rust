@@ -21,7 +21,7 @@ pub struct PixelCoord {
     pub row: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutcomeCounts {
     pub disk_hit: u64,
     pub escaped: u64,
