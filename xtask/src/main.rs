@@ -2,11 +2,13 @@
 
 use clap::{Parser, Subcommand};
 
+mod build_meta;
 mod corpus_report;
 mod evaluate;
 mod evaluate_gate1b0;
 mod evaluate_gate1b1;
 mod evaluate_gate1b2;
+mod evaluate_gate2a0;
 mod inspect;
 mod integrate_ray;
 mod preset;
@@ -48,7 +50,7 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: String,
     },
-    /// Gate evaluator (Gate 1A / Gate 1B0 / Gate 1B1 scope).
+    /// Gate evaluator (Gate 1A / Gate 1B0 / Gate 1B1 / Gate 1B2 / Gate 2A0 scope).
     Evaluate {
         #[arg(long)]
         preset: Option<String>,
@@ -81,6 +83,9 @@ enum Commands {
         height: u32,
         #[arg(long)]
         output: String,
+        /// Reject non-release builds before any tracing or artifact writes.
+        #[arg(long, default_value_t = false)]
+        require_release: bool,
     },
     /// Emit canonical Gate 1B1 corpus JSON (numerical records; for determinism).
     CorpusReport {
@@ -113,6 +118,8 @@ fn main() {
                 evaluate_gate1b1::evaluate()
             } else if scope == "gate-1b2" {
                 evaluate_gate1b2::evaluate()
+            } else if scope == "gate-2a0-release" {
+                evaluate_gate2a0::evaluate()
             } else {
                 match preset {
                     Some(p) => evaluate::evaluate(&p, &scope),
@@ -131,7 +138,8 @@ fn main() {
             width,
             height,
             output,
-        } => trace_outcome_map::run(&preset, width, height, &output),
+            require_release,
+        } => trace_outcome_map::run(&preset, width, height, &output, require_release),
         Commands::CorpusReport { scope } => {
             if scope == "gate-1b1" {
                 corpus_report::run()
