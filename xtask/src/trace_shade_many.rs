@@ -13,9 +13,12 @@ use crate::trace_outcome_map::{
     resolve_execution, write_trace_execution_report, CliExecution, TRACE_EXECUTION_FILENAME,
 };
 use relativity_trace::{
-    encode_ppm, hex_sha, outcome_class_bytes, shade_many, trace_data_digest,
-    trace_grid_with_execution, write_rhs_pgm, DiagnosticShadeStyle, OutcomeCounts,
-    TraceExecutionMetadata, TraceGrid,
+    build_celestial_coordinate_frame, build_celestial_coordinate_map_artifact,
+    build_celestial_regression_corpus, encode_ppm, hex_sha, outcome_class_bytes,
+    shade_celestial_uv_debug, shade_many, trace_data_digest, trace_grid_with_execution,
+    validate_celestial_seam, worst_boundary_residual_pixels, write_rhs_pgm,
+    CelestialCoordinateConvention, CelestialRegressionSample, DiagnosticShadeStyle, OutcomeCounts,
+    PixelCoord, TraceExecutionMetadata, TraceGrid, RADIUS_POLICY_GATE_1B2_CAP,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -28,6 +31,27 @@ pub struct ShadeOutputReport {
     pub style: DiagnosticShadeStyle,
     pub filename: String,
     pub ppm_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CelestialOutputReport {
+    pub coordinate_passes: u32,
+    pub convention: CelestialCoordinateConvention,
+    pub requested_radius: f64,
+    pub resolved_boundary_radius: f64,
+    pub radius_policy: String,
+    pub escaped_count: u64,
+    pub mapped_count: u64,
+    pub mapping_failure_count: u64,
+    pub pole_count: u64,
+    pub coordinate_digest: String,
+    pub coordinate_json_digest: String,
+    pub uv_debug_ppm_digest: String,
+    pub max_abs_escape_event_value: f64,
+    pub worst_boundary_residual_pixels: Vec<PixelCoord>,
+    pub regression_corpus: Vec<CelestialRegressionSample>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mapping_wall_clock_seconds: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -52,6 +76,8 @@ pub struct TraceShadeReport {
     pub total_accepted_steps: u64,
     pub total_rejected_steps: u64,
     pub total_rhs_evaluations: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub celestial_coordinates: Option<CelestialOutputReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_wall_clock_seconds: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -72,6 +98,7 @@ pub fn run(
     execution: CliExecution,
     threads: Option<usize>,
     styles: &[DiagnosticShadeStyle],
+    emit_celestial_coordinates: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let build = BuildExecutionMetadata::current();
     if require_release {
@@ -161,6 +188,73 @@ pub fn run(
         });
     }
 
+    // ---- Phase 3 (optional): celestial coordinates from the same TraceBundle ----
+    let celestial_coordinates = if emit_celestial_coordinates {
+        validate_celestial_seam(&preset.celestial_sphere.seam)?;
+        let t_map = Instant::now();
+        let convention = CelestialCoordinateConvention::finite_oblate_ks_boundary_uv_v1();
+        let frame = build_celestial_coordinate_frame(&scene.kerr, &bundle)?;
+        let art = build_celestial_coordinate_map_artifact(
+            &frame,
+            &convention,
+            preset.celestial_sphere.radius_m,
+            scene.escape_radius,
+        );
+        if art.mapping_failure_count != 0 {
+            return Err("celestial mapping_failure_count != 0".into());
+        }
+        if art.escaped_count != art.mapped_count {
+            return Err("celestial mapped_count != escaped_count".into());
+        }
+        if art.escaped_count != counts.escaped {
+            return Err("celestial escaped_count disagrees with outcome_counts.escaped".into());
+        }
+
+        let json_bytes = serde_json::to_vec_pretty(&art)?;
+        let coordinate_json_digest = hex_sha(&json_bytes);
+        std::fs::write(out_dir.join("celestial-coordinate-map.json"), &json_bytes)?;
+
+        let uv_frame = shade_celestial_uv_debug(&frame);
+        let uv_ppm = encode_ppm(&uv_frame);
+        let uv_debug_ppm_digest = hex_sha(&uv_ppm);
+        std::fs::write(out_dir.join("celestial-uv-debug.ppm"), &uv_ppm)?;
+
+        let regression_corpus = build_celestial_regression_corpus(&frame);
+        let worst = worst_boundary_residual_pixels(&frame, 8);
+        let max_abs = frame
+            .pixels()
+            .iter()
+            .filter_map(|p| match p {
+                relativity_trace::CelestialCoordinatePixel::Escaped(s) => {
+                    Some(s.escape_event_value.abs())
+                }
+                _ => None,
+            })
+            .fold(0.0_f64, f64::max);
+
+        let mapping_wall = t_map.elapsed().as_secs_f64();
+        Some(CelestialOutputReport {
+            coordinate_passes: 1,
+            convention,
+            requested_radius: preset.celestial_sphere.radius_m,
+            resolved_boundary_radius: scene.escape_radius,
+            radius_policy: RADIUS_POLICY_GATE_1B2_CAP.into(),
+            escaped_count: art.escaped_count,
+            mapped_count: art.mapped_count,
+            mapping_failure_count: art.mapping_failure_count,
+            pole_count: art.pole_count,
+            coordinate_digest: art.coordinate_digest.clone(),
+            coordinate_json_digest,
+            uv_debug_ppm_digest,
+            max_abs_escape_event_value: max_abs,
+            worst_boundary_residual_pixels: worst,
+            regression_corpus,
+            mapping_wall_clock_seconds: Some(mapping_wall),
+        })
+    } else {
+        None
+    };
+
     write_build_execution_report(&out_dir, &build)?;
     write_trace_execution_report(&out_dir, &exec_meta)?;
 
@@ -185,6 +279,7 @@ pub fn run(
         total_accepted_steps: total_acc,
         total_rejected_steps: total_rej,
         total_rhs_evaluations: total_rhs,
+        celestial_coordinates,
         trace_wall_clock_seconds: Some(trace_wall),
         shade_wall_clock_seconds: Some(shade_wall),
         rays_per_second,
@@ -261,6 +356,24 @@ fn summarize_bundle(bundle: &relativity_trace::TraceBundle) -> (OutcomeCounts, u
 
 fn content_digest(report: &TraceShadeReport) -> String {
     #[derive(Serialize)]
+    struct CelestialProj<'a> {
+        coordinate_passes: u32,
+        convention: &'a CelestialCoordinateConvention,
+        requested_radius_bits: u64,
+        resolved_boundary_radius_bits: u64,
+        radius_policy: &'a str,
+        escaped_count: u64,
+        mapped_count: u64,
+        mapping_failure_count: u64,
+        pole_count: u64,
+        coordinate_digest: &'a str,
+        coordinate_json_digest: &'a str,
+        uv_debug_ppm_digest: &'a str,
+        max_abs_escape_event_value_bits: u64,
+        worst_boundary_residual_pixels: &'a [PixelCoord],
+        regression_corpus: &'a [CelestialRegressionSample],
+    }
+    #[derive(Serialize)]
     struct Proj<'a> {
         gate: &'a str,
         width: u32,
@@ -282,8 +395,29 @@ fn content_digest(report: &TraceShadeReport) -> String {
         total_accepted_steps: u64,
         total_rejected_steps: u64,
         total_rhs_evaluations: u64,
+        celestial_coordinates: Option<CelestialProj<'a>>,
         content_digest_excluding_digest_field: &'a str,
     }
+    let celestial = report
+        .celestial_coordinates
+        .as_ref()
+        .map(|c| CelestialProj {
+            coordinate_passes: c.coordinate_passes,
+            convention: &c.convention,
+            requested_radius_bits: c.requested_radius.to_bits(),
+            resolved_boundary_radius_bits: c.resolved_boundary_radius.to_bits(),
+            radius_policy: &c.radius_policy,
+            escaped_count: c.escaped_count,
+            mapped_count: c.mapped_count,
+            mapping_failure_count: c.mapping_failure_count,
+            pole_count: c.pole_count,
+            coordinate_digest: &c.coordinate_digest,
+            coordinate_json_digest: &c.coordinate_json_digest,
+            uv_debug_ppm_digest: &c.uv_debug_ppm_digest,
+            max_abs_escape_event_value_bits: c.max_abs_escape_event_value.to_bits(),
+            worst_boundary_residual_pixels: &c.worst_boundary_residual_pixels,
+            regression_corpus: &c.regression_corpus,
+        });
     let proj = Proj {
         gate: &report.gate,
         width: report.width,
@@ -305,6 +439,7 @@ fn content_digest(report: &TraceShadeReport) -> String {
         total_accepted_steps: report.total_accepted_steps,
         total_rejected_steps: report.total_rejected_steps,
         total_rhs_evaluations: report.total_rhs_evaluations,
+        celestial_coordinates: celestial,
         content_digest_excluding_digest_field: "",
     };
     hex_sha(&serde_json::to_vec(&proj).expect("serialize"))
@@ -369,6 +504,7 @@ mod tests {
             trace_wall_clock_seconds: Some(1.0),
             shade_wall_clock_seconds: Some(0.01),
             rays_per_second: Some(1024.0),
+            celestial_coordinates: None,
             content_digest_excluding_digest_field: String::new(),
         }
     }

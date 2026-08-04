@@ -834,6 +834,9 @@ fn strip_timing(r: &TraceShadeReport) -> TraceShadeReport {
     c.trace_wall_clock_seconds = None;
     c.shade_wall_clock_seconds = None;
     c.rays_per_second = None;
+    if let Some(cel) = c.celestial_coordinates.as_mut() {
+        cel.mapping_wall_clock_seconds = None;
+    }
     c
 }
 

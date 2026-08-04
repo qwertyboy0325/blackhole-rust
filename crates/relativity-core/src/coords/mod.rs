@@ -11,6 +11,7 @@ pub use boyer_lindquist::{
     jacobian_cartesian_ks_from_bl, ks_to_bl_position, vector_bl_to_ks, vector_ks_to_bl,
 };
 pub use kerr_schild_spherical::{
-    cartesian_from_spherical_ks, jacobian_cartesian_from_spherical_ks, spherical_ks_from_cartesian,
-    PositionSphericalKs,
+    cartesian_from_spherical_ks, jacobian_cartesian_from_spherical_ks,
+    spherical_ks_direction_from_cartesian, spherical_ks_from_cartesian, PositionSphericalKs,
+    SphericalKsAzimuthStatus, SphericalKsDirection, AXIS_SIN_FLOOR,
 };

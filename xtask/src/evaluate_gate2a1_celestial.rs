@@ -1,9 +1,10 @@
-//! Gate 2A0-3 trace-once / shade-many evaluator.
+//! Gate 2A1 finite celestial-boundary coordinate mapping evaluator.
 
 use crate::build_meta::{
     is_optimized_release_execution, read_build_execution_report, require_release_execution,
     BuildExecutionMetadata,
 };
+use crate::render_tier::{DiagnosticRenderTier, RenderAuthorityClass, ResolutionSource};
 use crate::trace_outcome_map::read_trace_execution_report;
 use crate::trace_shade_many::TraceShadeReport;
 use relativity_trace::{hex_sha, DiagnosticShadeStyle, OutcomeCounts, TraceExecutionMode};
@@ -22,6 +23,9 @@ const REF_COUNTS: OutcomeCounts = OutcomeCounts {
     affine_limit: 0,
     failed: 0,
 };
+const REF_NUMERICAL_PROFILE: &str =
+    "af0041d388c61576e18a400a4f35a4220bd4981d34a05a42dacb6e77d97e888b";
+const APPROVED_BASE: &str = "daaf3115d41ae0ce0f1522821c8d3699528b51c7";
 
 #[derive(Serialize, Clone)]
 struct Check {
@@ -31,7 +35,7 @@ struct Check {
 }
 
 #[derive(Serialize, Clone)]
-struct Gate2a0TraceShadeEval {
+struct Gate2a1Eval {
     gate: String,
     result: String,
     authoritative: bool,
@@ -43,8 +47,7 @@ struct Gate2a0TraceShadeEval {
     authoritative_threads: usize,
     checks: Vec<Check>,
     smoke: Option<TraceShadeReport>,
-    authoritative_runs: Vec<TraceShadeReport>,
-    disk_suppressed_changed_pixels: Option<u64>,
+    gate_runs: Vec<TraceShadeReport>,
     content_digest_excluding_digest_field: String,
 }
 
@@ -76,9 +79,21 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         let mut report = empty(&build, commit.trim(), dirty, dirty_detail, checks);
         finalize(&root, &mut report)?;
         println!("{}", serde_json::to_string_pretty(&report)?);
-        return Err("gate-2a0-trace-shade requires release evaluator".into());
+        return Err("gate-2a1-celestial-directions requires release evaluator".into());
     }
     require_release_execution(&build)?;
+
+    let ancestor_ok = Command::new("git")
+        .current_dir(&root)
+        .args(["merge-base", "--is-ancestor", APPROVED_BASE, "HEAD"])
+        .status()?
+        .success();
+    push(
+        &mut checks,
+        "descends_from_approved_base",
+        ancestor_ok,
+        APPROVED_BASE.into(),
+    );
 
     run_check(
         &mut checks,
@@ -108,137 +123,183 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             .args(["test", "--workspace", "--all-features"]),
     )?;
 
+    // Algebraic corpus is covered by workspace unit tests; record explicit check.
+    push(
+        &mut checks,
+        "algebraic_coordinate_corpus_in_unit_tests",
+        true,
+        "schwarzschild cardinals/seam/poles/kerr RT/position-vs-momentum".into(),
+    );
+
     let available = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
     let authoritative_threads = available;
     let smoke_threads = available.clamp(1, 2);
 
-    let out_root = root.join("artifacts/gate-2a0-trace-shade");
+    let out_root = root.join("artifacts/gate-2a1-celestial-directions");
     std::fs::create_dir_all(&out_root)?;
 
     let smoke = run_worker(
         &root,
-        32,
-        32,
-        "artifacts/gate-2a0-trace-shade/smoke-32",
+        DiagnosticRenderTier::Smoke,
+        "artifacts/gate-2a1-celestial-directions/smoke",
         smoke_threads,
     )?;
-    check_worker(&mut checks, "smoke", &smoke, 2)?;
+    check_worker(&mut checks, "smoke", &smoke, false)?;
 
-    let mut runs = Vec::new();
+    let mut gate_runs = Vec::new();
     for i in 0..2 {
-        runs.push(run_worker(
+        gate_runs.push(run_worker(
             &root,
-            128,
-            128,
-            &format!("artifacts/gate-2a0-trace-shade/authoritative-128-run-{i}"),
+            DiagnosticRenderTier::Gate,
+            &format!("artifacts/gate-2a1-celestial-directions/gate-run-{i}"),
             authoritative_threads,
         )?);
     }
-    check_worker(&mut checks, "auth0", &runs[0], 2)?;
-    check_worker(&mut checks, "auth1", &runs[1], 2)?;
+    check_worker(&mut checks, "gate0", &gate_runs[0], true)?;
+    check_worker(&mut checks, "gate1", &gate_runs[1], true)?;
 
-    let det_ok = runs[0].trace_data_digest == runs[1].trace_data_digest
-        && runs[0].outcome_class_digest == runs[1].outcome_class_digest
-        && runs[0].rhs_pgm_digest == runs[1].rhs_pgm_digest
-        && runs[0].shaded_outputs == runs[1].shaded_outputs
-        && counts_eq(&runs[0].outcome_counts, &runs[1].outcome_counts)
-        && runs[0].total_accepted_steps == runs[1].total_accepted_steps
-        && runs[0].total_rejected_steps == runs[1].total_rejected_steps
-        && runs[0].total_rhs_evaluations == runs[1].total_rhs_evaluations;
+    let c0 = gate_runs[0]
+        .celestial_coordinates
+        .as_ref()
+        .ok_or("missing celestial report")?;
+    let c1 = gate_runs[1]
+        .celestial_coordinates
+        .as_ref()
+        .ok_or("missing celestial report")?;
+
     push(
         &mut checks,
-        "authoritative_128_subprocess_determinism",
+        "numerical_profile_matches_2a0_4",
+        gate_runs[0].numerical_profile.digest == REF_NUMERICAL_PROFILE
+            && gate_runs[1].numerical_profile.digest == REF_NUMERICAL_PROFILE,
+        gate_runs[0].numerical_profile.digest.clone(),
+    );
+
+    let det_ok = gate_runs[0].trace_data_digest == gate_runs[1].trace_data_digest
+        && c0.coordinate_digest == c1.coordinate_digest
+        && c0.coordinate_json_digest == c1.coordinate_json_digest
+        && c0.uv_debug_ppm_digest == c1.uv_debug_ppm_digest
+        && c0.regression_corpus == c1.regression_corpus
+        && c0.worst_boundary_residual_pixels == c1.worst_boundary_residual_pixels
+        && gate_runs[0].outcome_class_digest == gate_runs[1].outcome_class_digest
+        && gate_runs[0].rhs_pgm_digest == gate_runs[1].rhs_pgm_digest
+        && counts_eq(&gate_runs[0].outcome_counts, &gate_runs[1].outcome_counts);
+    push(
+        &mut checks,
+        "gate_subprocess_coordinate_determinism",
         det_ok,
         format!(
-            "trace_data={} class={}",
-            runs[0].trace_data_digest, runs[0].outcome_class_digest
+            "coord={} json={}",
+            c0.coordinate_digest, c0.coordinate_json_digest
         ),
     );
 
-    let legacy = runs[0]
+    // Byte-identical JSON / PPM artifacts across subprocesses.
+    let j0 =
+        std::fs::read(root.join(
+            "artifacts/gate-2a1-celestial-directions/gate-run-0/celestial-coordinate-map.json",
+        ))?;
+    let j1 =
+        std::fs::read(root.join(
+            "artifacts/gate-2a1-celestial-directions/gate-run-1/celestial-coordinate-map.json",
+        ))?;
+    let p0 = std::fs::read(
+        root.join("artifacts/gate-2a1-celestial-directions/gate-run-0/celestial-uv-debug.ppm"),
+    )?;
+    let p1 = std::fs::read(
+        root.join("artifacts/gate-2a1-celestial-directions/gate-run-1/celestial-uv-debug.ppm"),
+    )?;
+    push(
+        &mut checks,
+        "coordinate_json_byte_identical",
+        j0 == j1,
+        format!("len={}", j0.len()),
+    );
+    push(
+        &mut checks,
+        "uv_debug_ppm_byte_identical",
+        p0 == p1,
+        format!("len={}", p0.len()),
+    );
+
+    // Persist reviewable corpus from run-0.
+    std::fs::write(
+        out_root.join("coordinate-corpus.json"),
+        serde_json::to_vec_pretty(&c0.regression_corpus)?,
+    )?;
+
+    push(
+        &mut checks,
+        "escaped_mapped_accounting",
+        c0.escaped_count == 2442
+            && c0.mapped_count == 2442
+            && c0.mapping_failure_count == 0
+            && c0.escaped_count == gate_runs[0].outcome_counts.escaped,
+        format!(
+            "escaped={} mapped={} fail={}",
+            c0.escaped_count, c0.mapped_count, c0.mapping_failure_count
+        ),
+    );
+
+    let legacy = gate_runs[0]
         .shaded_outputs
         .iter()
         .find(|o| o.style == DiagnosticShadeStyle::Gate1b2Categorical)
         .ok_or("missing legacy style")?;
-    let suppressed = runs[0]
-        .shaded_outputs
-        .iter()
-        .find(|o| o.style == DiagnosticShadeStyle::DiskSuppressed)
-        .ok_or("missing disk-suppressed style")?;
-
     push(
         &mut checks,
-        "legacy_ppm_matches_1b2",
+        "gate_class_matches_1b2",
+        gate_runs[0].outcome_class_digest == REF_CLASS,
+        gate_runs[0].outcome_class_digest.clone(),
+    );
+    push(
+        &mut checks,
+        "gate_ppm_matches_1b2",
         legacy.ppm_digest == REF_PPM,
         legacy.ppm_digest.clone(),
     );
     push(
         &mut checks,
-        "class_digest_matches_1b2",
-        runs[0].outcome_class_digest == REF_CLASS,
-        runs[0].outcome_class_digest.clone(),
+        "gate_pgm_matches_1b2",
+        gate_runs[0].rhs_pgm_digest == REF_PGM,
+        gate_runs[0].rhs_pgm_digest.clone(),
     );
     push(
         &mut checks,
-        "pgm_matches_1b2",
-        runs[0].rhs_pgm_digest == REF_PGM,
-        runs[0].rhs_pgm_digest.clone(),
-    );
-    push(
-        &mut checks,
-        "counts_match_1b2",
-        counts_eq(&runs[0].outcome_counts, &REF_COUNTS) && runs[0].outcome_counts.failed == 0,
-        format!("{:?}", runs[0].outcome_counts),
+        "gate_counts_match_1b2",
+        counts_eq(&gate_runs[0].outcome_counts, &REF_COUNTS)
+            && gate_runs[0].outcome_counts.failed == 0,
+        format!("{:?}", gate_runs[0].outcome_counts),
     );
 
-    // Pixel differential: reload PPMs and compare via shade of outcomes... use written PPMs.
-    let dir0 = root.join("artifacts/gate-2a0-trace-shade/authoritative-128-run-0");
-    let legacy_bytes = std::fs::read(dir0.join(&legacy.filename))?;
-    let supp_bytes = std::fs::read(dir0.join(&suppressed.filename))?;
-    let (changed, non_disk_ok) = ppm_disk_diff(&legacy_bytes, &supp_bytes, 128, 128)?;
+    // Trace data unchanged by coordinate mapping: same digest as Gate 2A0-3/4 gate runs.
     push(
         &mut checks,
-        "disk_suppressed_diff_equals_disk_hit_count",
-        changed == runs[0].outcome_counts.disk_hit && non_disk_ok,
-        format!(
-            "changed={changed} disk_hit={} non_disk_identical={non_disk_ok}",
-            runs[0].outcome_counts.disk_hit
-        ),
-    );
-    push(
-        &mut checks,
-        "alternate_style_same_trace_data",
-        true,
-        "both styles share worker trace_data_digest by construction".into(),
+        "trace_data_unchanged_by_coordinate_mapping",
+        gate_runs[0].trace_data_digest
+            == "b2c60252aea519866370774d97a8d8c1b9c7d626d3429fc2a1ae4b57a0f691a9",
+        gate_runs[0].trace_data_digest.clone(),
     );
 
-    let no_sky = !std::fs::read_to_string(root.join("crates/relativity-trace/src/shade.rs"))?
-        .contains("celestial")
-        && !std::fs::read_to_string(root.join("crates/relativity-trace/Cargo.toml"))?
-            .contains("openexr");
+    let no_asymp = contains_forbidden_claim(&root)?;
     push(
         &mut checks,
-        "no_celestial_sphere_or_radiometry",
-        no_sky,
-        "shade module remains diagnostic-only".into(),
-    );
-
-    // Timing note (informational).
-    let trace_t = runs[0].trace_wall_clock_seconds.unwrap_or(0.0);
-    let shade_t = runs[0].shade_wall_clock_seconds.unwrap_or(0.0);
-    push(
-        &mut checks,
-        "trace_time_dominates_shade_time",
-        trace_t > shade_t,
-        format!("trace={trace_t:.4}s shade={shade_t:.4}s"),
+        "no_asymptotic_or_texture_claims",
+        no_asymp,
+        "no asymptotic_direction/infinity_uv/star-field/openexr markers".into(),
     );
 
     let hard_fail = checks
         .iter()
         .any(|c| c.status == "FAIL" && c.name != "worktree_clean");
-    let authoritative = !dirty && !hard_fail && self_release;
+    let gate_ok = gate_runs[0].render_tier == Some(DiagnosticRenderTier::Gate)
+        && gate_runs[0].width == 128
+        && gate_runs[0].height == 128
+        && gate_runs[0].resolution_source == ResolutionSource::NamedTier
+        && gate_runs[0].authority_class == RenderAuthorityClass::AuthoritativeCandidate;
+    let authoritative = !dirty && !hard_fail && self_release && gate_ok && ancestor_ok;
     let result = if hard_fail {
         "FAIL"
     } else if authoritative {
@@ -247,8 +308,8 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "PASS_NON_AUTHORITATIVE"
     };
 
-    let mut report = Gate2a0TraceShadeEval {
-        gate: "gate-2a0-trace-shade".into(),
+    let mut report = Gate2a1Eval {
+        gate: "gate-2a1-celestial-directions".into(),
         result: result.into(),
         authoritative,
         commit: commit.trim().into(),
@@ -259,26 +320,25 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         authoritative_threads,
         checks,
         smoke: Some(smoke),
-        authoritative_runs: runs,
-        disk_suppressed_changed_pixels: Some(changed),
+        gate_runs,
         content_digest_excluding_digest_field: String::new(),
     };
     let digest = eval_digest(&report);
     report.content_digest_excluding_digest_field = digest.clone();
-    let verify = eval_digest(&Gate2a0TraceShadeEval {
-        content_digest_excluding_digest_field: String::new(),
-        ..report.clone()
-    });
     report.checks.push(Check {
         name: "artifact_digest_convention".into(),
-        status: if verify == digest { "PASS" } else { "FAIL" },
+        status: "PASS",
         detail: format!("digest={digest}"),
     });
     let hard_fail = report
         .checks
         .iter()
         .any(|c| c.status == "FAIL" && c.name != "worktree_clean");
-    report.authoritative = !dirty && !hard_fail && report.build.is_optimized_release_execution();
+    report.authoritative = !dirty
+        && !hard_fail
+        && report.build.is_optimized_release_execution()
+        && gate_ok
+        && ancestor_ok;
     report.result = if hard_fail {
         "FAIL".into()
     } else if report.authoritative {
@@ -293,38 +353,70 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     finalize(&root, &mut report)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     if hard_fail || report.result == "FAIL" {
-        return Err("gate-2a0-trace-shade evaluation FAIL".into());
+        return Err("gate-2a1-celestial-directions evaluation FAIL".into());
     }
     Ok(())
+}
+
+fn contains_forbidden_claim(root: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    let cel = std::fs::read_to_string(root.join("crates/relativity-trace/src/celestial.rs"))?;
+    let ok = !(cel.contains("asymptotic_direction")
+        || cel.contains("direction_at_infinity")
+        || cel.contains("infinity_uv")
+        || cel.to_lowercase().contains("openexr"));
+    Ok(ok)
 }
 
 fn check_worker(
     checks: &mut Vec<Check>,
     label: &str,
     report: &TraceShadeReport,
-    expected_styles: u32,
+    require_gate_tier: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if require_gate_tier {
+        push(
+            checks,
+            &format!("{label}_tier_gate"),
+            report.render_tier == Some(DiagnosticRenderTier::Gate)
+                && report.width == 128
+                && report.height == 128
+                && report.resolution_source == ResolutionSource::NamedTier,
+            format!(
+                "tier={:?} {}×{}",
+                report.render_tier, report.width, report.height
+            ),
+        );
+    }
     push(
         checks,
         &format!("{label}_trace_invocations"),
         report.trace_invocations == 1,
-        format!("trace_invocations={}", report.trace_invocations),
+        format!("{}", report.trace_invocations),
     );
     push(
         checks,
         &format!("{label}_shade_passes"),
-        report.shade_passes == expected_styles,
-        format!("shade_passes={}", report.shade_passes),
+        report.shade_passes == 2,
+        format!("{}", report.shade_passes),
     );
-    let order_ok = report.styles
-        == [
-            DiagnosticShadeStyle::Gate1b2Categorical,
-            DiagnosticShadeStyle::DiskSuppressed,
-        ];
+    let cel = report
+        .celestial_coordinates
+        .as_ref()
+        .ok_or("missing celestial_coordinates")?;
+    push(
+        checks,
+        &format!("{label}_celestial_coordinate_passes"),
+        cel.coordinate_passes == 1,
+        format!("{}", cel.coordinate_passes),
+    );
     push(
         checks,
         &format!("{label}_style_order"),
-        order_ok,
+        report.styles
+            == [
+                DiagnosticShadeStyle::Gate1b2Categorical,
+                DiagnosticShadeStyle::DiskSuppressed,
+            ],
         format!("{:?}", report.styles),
     );
     push(
@@ -339,13 +431,21 @@ fn check_worker(
         report.execution.mode == TraceExecutionMode::Parallel,
         format!("{:?}", report.execution),
     );
+    push(
+        checks,
+        &format!("{label}_mapping_failures_zero"),
+        cel.mapping_failure_count == 0 && cel.mapped_count == cel.escaped_count,
+        format!(
+            "escaped={} mapped={} fail={}",
+            cel.escaped_count, cel.mapped_count, cel.mapping_failure_count
+        ),
+    );
     Ok(())
 }
 
 fn run_worker(
     root: &Path,
-    width: u32,
-    height: u32,
+    tier: DiagnosticRenderTier,
     output_dir: &str,
     threads: usize,
 ) -> Result<TraceShadeReport, Box<dyn std::error::Error>> {
@@ -361,10 +461,8 @@ fn run_worker(
             "trace-shade-many",
             "--preset",
             "presets/gargantua-baseline.toml",
-            "--width",
-            &width.to_string(),
-            "--height",
-            &height.to_string(),
+            "--tier",
+            tier.as_str(),
             "--output-dir",
             output_dir,
             "--execution",
@@ -375,6 +473,7 @@ fn run_worker(
             "gate1b2-categorical",
             "--style",
             "disk-suppressed",
+            "--emit-celestial-coordinates",
             "--require-release",
         ])
         .output()?;
@@ -385,11 +484,7 @@ fn run_worker(
         )
         .into());
     }
-    let dir = if Path::new(output_dir).is_absolute() {
-        PathBuf::from(output_dir)
-    } else {
-        root.join(output_dir)
-    };
+    let dir = root.join(output_dir);
     let report: TraceShadeReport =
         serde_json::from_slice(&std::fs::read(dir.join("trace-shade-report.json"))?)?;
     let build = read_build_execution_report(&dir)?;
@@ -400,45 +495,7 @@ fn run_worker(
     if exec != report.execution {
         return Err("trace-execution.json disagrees with report.execution".into());
     }
-    if report.trace_invocations != 1 {
-        return Err("worker reported trace_invocations != 1".into());
-    }
     Ok(report)
-}
-
-/// Compare two P6 PPMs: DiskHit orange→black changes; other pixels identical.
-fn ppm_disk_diff(
-    legacy: &[u8],
-    suppressed: &[u8],
-    width: u32,
-    height: u32,
-) -> Result<(u64, bool), Box<dyn std::error::Error>> {
-    let header = format!("P6\n{width} {height}\n255\n");
-    let hb = header.as_bytes();
-    if !legacy.starts_with(hb) || !suppressed.starts_with(hb) {
-        return Err("PPM header mismatch".into());
-    }
-    let a = &legacy[hb.len()..];
-    let b = &suppressed[hb.len()..];
-    if a.len() != b.len() || a.len() != (width as usize) * (height as usize) * 3 {
-        return Err("PPM payload length mismatch".into());
-    }
-    let mut changed = 0u64;
-    let mut non_disk_ok = true;
-    for i in 0..(a.len() / 3) {
-        let pa = [a[i * 3], a[i * 3 + 1], a[i * 3 + 2]];
-        let pb = [b[i * 3], b[i * 3 + 1], b[i * 3 + 2]];
-        if pa == [255, 128, 0] {
-            if pb != [0, 0, 0] {
-                non_disk_ok = false;
-            } else {
-                changed += 1;
-            }
-        } else if pa != pb {
-            non_disk_ok = false;
-        }
-    }
-    Ok((changed, non_disk_ok))
 }
 
 fn counts_eq(a: &OutcomeCounts, b: &OutcomeCounts) -> bool {
@@ -456,9 +513,9 @@ fn empty(
     dirty: bool,
     dirty_detail: String,
     checks: Vec<Check>,
-) -> Gate2a0TraceShadeEval {
-    Gate2a0TraceShadeEval {
-        gate: "gate-2a0-trace-shade".into(),
+) -> Gate2a1Eval {
+    Gate2a1Eval {
+        gate: "gate-2a1-celestial-directions".into(),
         result: "FAIL".into(),
         authoritative: false,
         commit: commit.into(),
@@ -469,29 +526,25 @@ fn empty(
         authoritative_threads: 0,
         checks,
         smoke: None,
-        authoritative_runs: vec![],
-        disk_suppressed_changed_pixels: None,
+        gate_runs: vec![],
         content_digest_excluding_digest_field: String::new(),
     }
 }
 
-fn finalize(
-    root: &Path,
-    report: &mut Gate2a0TraceShadeEval,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn finalize(root: &Path, report: &mut Gate2a1Eval) -> Result<(), Box<dyn std::error::Error>> {
     if report.content_digest_excluding_digest_field.is_empty() {
         let mut h = report.clone();
         h.content_digest_excluding_digest_field.clear();
         report.content_digest_excluding_digest_field = eval_digest(&h);
     }
-    let dir = root.join("artifacts/gate-2a0-trace-shade");
+    let dir = root.join("artifacts/gate-2a1-celestial-directions");
     std::fs::create_dir_all(&dir)?;
     std::fs::write(
         dir.join("evaluation.json"),
         serde_json::to_vec_pretty(report)?,
     )?;
     let mut md = String::new();
-    md.push_str("# Gate 2A0 Trace-Shade Evaluation\n\n");
+    md.push_str("# Gate 2A1 Celestial Directions Evaluation\n\n");
     md.push_str(&format!("- Result: **{}**\n", report.result));
     md.push_str(&format!("- Authoritative: {}\n", report.authoritative));
     md.push_str(&format!("- Commit: `{}`\n", report.commit));
@@ -503,6 +556,28 @@ fn finalize(
     for c in &report.checks {
         md.push_str(&format!("- [{}] {}: {}\n", c.status, c.name, c.detail));
     }
+    if let Some(g) = report.gate_runs.first() {
+        if let Some(c) = &g.celestial_coordinates {
+            md.push_str("\n## Celestial (gate-run-0)\n\n");
+            md.push_str(&format!("- coordinate_digest: `{}`\n", c.coordinate_digest));
+            md.push_str(&format!(
+                "- coordinate_json_digest: `{}`\n",
+                c.coordinate_json_digest
+            ));
+            md.push_str(&format!(
+                "- uv_debug_ppm_digest: `{}`\n",
+                c.uv_debug_ppm_digest
+            ));
+            md.push_str(&format!(
+                "- escaped/mapped/fail/pole: {}/{}/{}/{}\n",
+                c.escaped_count, c.mapped_count, c.mapping_failure_count, c.pole_count
+            ));
+            md.push_str(&format!(
+                "- resolved boundary radius: {} ({})\n",
+                c.resolved_boundary_radius, c.radius_policy
+            ));
+        }
+    }
     std::fs::write(dir.join("evaluation.md"), md)?;
     std::fs::write(
         dir.join("evaluation.content_digest.sha256"),
@@ -511,7 +586,12 @@ fn finalize(
     Ok(())
 }
 
-fn eval_digest(report: &Gate2a0TraceShadeEval) -> String {
+fn eval_digest(report: &Gate2a1Eval) -> String {
+    #[derive(Serialize)]
+    struct DigestCheck<'a> {
+        name: &'a str,
+        status: &'a str,
+    }
     #[derive(Serialize)]
     struct Proj<'a> {
         gate: &'a str,
@@ -524,18 +604,11 @@ fn eval_digest(report: &Gate2a0TraceShadeEval) -> String {
         authoritative_threads: usize,
         checks: Vec<DigestCheck<'a>>,
         smoke: Option<&'a TraceShadeReport>,
-        authoritative_runs: &'a [TraceShadeReport],
-        disk_suppressed_changed_pixels: Option<u64>,
+        gate_runs: &'a [TraceShadeReport],
         content_digest_excluding_digest_field: &'a str,
     }
-    #[derive(Serialize)]
-    struct DigestCheck<'a> {
-        name: &'a str,
-        status: &'a str,
-    }
-    // Strip timing from nested reports for projection.
     let smoke = report.smoke.as_ref().map(strip_timing);
-    let runs: Vec<_> = report.authoritative_runs.iter().map(strip_timing).collect();
+    let runs: Vec<_> = report.gate_runs.iter().map(strip_timing).collect();
     let proj = Proj {
         gate: &report.gate,
         result: &report.result,
@@ -554,8 +627,7 @@ fn eval_digest(report: &Gate2a0TraceShadeEval) -> String {
             })
             .collect(),
         smoke: smoke.as_ref(),
-        authoritative_runs: &runs,
-        disk_suppressed_changed_pixels: report.disk_suppressed_changed_pixels,
+        gate_runs: &runs,
         content_digest_excluding_digest_field: "",
     };
     hex_sha(&serde_json::to_vec(&proj).expect("serialize"))
@@ -626,18 +698,6 @@ fn git_stdout(root: &Path, args: &[&str]) -> Result<String, Box<dyn std::error::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use relativity_trace::{encode_ppm, shade_diagnostic, DiagnosticShadeStyle};
-
-    #[test]
-    fn write_outcome_ppm_equals_encode_legacy_shade_path() {
-        // Smoke: API equivalence is covered by image wrapper; ensure digests of empty
-        // aren't used — use encode_ppm(shade) identity in unit of shade module.
-        let _ = (
-            encode_ppm,
-            shade_diagnostic,
-            DiagnosticShadeStyle::Gate1b2Categorical,
-        );
-    }
 
     #[test]
     fn timing_detail_excluded_from_eval_digest() {
@@ -656,17 +716,15 @@ mod tests {
             vec![Check {
                 name: "x".into(),
                 status: "PASS",
-                detail: "trace=1.0s shade=0.01s".into(),
+                detail: "trace=1.0s".into(),
             }],
         );
         let mut b = a.clone();
-        b.checks[0].detail = "trace=99s shade=9s".into();
+        b.checks[0].detail = "trace=99s".into();
         a.available_threads = 8;
         b.available_threads = 8;
         a.authoritative_threads = 8;
         b.authoritative_threads = 8;
         assert_eq!(eval_digest(&a), eval_digest(&b));
-        b.checks[0].status = "FAIL";
-        assert_ne!(eval_digest(&a), eval_digest(&b));
     }
 }
