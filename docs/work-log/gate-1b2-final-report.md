@@ -1,44 +1,63 @@
-# Gate 1B2 Final Report (in progress)
+# Gate 1B2 Final Report
 
-## 1. Branch / merge prerequisite
+## 1. Branch, commits, PR
 
-- PR #3 landed on `main` via merge commit `eaf273e` (Gate 1B1 tip `cce30cc`).
-- Working branch: `gate-1b2-ray-termination-preview`
+- Prerequisite: Gate 1B1 merged to `main` at `eaf273e` (tip `cce30cc`)
+- Branch: `gate-1b2-ray-termination-preview` @ `e419bf7`
+- Draft PR: open from https://github.com/qwertyboy0325/blackhole-rust/pull/new/gate-1b2-ray-termination-preview  
+  (`gh` API auth currently invalid — create draft manually if needed)
 
 ## 2. Disk geometry
 
-- Surface: `f = z` (Cartesian Kerr–Schild)
-- Annulus: explicit `ThinDiskGeometry { r_inner, r_outer }` with `r_inner > r_+`, `r_outer > r_inner`
-- Geometric scene radii only — not ISCO (preset `inner_edge = "prograde_isco"` is ignored)
+- `f = z` (Cartesian KS) + explicit `ThinDiskGeometry { r_inner, r_outer }`
+- Validation: finite, `r_inner > r_+`, `r_outer > r_inner`
+- Geometric radii only — not ISCO
 
-## 3. Filtered-event API
+## 3–6. Filtered events / metadata / outcomes / opaque first-hit
 
-- `EventSurface::classify_localized_hit` → `Ok(None)` rejects; `Ok(Some(metadata))` accepts
-- `EventArmingPolicy { minimum_affine_parameter }` on `Dop853Config` (no geometry mutation)
-
-## 4–6. Metadata / outcomes / opaque first-hit
-
-- `EventId::ThinDisk`, `EventMetadata::ThinDisk { oblate_radius, crossing_side }`
-- `RayOutcome::{DiskHit, Escaped, HorizonEvent, HorizonApproach, AffineLimit, Failed}`
-- First accepted disk hit interrupts; outside-annulus plane crossings continue
+- `EventSurface::classify_localized_hit` + `EventArmingPolicy`
+- `EventMetadata::ThinDisk { oblate_radius, crossing_side }`
+- `RayOutcome` taxonomy in `relativity-trace`
+- Outside-annulus plane crossings continue; accepted disk hit interrupts
 
 ## 7–9. Tests
 
-- Analytic disk + event ordering + Kerr camera corpus (≥10 cases, 0 skips)
-- Longer Kerr convergence probe: declared candidates; status Verified or Unverified (non-blocking)
+- Analytic disk + event ordering + 12-case Kerr camera corpus (0 skips)
+- Convergence probe: declared 4 candidates (Verified or Unverified; non-blocking)
 
-## 10–18. Artifacts / evaluator
+## 10–14. 128×128 outcome map (serial)
 
-- `cargo xtask trace-outcome-map …` → PPM / PGM / JSON under `artifacts/gate-1b2/`
-- `cargo xtask evaluate --scope gate-1b2`
-- Fixed categorical legend (black/orange/blue/purple/red)
+Artifacts (local; gitignored):
+
+- `artifacts/gate-1b2/outcome-map.ppm`
+- `artifacts/gate-1b2/outcome-map.json`
+- `artifacts/gate-1b2/rhs-evaluations.pgm`
+
+Counts: disk=12307, escaped=2442, horizon_event=1462, horizon_approach=173, affine=0, failed=0
+
+Digests:
+
+- class: `64462a83927b111ed808a38292e2d5b1393b4045b580f1b416b1dc001cd452c4`
+- ppm: `ac058d5af01b425e411b5c33017210bf888aa52918cfd085bb863d7ddc99184c`
+- pgm: `2df226390057bb87b64d172cd258087b0ef4c1ad0ce0d4378e003b5861a75db5`
+- content: `9644066230d674eafefb9edaa6a76cbe6d529075a2ce7e758425c136cbd76ec8`
+
+## 15. Wall-clock
+
+- ~210.6 s for 128×128 (~78 rays/s), serial CPU
+
+## 16–18. Evaluator / CI
+
+- `cargo xtask evaluate --scope gate-1b2` implemented (includes ×3 subprocess maps)
+- fmt / clippy / workspace tests green on tip
+- Full authoritative evaluate + CI confirmation pending clean tip run
 
 ## 19. Limitations
 
-- Accepted-step sign-change / exact endpoint roots only
-- No even-in-step multiple plane crossings, tangent contact, radiometry, textures, GPU, GUI
+- Accepted-step sign-change / exact endpoint only
+- No radiometry / textures / OpenEXR / GPU / GUI
 
-## 20. Recommended Gate 2A
+## 20. Gate 2A recommendation
 
-- Celestial-sphere lookup from `Escaped` states
-- Physical disk radiometry deferred
+- Celestial-sphere lookup from `Escaped`
+- Keep disk opaque classification; add emission later as separate gate
