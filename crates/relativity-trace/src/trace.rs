@@ -11,10 +11,19 @@ use crate::disk::ThinDisk;
 use crate::execution::TraceExecution;
 use crate::outcome::{map_integration_report, RayFailure, RayOutcome};
 use crate::scene::TraceScene;
+use crate::surface_set::TraceSurfaceSet;
 
 pub fn trace_ray_sensor(
     scene: &TraceScene,
     sensor: SensorCoord,
+) -> Result<RayOutcome, IntegrationError> {
+    trace_ray_sensor_with_surface_set(scene, sensor, TraceSurfaceSet::OpaqueDiskHorizonEscape)
+}
+
+pub fn trace_ray_sensor_with_surface_set(
+    scene: &TraceScene,
+    sensor: SensorCoord,
+    surface_set: TraceSurfaceSet,
 ) -> Result<RayOutcome, IntegrationError> {
     scene.validate()?;
     let obs = zamo_observer(&scene.kerr, &scene.observer).map_err(IntegrationError::from_core)?;
@@ -25,16 +34,25 @@ pub fn trace_ray_sensor(
     let disk = ThinDisk::new(scene.kerr, scene.disk)?;
     let hor = OuterHorizon::new(scene.kerr);
     let esc = EscapeSphere::new(scene.kerr, scene.escape_radius)?;
-    // Registration order must not affect earliest-λ selection (tested both orders).
-    let surfaces: [&dyn EventSurface; 3] = [&disk, &hor, &esc];
     let mut cfg = scene.integrator.clone();
     cfg.event_arming = scene.event_arming.clone();
     if !cfg.horizon_proximity.enabled {
-        // Gate 1B2 default: enable OuterHorizon approach capture.
         cfg.horizon_proximity = relativity_integrate::HorizonProximityPolicy::enabled(1e-4)?;
     }
 
-    match integrate(scene.kerr, &y0, &cfg, &surfaces) {
+    // Registration order must not affect earliest-λ selection (tested both orders).
+    let report = match surface_set {
+        TraceSurfaceSet::OpaqueDiskHorizonEscape => {
+            let surfaces: [&dyn EventSurface; 3] = [&disk, &hor, &esc];
+            integrate(scene.kerr, &y0, &cfg, &surfaces)
+        }
+        TraceSurfaceSet::HorizonEscapeOnly => {
+            let surfaces: [&dyn EventSurface; 2] = [&hor, &esc];
+            integrate(scene.kerr, &y0, &cfg, &surfaces)
+        }
+    };
+
+    match report {
         Ok(report) => Ok(map_integration_report(report)),
         Err(e) => Ok(RayOutcome::Failed(RayFailure { error: e })),
     }
@@ -45,8 +63,17 @@ pub fn trace_ray_pixel(
     col: u32,
     row: u32,
 ) -> Result<RayOutcome, IntegrationError> {
+    trace_ray_pixel_with_surface_set(scene, col, row, TraceSurfaceSet::OpaqueDiskHorizonEscape)
+}
+
+pub fn trace_ray_pixel_with_surface_set(
+    scene: &TraceScene,
+    col: u32,
+    row: u32,
+    surface_set: TraceSurfaceSet,
+) -> Result<RayOutcome, IntegrationError> {
     let sensor = sensor_at_pixel_center(scene.grid, col, row);
-    trace_ray_sensor(scene, sensor)
+    trace_ray_sensor_with_surface_set(scene, sensor, surface_set)
 }
 
 #[derive(Debug, Clone)]
@@ -72,23 +99,48 @@ pub fn trace_grid(scene: &TraceScene) -> Result<TraceBundle, IntegrationError> {
 }
 
 /// Camera-grid trace with explicit serial or bounded-parallel execution.
+///
+/// Delegates to [`TraceSurfaceSet::OpaqueDiskHorizonEscape`].
 pub fn trace_grid_with_execution(
     scene: &TraceScene,
     execution: TraceExecution,
 ) -> Result<TraceBundle, IntegrationError> {
+    trace_grid_with_execution_and_surface_set(
+        scene,
+        execution,
+        TraceSurfaceSet::OpaqueDiskHorizonEscape,
+    )
+}
+
+/// Camera-grid trace with explicit surface-set registration.
+pub fn trace_grid_with_execution_and_surface_set(
+    scene: &TraceScene,
+    execution: TraceExecution,
+    surface_set: TraceSurfaceSet,
+) -> Result<TraceBundle, IntegrationError> {
     scene.validate()?;
     match execution {
-        TraceExecution::Serial => trace_grid_serial(scene),
-        TraceExecution::Parallel { threads } => trace_grid_parallel_indexed(scene, threads.get()),
+        TraceExecution::Serial => trace_grid_serial(scene, surface_set),
+        TraceExecution::Parallel { threads } => {
+            trace_grid_parallel_indexed(scene, threads.get(), surface_set)
+        }
     }
 }
 
-fn trace_grid_serial(scene: &TraceScene) -> Result<TraceBundle, IntegrationError> {
+fn trace_grid_serial(
+    scene: &TraceScene,
+    surface_set: TraceSurfaceSet,
+) -> Result<TraceBundle, IntegrationError> {
     let n = scene.grid.pixel_count();
     let mut outcomes = Vec::with_capacity(n);
     for row in 0..scene.grid.height {
         for col in 0..scene.grid.width {
-            outcomes.push(trace_ray_pixel(scene, col, row)?);
+            outcomes.push(trace_ray_pixel_with_surface_set(
+                scene,
+                col,
+                row,
+                surface_set,
+            )?);
         }
     }
     Ok(TraceBundle {
@@ -100,6 +152,7 @@ fn trace_grid_serial(scene: &TraceScene) -> Result<TraceBundle, IntegrationError
 fn trace_grid_parallel_indexed(
     scene: &TraceScene,
     threads: usize,
+    surface_set: TraceSurfaceSet,
 ) -> Result<TraceBundle, IntegrationError> {
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
@@ -116,7 +169,7 @@ fn trace_grid_parallel_indexed(
             .map(|index| {
                 let row = (index / width) as u32;
                 let col = (index % width) as u32;
-                trace_ray_pixel(scene, col, row)
+                trace_ray_pixel_with_surface_set(scene, col, row, surface_set)
             })
             .collect()
     });
@@ -199,6 +252,86 @@ mod tests {
     }
 
     #[test]
+    fn default_apis_equal_explicit_opaque_surface_set() {
+        let scene = tiny_scene(4, 3);
+        let a = trace_grid(&scene).unwrap();
+        let b = trace_grid_with_execution_and_surface_set(
+            &scene,
+            TraceExecution::Serial,
+            TraceSurfaceSet::OpaqueDiskHorizonEscape,
+        )
+        .unwrap();
+        assert_eq!(
+            crate::diagnostics::outcome_class_bytes(&a),
+            crate::diagnostics::outcome_class_bytes(&b)
+        );
+        let c = trace_grid_with_execution(&scene, TraceExecution::Serial).unwrap();
+        assert_eq!(
+            crate::diagnostics::outcome_class_bytes(&a),
+            crate::diagnostics::outcome_class_bytes(&c)
+        );
+    }
+
+    #[test]
+    fn horizon_escape_only_has_no_disk_hits() {
+        let scene = tiny_scene(6, 6);
+        let bundle = trace_grid_with_execution_and_surface_set(
+            &scene,
+            TraceExecution::Serial,
+            TraceSurfaceSet::HorizonEscapeOnly,
+        )
+        .unwrap();
+        assert!(!bundle
+            .outcomes
+            .iter()
+            .any(|o| o.class() == OutcomeClass::DiskHit));
+    }
+
+    #[test]
+    fn horizon_escape_only_serial_equals_parallel() {
+        let scene = tiny_scene(5, 4);
+        let serial = trace_grid_with_execution_and_surface_set(
+            &scene,
+            TraceExecution::Serial,
+            TraceSurfaceSet::HorizonEscapeOnly,
+        )
+        .unwrap();
+        let parallel = trace_grid_with_execution_and_surface_set(
+            &scene,
+            TraceExecution::Parallel {
+                threads: NonZeroUsize::new(2).unwrap(),
+            },
+            TraceSurfaceSet::HorizonEscapeOnly,
+        )
+        .unwrap();
+        assert_eq!(
+            crate::diagnostics::outcome_class_bytes(&serial),
+            crate::diagnostics::outcome_class_bytes(&parallel)
+        );
+    }
+
+    #[test]
+    fn surface_set_change_alters_class_digest() {
+        let scene = tiny_scene(6, 6);
+        let opaque = trace_grid_with_execution_and_surface_set(
+            &scene,
+            TraceExecution::Serial,
+            TraceSurfaceSet::OpaqueDiskHorizonEscape,
+        )
+        .unwrap();
+        let omitted = trace_grid_with_execution_and_surface_set(
+            &scene,
+            TraceExecution::Serial,
+            TraceSurfaceSet::HorizonEscapeOnly,
+        )
+        .unwrap();
+        assert_ne!(
+            crate::diagnostics::outcome_class_bytes(&opaque),
+            crate::diagnostics::outcome_class_bytes(&omitted)
+        );
+    }
+
+    #[test]
     fn parallel_matches_serial_for_thread_counts() {
         let scene = tiny_scene(4, 4);
         let serial = trace_grid(&scene).unwrap();
@@ -269,5 +402,30 @@ mod tests {
             .outcomes
             .iter()
             .any(|o| { !matches!(o.class(), OutcomeClass::Failed) && !o.state_finite() }));
+    }
+
+    #[test]
+    fn horizon_escape_only_repeated_runs_exact() {
+        let scene = tiny_scene(4, 4);
+        let a = trace_grid_with_execution_and_surface_set(
+            &scene,
+            TraceExecution::Serial,
+            TraceSurfaceSet::HorizonEscapeOnly,
+        )
+        .unwrap();
+        let b = trace_grid_with_execution_and_surface_set(
+            &scene,
+            TraceExecution::Serial,
+            TraceSurfaceSet::HorizonEscapeOnly,
+        )
+        .unwrap();
+        assert_eq!(
+            crate::diagnostics::outcome_class_bytes(&a),
+            crate::diagnostics::outcome_class_bytes(&b)
+        );
+        assert_eq!(
+            crate::trace_digest::trace_data_digest(&a),
+            crate::trace_digest::trace_data_digest(&b)
+        );
     }
 }

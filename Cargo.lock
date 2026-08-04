@@ -560,6 +560,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "relativity-render"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "relativity-core",
+ "relativity-trace",
+ "serde",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "relativity-trace"
 version = "0.1.0"
 dependencies = [
@@ -822,6 +834,7 @@ dependencies = [
  "hex",
  "relativity-core",
  "relativity-integrate",
+ "relativity-render",
  "relativity-trace",
  "serde",
  "serde_json",

@@ -38,7 +38,13 @@
 /artifacts/gate-2a1-celestial-directions/**/*.sha256
 /artifacts/gate-2a1-celestial-directions/**/*.ppm
 /artifacts/gate-2a1-celestial-directions/**/*.pgm
-.DS_Store
+/artifacts/gate-2a2-lensed-celestial/**/*.json
+/artifacts/gate-2a2-lensed-celestial/**/*.md
+/artifacts/gate-2a2-lensed-celestial/**/*.sha256
+/artifacts/gate-2a2-lensed-celestial/**/*.ppm
+/artifacts/gate-2a2-lensed-celestial/**/*.pgm
+/artifacts/manual-lensed-opaque/
+/artifacts/manual-lensed-sky/
 *.swp
 *.swo
 .idea/
