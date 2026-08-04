@@ -6,12 +6,16 @@ Gargantua in *Interstellar*, not an exact reconstruction of Double Negative's
 proprietary assets, renderer, grading, camera, or undocumented production
 parameters.
 
-## Status: Gate 2A1 in progress (finite celestial-boundary coordinates)
+## Status: Gate 2A2 in progress (first lensed celestial diagnostic)
 
-Gate 0–1B2 and Gate 2A0-1…2A0-4 are complete. Gate 2A1 maps escaped rays to
-deterministic spherical Kerr–Schild UV coordinates on the finite diagnostic
-escape boundary. It does **not** sample celestial textures, compute radiometry,
-or apply asymptotic-infinity corrections.
+Gate 0–1B2, Gate 2A0-1…2A0-4, and Gate 2A1 are complete. Gate 2A2 samples a
+deterministic procedural celestial field through Gate 2A1 finite-boundary
+coordinates to produce the first lensed diagnostic RGB image. It does **not**
+claim physical radiometry, redshift, disk emission, or asymptotic-infinity
+directions. Disk omission is a separate surface-set diagnostic, not a
+transparent physical disk.
+
+See [procedural celestial texture V1](docs/procedural-celestial-texture-v1.md).
 
 Selected path remains:
 
@@ -32,6 +36,7 @@ Start with [the vision](docs/vision.md), [physical assumptions](docs/physics-ass
 crates/relativity-core      # metric, coords, tetrads, ray init (no I/O)
 crates/relativity-integrate # DOP853 geodesic integration + events
 crates/relativity-trace     # outcomes, shading, celestial UV mapping
+crates/relativity-render    # procedural celestial + lensed diagnostic RGB
 xtask                       # presets, tiers, evaluate scopes
 ```
 
@@ -40,19 +45,21 @@ License: `MIT OR Apache-2.0`.
 ## Commands
 
 ```bash
-cargo run -p xtask -- evaluate --scope gate-2a1-celestial-directions
+cargo run --release -p xtask -- evaluate --scope gate-2a2-lensed-celestial
 cargo run --release -p xtask -- \
-  trace-shade-many \
+  render-lensed-celestial \
   --preset presets/gargantua-baseline.toml \
   --tier gate \
-  --output-dir artifacts/manual-gate \
+  --surface-set horizon-escape-only \
+  --mode disk-omitted-diagnostic \
+  --texture procedural-coordinate-grid-v1 \
+  --output-dir artifacts/manual-lensed-sky \
   --execution parallel --threads 16 \
-  --style gate1b2-categorical --style disk-suppressed \
-  --emit-celestial-coordinates --require-release
+  --require-release
 ```
 
 ## Scope boundary
 
-Physical output and presentation output are separate products. Gate 2A1 stops at
-finite-boundary celestial coordinates and a non-authoritative UV diagnostic image.
-
+Physical output and presentation output are separate products. Gate 2A2 produces
+a diagnostic lensed celestial image from finite-boundary coordinates and a
+procedural texture. It does not claim radiometry or asymptotic infinity.

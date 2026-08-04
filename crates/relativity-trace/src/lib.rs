@@ -25,6 +25,7 @@ pub mod image;
 pub mod outcome;
 pub mod scene;
 pub mod shade;
+pub mod surface_set;
 pub mod trace;
 pub mod trace_digest;
 
@@ -60,8 +61,10 @@ pub use shade::{
     categorical_rgb, disk_suppressed_rgb, rgb_frame_diff_count, shade_diagnostic, shade_many,
     shade_outcome, shade_trace_bundle, DiagnosticShadeStyle, RgbFrame, ShadedFrame,
 };
+pub use surface_set::TraceSurfaceSet;
 pub use trace::{
-    fold_indexed_results, trace_grid, trace_grid_with_execution, trace_ray_pixel, trace_ray_sensor,
-    TraceBundle,
+    fold_indexed_results, trace_grid, trace_grid_with_execution,
+    trace_grid_with_execution_and_surface_set, trace_ray_pixel, trace_ray_pixel_with_surface_set,
+    trace_ray_sensor, trace_ray_sensor_with_surface_set, TraceBundle,
 };
 pub use trace_digest::trace_data_digest;

@@ -14,9 +14,11 @@ mod evaluate_gate2a0_parallel;
 mod evaluate_gate2a0_preview_tiers;
 mod evaluate_gate2a0_trace_shade;
 mod evaluate_gate2a1_celestial;
+mod evaluate_gate2a2_lensed_celestial;
 mod inspect;
 mod integrate_ray;
 mod preset;
+mod render_lensed_celestial;
 mod render_tier;
 mod spike_dop853;
 mod trace_outcome_map;
@@ -34,6 +36,28 @@ enum ShadeStyleArg {
     Gate1b2Categorical,
     #[value(name = "disk-suppressed")]
     DiskSuppressed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum SurfaceSetArg {
+    #[value(name = "opaque-disk-horizon-escape")]
+    OpaqueDiskHorizonEscape,
+    #[value(name = "horizon-escape-only")]
+    HorizonEscapeOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum LensedModeArg {
+    #[value(name = "opaque-disk-mask")]
+    OpaqueDiskMask,
+    #[value(name = "disk-omitted-diagnostic")]
+    DiskOmittedDiagnostic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum TextureArg {
+    #[value(name = "procedural-coordinate-grid-v1")]
+    ProceduralCoordinateGridV1,
 }
 
 #[derive(Parser)]
@@ -142,6 +166,31 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         emit_celestial_coordinates: bool,
     },
+    /// Trace once → Gate 2A1 coordinates → procedural celestial → lensed diagnostic PPM (Gate 2A2).
+    RenderLensedCelestial {
+        #[arg(long)]
+        preset: String,
+        #[arg(long, value_enum)]
+        tier: Option<render_tier::DiagnosticRenderTier>,
+        #[arg(long)]
+        width: Option<u32>,
+        #[arg(long)]
+        height: Option<u32>,
+        #[arg(long, value_enum)]
+        surface_set: SurfaceSetArg,
+        #[arg(long, value_enum)]
+        mode: LensedModeArg,
+        #[arg(long, value_enum)]
+        texture: TextureArg,
+        #[arg(long)]
+        output_dir: String,
+        #[arg(long, value_enum, default_value_t = ExecutionArg::Serial)]
+        execution: ExecutionArg,
+        #[arg(long)]
+        threads: Option<usize>,
+        #[arg(long, default_value_t = false)]
+        require_release: bool,
+    },
     /// Emit canonical Gate 1B1 corpus JSON (numerical records; for determinism).
     CorpusReport {
         #[arg(long)]
@@ -183,6 +232,8 @@ fn main() {
                 evaluate_gate2a0_preview_tiers::evaluate()
             } else if scope == "gate-2a1-celestial-directions" {
                 evaluate_gate2a1_celestial::evaluate()
+            } else if scope == "gate-2a2-lensed-celestial" {
+                evaluate_gate2a2_lensed_celestial::evaluate()
             } else {
                 match preset {
                     Some(p) => evaluate::evaluate(&p, &scope),
@@ -257,6 +308,56 @@ fn main() {
                 threads,
                 &styles,
                 emit_celestial_coordinates,
+            )
+        }
+        Commands::RenderLensedCelestial {
+            preset,
+            tier,
+            width,
+            height,
+            surface_set,
+            mode,
+            texture,
+            output_dir,
+            execution,
+            threads,
+            require_release,
+        } => {
+            let exec = match execution {
+                ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
+                ExecutionArg::Parallel => trace_outcome_map::CliExecution::Parallel,
+            };
+            let surface_set = match surface_set {
+                SurfaceSetArg::OpaqueDiskHorizonEscape => {
+                    relativity_trace::TraceSurfaceSet::OpaqueDiskHorizonEscape
+                }
+                SurfaceSetArg::HorizonEscapeOnly => {
+                    relativity_trace::TraceSurfaceSet::HorizonEscapeOnly
+                }
+            };
+            let mode = match mode {
+                LensedModeArg::OpaqueDiskMask => {
+                    relativity_render::LensedCelestialMode::OpaqueDiskMask
+                }
+                LensedModeArg::DiskOmittedDiagnostic => {
+                    relativity_render::LensedCelestialMode::DiskOmittedDiagnostic
+                }
+            };
+            let texture = match texture {
+                TextureArg::ProceduralCoordinateGridV1 => relativity_render::TEXTURE_ID_V1,
+            };
+            render_lensed_celestial::run(
+                &preset,
+                tier,
+                width,
+                height,
+                surface_set,
+                mode,
+                texture,
+                &output_dir,
+                require_release,
+                exec,
+                threads,
             )
         }
         Commands::CorpusReport { scope } => {

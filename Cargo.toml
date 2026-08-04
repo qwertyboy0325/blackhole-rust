@@ -4,6 +4,7 @@ members = [
     "crates/relativity-core",
     "crates/relativity-integrate",
     "crates/relativity-trace",
+    "crates/relativity-render",
     "xtask",
     "spikes/gate-1b0-contract",
     "spikes/gate-1b0-ode-solvers",
@@ -13,6 +14,7 @@ default-members = [
     "crates/relativity-core",
     "crates/relativity-integrate",
     "crates/relativity-trace",
+    "crates/relativity-render",
     "xtask",
 ]
 
