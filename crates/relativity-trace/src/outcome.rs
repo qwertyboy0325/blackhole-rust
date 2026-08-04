@@ -81,6 +81,20 @@ pub enum OutcomeClass {
     Failed,
 }
 
+impl OutcomeClass {
+    /// Stable project-owned digest tag (not Debug/Display/serde).
+    pub const fn digest_tag(self) -> &'static str {
+        match self {
+            Self::DiskHit => "outcome-class:disk-hit",
+            Self::Escaped => "outcome-class:escaped",
+            Self::HorizonEvent => "outcome-class:horizon-event",
+            Self::HorizonApproach => "outcome-class:horizon-approach",
+            Self::AffineLimit => "outcome-class:affine-limit",
+            Self::Failed => "outcome-class:failed",
+        }
+    }
+}
+
 impl RayOutcome {
     pub fn class(&self) -> OutcomeClass {
         match self {

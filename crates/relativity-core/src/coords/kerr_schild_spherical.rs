@@ -66,6 +66,17 @@ pub enum SphericalKsAzimuthStatus {
     CanonicalizedSouthPole,
 }
 
+impl SphericalKsAzimuthStatus {
+    /// Stable project-owned digest tag (not Debug/Display/serde).
+    pub const fn digest_tag(self) -> &'static str {
+        match self {
+            Self::Defined => "spherical-ks-azimuth:defined",
+            Self::CanonicalizedNorthPole => "spherical-ks-azimuth:canonicalized-north-pole",
+            Self::CanonicalizedSouthPole => "spherical-ks-azimuth:canonicalized-south-pole",
+        }
+    }
+}
+
 /// Coordinate-sphere direction recovered from Cartesian KS position.
 ///
 /// `unit_coordinate_direction = [sinθ cosψ, sinθ sinψ, cosθ]` in the spherical

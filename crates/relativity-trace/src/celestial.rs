@@ -58,6 +58,17 @@ pub enum CelestialDirectionSource {
     FiniteOblateEscapeBoundaryPosition,
 }
 
+impl CelestialDirectionSource {
+    /// Stable project-owned digest tag (not Debug/Display/serde).
+    pub const fn digest_tag(self) -> &'static str {
+        match self {
+            Self::FiniteOblateEscapeBoundaryPosition => {
+                "celestial-direction-source:finite-oblate-escape-boundary-position"
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CelestialUv {
     pub u: f64,
@@ -276,28 +287,32 @@ pub fn build_celestial_coordinate_frame(
 }
 
 /// Scientific coordinate digest (bit patterns; excludes shading/PPM/timing).
+///
+/// Hashing rules:
+/// - enums use fixed project-owned `digest_tag()` strings (never Debug/Display/serde);
+/// - strings are length-prefixed with explicit domain separators;
+/// - the full [`CelestialCoordinateConvention`] is included.
 pub fn celestial_coordinate_digest(
     frame: &CelestialCoordinateFrame,
     convention: &CelestialCoordinateConvention,
 ) -> String {
     let mut h = Sha256::new();
-    h.update(convention.schema_version.to_le_bytes());
-    h.update(convention.convention_id.as_bytes());
-    h.update(b"|source|");
-    h.update(b"finite-oblate-escape-boundary-position");
-    h.update(b"|wh|");
+    update_domain(&mut h, b"celestial-coordinate-digest-v1");
+    update_convention(&mut h, convention);
+    update_domain(&mut h, b"grid");
     h.update(frame.grid.width.to_le_bytes());
     h.update(frame.grid.height.to_le_bytes());
+    update_domain(&mut h, b"pixels-row-major");
     for (idx, pixel) in frame.pixels.iter().enumerate() {
         h.update((idx as u64).to_le_bytes());
         match pixel {
             CelestialCoordinatePixel::NotEscaped { outcome_class } => {
-                h.update(b"|ne|");
-                h.update(format!("{outcome_class:?}").as_bytes());
+                update_domain(&mut h, b"pixel-kind:not-escaped");
+                update_tagged_str(&mut h, b"outcome-class", outcome_class.digest_tag());
             }
             CelestialCoordinatePixel::Escaped(s) => {
-                h.update(b"|esc|");
-                h.update(b"finite-oblate-escape-boundary-position");
+                update_domain(&mut h, b"pixel-kind:escaped");
+                update_tagged_str(&mut h, b"direction-source", s.source.digest_tag());
                 h.update(s.oblate_radius.to_bits().to_le_bytes());
                 h.update(s.theta.to_bits().to_le_bytes());
                 h.update(s.psi.to_bits().to_le_bytes());
@@ -306,12 +321,48 @@ pub fn celestial_coordinate_digest(
                 }
                 h.update(s.uv.u.to_bits().to_le_bytes());
                 h.update(s.uv.v.to_bits().to_le_bytes());
-                h.update(format!("{:?}", s.azimuth_status).as_bytes());
+                update_tagged_str(&mut h, b"azimuth-status", s.azimuth_status.digest_tag());
                 h.update(s.escape_event_value.to_bits().to_le_bytes());
             }
         }
     }
     hex_sha(&h.finalize())
+}
+
+fn update_domain(h: &mut Sha256, domain: &[u8]) {
+    update_tagged_bytes(h, b"domain", domain);
+}
+
+fn update_tagged_str(h: &mut Sha256, tag: &[u8], value: &str) {
+    update_tagged_bytes(h, tag, value.as_bytes());
+}
+
+fn update_tagged_bytes(h: &mut Sha256, tag: &[u8], value: &[u8]) {
+    // tag_len || tag || value_len || value  — length-prefixed to avoid concatenation ambiguity
+    h.update((tag.len() as u64).to_le_bytes());
+    h.update(tag);
+    h.update((value.len() as u64).to_le_bytes());
+    h.update(value);
+}
+
+fn update_convention(h: &mut Sha256, convention: &CelestialCoordinateConvention) {
+    update_domain(h, b"convention");
+    h.update(convention.schema_version.to_le_bytes());
+    update_tagged_str(h, b"convention-id", &convention.convention_id);
+    update_tagged_str(h, b"direction-source", convention.source.digest_tag());
+    update_tagged_str(h, b"boundary-surface", &convention.boundary_surface);
+    update_tagged_str(h, b"angular-chart", &convention.angular_chart);
+    update_tagged_str(h, b"north-axis", &convention.north_axis);
+    update_tagged_str(h, b"azimuth-handedness", &convention.azimuth_handedness);
+    update_tagged_str(h, b"seam", &convention.seam);
+    update_tagged_str(h, b"u-mapping", &convention.u_mapping);
+    update_tagged_str(h, b"v-mapping", &convention.v_mapping);
+    update_tagged_str(h, b"pole-policy", &convention.pole_policy);
+    update_tagged_str(
+        h,
+        b"asymptotic-correction",
+        &convention.asymptotic_correction,
+    );
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -620,6 +671,7 @@ pub fn worst_boundary_residual_pixels(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shade::categorical_rgb;
     use relativity_core::{cartesian_from_spherical_ks, Covector, PositionSphericalKs};
     use relativity_integrate::{
         AffineParameter, GeodesicState, IntegrationStats, InvariantDiagnostics, RawSolverStop,
@@ -804,5 +856,103 @@ mod tests {
             validate_celestial_seam("other"),
             Err(CelestialMappingError::UnsupportedSeam { .. })
         ));
+    }
+
+    fn tiny_frame() -> CelestialCoordinateFrame {
+        let kerr = KerrParams::new(1.0, 0.0).unwrap();
+        let sample =
+            celestial_sample_from_position(&kerr, &PositionKs::new(0.0, 80.0, 0.0, 0.0), 0.0)
+                .unwrap();
+        CelestialCoordinateFrame::try_new(
+            TraceGrid {
+                width: 2,
+                height: 1,
+            },
+            vec![
+                CelestialCoordinatePixel::Escaped(sample),
+                CelestialCoordinatePixel::NotEscaped {
+                    outcome_class: OutcomeClass::DiskHit,
+                },
+            ],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn digest_enum_tags_are_explicit_and_distinct() {
+        let classes = [
+            OutcomeClass::DiskHit,
+            OutcomeClass::Escaped,
+            OutcomeClass::HorizonEvent,
+            OutcomeClass::HorizonApproach,
+            OutcomeClass::AffineLimit,
+            OutcomeClass::Failed,
+        ];
+        let mut tags: Vec<&str> = classes.iter().map(|c| c.digest_tag()).collect();
+        tags.sort_unstable();
+        tags.dedup();
+        assert_eq!(tags.len(), 6);
+        for t in &tags {
+            assert!(t.starts_with("outcome-class:"));
+            assert!(!t.contains("DiskHit")); // not Debug
+        }
+
+        let az = [
+            SphericalKsAzimuthStatus::Defined,
+            SphericalKsAzimuthStatus::CanonicalizedNorthPole,
+            SphericalKsAzimuthStatus::CanonicalizedSouthPole,
+        ];
+        let mut atags: Vec<&str> = az.iter().map(|a| a.digest_tag()).collect();
+        atags.sort_unstable();
+        atags.dedup();
+        assert_eq!(atags.len(), 3);
+        for t in &atags {
+            assert!(t.starts_with("spherical-ks-azimuth:"));
+        }
+
+        let src = CelestialDirectionSource::FiniteOblateEscapeBoundaryPosition.digest_tag();
+        assert_eq!(
+            src,
+            "celestial-direction-source:finite-oblate-escape-boundary-position"
+        );
+        assert!(!src.contains("FiniteOblate"));
+    }
+
+    #[test]
+    fn convention_field_changes_alter_coordinate_digest() {
+        let frame = tiny_frame();
+        let base = CelestialCoordinateConvention::finite_oblate_ks_boundary_uv_v1();
+        let d0 = celestial_coordinate_digest(&frame, &base);
+
+        let mut seam = base.clone();
+        seam.seam = "alternate-seam".into();
+        assert_ne!(d0, celestial_coordinate_digest(&frame, &seam));
+
+        let mut pole = base.clone();
+        pole.pole_policy = "alternate-pole-policy".into();
+        assert_ne!(d0, celestial_coordinate_digest(&frame, &pole));
+
+        let mut umap = base.clone();
+        umap.u_mapping = "alternate-u".into();
+        assert_ne!(d0, celestial_coordinate_digest(&frame, &umap));
+
+        let mut vmap = base.clone();
+        vmap.v_mapping = "alternate-v".into();
+        assert_ne!(d0, celestial_coordinate_digest(&frame, &vmap));
+
+        let mut chart = base.clone();
+        chart.angular_chart = "alternate-chart".into();
+        assert_ne!(d0, celestial_coordinate_digest(&frame, &chart));
+    }
+
+    #[test]
+    fn shade_style_does_not_affect_coordinate_digest() {
+        let frame = tiny_frame();
+        let conv = CelestialCoordinateConvention::finite_oblate_ks_boundary_uv_v1();
+        let before = celestial_coordinate_digest(&frame, &conv);
+        let _rgb_a = shade_celestial_uv_debug(&frame);
+        let _rgb_b = categorical_rgb(OutcomeClass::Escaped);
+        let after = celestial_coordinate_digest(&frame, &conv);
+        assert_eq!(before, after);
     }
 }
