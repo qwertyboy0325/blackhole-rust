@@ -3,9 +3,8 @@
 ## 1. Branch, commits, PR
 
 - Prerequisite: Gate 1B1 merged to `main` at `eaf273e` (tip `cce30cc`)
-- Branch: `gate-1b2-ray-termination-preview` @ `e419bf7`
-- Draft PR: open from https://github.com/qwertyboy0325/blackhole-rust/pull/new/gate-1b2-ray-termination-preview  
-  (`gh` API auth currently invalid — create draft manually if needed)
+- Branch: `gate-1b2-ray-termination-preview` @ `073f746`
+- Draft PR #4: update head evidence to `073f746` (local tip; `gh` auth broken for auto-edit)
 
 ## 2. Disk geometry
 
@@ -48,8 +47,8 @@ Digests:
 
 ## 16–18. Evaluator / CI
 
-- `cargo xtask evaluate --scope gate-1b2` → **PASS** (`authoritative: true`) at `48a539b`
-- Content digest: `80486e02ade94c3c21b5bace27cce775669084f237cc9b496945c0c4fb842f63`
+- `cargo xtask evaluate --scope gate-1b2` → **PASS** (`authoritative: true`, `dirty: false`) at `073f746`
+- Content digest: `0a575ebec48a4ba5ab2cd8e391677153d53dc7ecedb84cac0b5f167f81f2c37f`
 - Map class digest (×3 subprocess identical): `64462a83927b111ed808a38292e2d5b1393b4045b580f1b416b1dc001cd452c4`
 - fmt / clippy / workspace tests green
 
