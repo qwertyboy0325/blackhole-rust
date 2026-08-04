@@ -26,7 +26,7 @@ pub mod rhs;
 pub mod state;
 
 pub use adapter::{integrate, integrate_to_affine_limit};
-pub use config::{Dop853Config, HorizonProximityPolicy};
+pub use config::{Dop853Config, EventArmingPolicy, HorizonProximityPolicy};
 pub use corpus::{
     build_canonical_corpus_report, canonical_corpus_json, determinism_record, run_and_check,
     run_corpus_case, CanonicalCaseRecord, CanonicalCorpusReport, CorpusCase, CorpusId,
@@ -35,8 +35,8 @@ pub use corpus::{
 pub use error::{IntegrationError, IntegrationStage};
 pub use event::{
     is_eligible_crossing, is_exact_root, localization_nonconvergence_self_check, CrossingDirection,
-    EscapeSphere, EventId, EventLocalizationStats, EventSurface,
-    LocalizationNonconvergenceEvidence, LocalizationTermination, OuterHorizon,
+    DiskCrossingSide, EscapeSphere, EventId, EventLocalizationStats, EventMetadata, EventSurface,
+    LocalizationNonconvergenceEvidence, LocalizationTermination, LocalizedSurfaceHit, OuterHorizon,
     MAX_LOCALIZATION_ITERS,
 };
 pub use outcome::{

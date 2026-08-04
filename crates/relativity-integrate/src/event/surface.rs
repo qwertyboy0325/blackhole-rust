@@ -1,11 +1,14 @@
 use crate::error::IntegrationError;
 use crate::state::{AffineParameter, GeodesicState};
 
+use super::metadata::{EventMetadata, LocalizedSurfaceHit};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum EventId {
     OuterHorizon,
     EscapeSphere,
+    ThinDisk,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -26,6 +29,17 @@ pub trait EventSurface {
     ) -> Result<f64, IntegrationError>;
 
     fn crossing(&self) -> CrossingDirection;
+
+    /// Post-localization filter. `Ok(None)` rejects the root (continue integration).
+    ///
+    /// Default: accept with [`EventMetadata::None`].
+    /// `ThinDisk` overrides to enforce the oblate-radius annulus.
+    fn classify_localized_hit(
+        &self,
+        _hit: &LocalizedSurfaceHit,
+    ) -> Result<Option<EventMetadata>, IntegrationError> {
+        Ok(Some(EventMetadata::None))
+    }
 }
 
 /// Floating-point comparison policy for an exact endpoint root: `f == 0.0`
