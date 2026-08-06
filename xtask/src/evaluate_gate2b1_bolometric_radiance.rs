@@ -16,7 +16,8 @@ use relativity_render::{
     transport_bolometric_specific_intensity, BolometricSpecificIntensity, DiskBolometricConvention,
     DiskFrequencyShiftConvention, DiskFrequencyShiftFrame, DiskFrequencyShiftPixel,
     DiskFrequencyShiftSample, DiskVelocityModel, LensedCelestialMode, ObserverFrequencySource,
-    ResolvedDiskBounds, DISK_BOUNDS_SOURCE_V1, TEXTURE_ID_V1,
+    ResolvedDiskBounds, CANONICAL_DISK_EMISSION_CLAIM, CANONICAL_DISK_EMISSION_MODEL,
+    DISK_BOUNDS_SOURCE_V1, TEXTURE_ID_V1,
 };
 use relativity_trace::{hex_sha, OutcomeCounts, TraceGrid, TraceSurfaceSet};
 use serde::Serialize;
@@ -186,6 +187,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "artifacts/gate-2b1-bolometric-radiance/cli-neg-bolo-without-freq",
         false,
         true,
+        None,
     )?;
     check_cli_negative(
         &root,
@@ -196,6 +198,29 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "artifacts/gate-2b1-bolometric-radiance/cli-neg-horizon-escape",
         true,
         true,
+        None,
+    )?;
+    check_cli_negative(
+        &root,
+        &mut checks,
+        "cli_reject_altered_emission_claim",
+        TraceSurfaceSet::OpaqueDiskHorizonEscape,
+        LensedCelestialMode::OpaqueDiskMask,
+        "artifacts/gate-2b1-bolometric-radiance/cli-neg-altered-claim",
+        true,
+        true,
+        Some(PresetMutation::AlteredClaim),
+    )?;
+    check_cli_negative(
+        &root,
+        &mut checks,
+        "cli_reject_unsupported_emission_model",
+        TraceSurfaceSet::OpaqueDiskHorizonEscape,
+        LensedCelestialMode::OpaqueDiskMask,
+        "artifacts/gate-2b1-bolometric-radiance/cli-neg-unsupported-model",
+        true,
+        true,
+        Some(PresetMutation::UnsupportedModel),
     )?;
 
     let smoke_thread_1 = run_worker(
@@ -405,9 +430,11 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             && b0.disk_hit_count == 12307
             && b0.mapped_count == 12307
             && b0.mapping_failure_count == 0
-            && b0.resolved_disk_bounds.inner_radius == 3.0
-            && b0.resolved_disk_bounds.outer_radius == 20.0
+            && b0.resolved_disk_bounds.inner_radius() == 3.0
+            && b0.resolved_disk_bounds.outer_radius() == 20.0
             && b0.disk_bounds_source == DISK_BOUNDS_SOURCE_V1
+            && b0.accepted_emission_model == CANONICAL_DISK_EMISSION_MODEL
+            && b0.accepted_emission_claim == CANONICAL_DISK_EMISSION_CLAIM
             && b0.bolometric_emission_passes == 1
             && b0.bolometric_transport_passes == 1
             && b0.bolometric_visualization_passes == 3
@@ -417,14 +444,16 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             && g0.coordinate_passes == 1
             && g0.texture_render_passes == 1,
         format!(
-            "att={} boost={} unch={} disk={} bounds=({},{}) src={} bolo_passes={}/{}/{}",
+            "att={} boost={} unch={} disk={} bounds=({},{}) src={} model={} claim={} bolo_passes={}/{}/{}",
             b0.attenuated_count,
             b0.boosted_count,
             b0.unchanged_count,
             b0.disk_hit_count,
-            b0.resolved_disk_bounds.inner_radius,
-            b0.resolved_disk_bounds.outer_radius,
+            b0.resolved_disk_bounds.inner_radius(),
+            b0.resolved_disk_bounds.outer_radius(),
             b0.disk_bounds_source,
+            b0.accepted_emission_model,
+            b0.accepted_emission_claim,
             b0.bolometric_emission_passes,
             b0.bolometric_transport_passes,
             b0.bolometric_visualization_passes
@@ -712,7 +741,10 @@ fn check_algebraic_corpus(checks: &mut Vec<Check>) {
         &spec,
         bounds,
         "synthetic-src",
-    );
+        CANONICAL_DISK_EMISSION_MODEL,
+        CANONICAL_DISK_EMISSION_CLAIM,
+    )
+    .expect("digest before");
     let display = bolometric_debug_display_v1();
     let _ = shade_observed_bolometric_debug(&bolo, &display).expect("shade");
     let d_after = disk_bolometric_digest(
@@ -721,13 +753,22 @@ fn check_algebraic_corpus(checks: &mut Vec<Check>) {
         &spec,
         bounds,
         "synthetic-src",
-    );
+        CANONICAL_DISK_EMISSION_MODEL,
+        CANONICAL_DISK_EMISSION_CLAIM,
+    )
+    .expect("digest after");
     push(
         checks,
         "algebraic_display_independence",
         d_before == d_after,
         d_before,
     );
+}
+
+#[derive(Clone, Copy)]
+enum PresetMutation {
+    AlteredClaim,
+    UnsupportedModel,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -740,9 +781,40 @@ fn check_cli_negative(
     output_dir: &str,
     emit_freq: bool,
     emit_bolo: bool,
+    mutation: Option<PresetMutation>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let abs = root.join(output_dir);
     let _ = std::fs::remove_dir_all(&abs);
+    let mut preset_path = "presets/gargantua-baseline.toml".to_string();
+    let mut temp_preset: Option<PathBuf> = None;
+    if let Some(m) = mutation {
+        let base = std::fs::read_to_string(root.join("presets/gargantua-baseline.toml"))?;
+        let mutated = match m {
+            PresetMutation::AlteredClaim => base.replace(
+                CANONICAL_DISK_EMISSION_CLAIM,
+                "altered claim incompatible with project diagnostic",
+            ),
+            PresetMutation::UnsupportedModel => {
+                base.replace(CANONICAL_DISK_EMISSION_MODEL, "novikov_thorne")
+            }
+        };
+        if mutated == base {
+            return Err(format!("preset mutation {name} did not change file").into());
+        }
+        let tmp = root.join(format!(
+            "artifacts/gate-2b1-bolometric-radiance/{name}-preset.toml"
+        ));
+        if let Some(parent) = tmp.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&tmp, mutated)?;
+        preset_path = tmp
+            .strip_prefix(root)
+            .unwrap_or(&tmp)
+            .to_string_lossy()
+            .into_owned();
+        temp_preset = Some(tmp);
+    }
     let mut args = vec![
         "run",
         "--release",
@@ -752,7 +824,7 @@ fn check_cli_negative(
         "--",
         "render-lensed-celestial",
         "--preset",
-        "presets/gargantua-baseline.toml",
+        preset_path.as_str(),
         "--tier",
         "smoke",
         "--surface-set",
@@ -782,6 +854,9 @@ fn check_cli_negative(
         || (!abs.join("disk-bolometric-radiance-map.json").exists()
             && !abs.join("disk-frequency-shift-map.json").exists()
             && !abs.join("lensed-celestial-report.json").exists());
+    if let Some(tmp) = temp_preset {
+        let _ = std::fs::remove_file(tmp);
+    }
     push(
         checks,
         name,
@@ -1092,9 +1167,17 @@ fn finalize(root: &Path, report: &mut Gate2b1Eval) -> Result<(), Box<dyn std::er
             ));
             md.push_str(&format!(
                 "- bounds: ({}, {}) source=`{}`\n",
-                b.resolved_disk_bounds.inner_radius,
-                b.resolved_disk_bounds.outer_radius,
+                b.resolved_disk_bounds.inner_radius(),
+                b.resolved_disk_bounds.outer_radius(),
                 b.disk_bounds_source
+            ));
+            md.push_str(&format!(
+                "- accepted_emission_model: `{}`\n",
+                b.accepted_emission_model
+            ));
+            md.push_str(&format!(
+                "- accepted_emission_claim: `{}`\n",
+                b.accepted_emission_claim
             ));
             md.push_str(&format!(
                 "- max |transport residual|: {}\n",

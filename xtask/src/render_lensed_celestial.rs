@@ -20,12 +20,13 @@ use relativity_render::{
     diagnostic_bolometric_emission_v1, g_visualization_range_counts, procedural_coordinate_grid_v1,
     procedural_texture_spec_digest, render_bolometric_celestial_composite, render_lensed_celestial,
     shade_emitted_bolometric_debug, shade_g_factor_debug, shade_observed_bolometric_debug,
-    validate_mode_surface_set, verify_disk_bolometric_frame, verify_lensed_celestial_frame,
-    verify_observer_unit_frequency, BolometricDebugDisplaySpec, BolometricRegressionSample,
-    BolometricRenderError, DiagnosticBolometricEmissionSpec, DiskBolometricConvention,
-    DiskFrequencyShiftConvention, DiskVelocityModel, FrequencyShiftError,
+    validate_disk_emission_provenance, validate_mode_surface_set, verify_disk_bolometric_frame,
+    verify_lensed_celestial_frame, verify_observer_unit_frequency, BolometricDebugDisplaySpec,
+    BolometricRegressionSample, BolometricRenderError, DiagnosticBolometricEmissionSpec,
+    DiskBolometricConvention, DiskFrequencyShiftConvention, DiskVelocityModel, FrequencyShiftError,
     FrequencyShiftRegressionSample, LensedCelestialMode, ProceduralCelestialTextureSpec,
-    RankedBolometricPixel, RankedFrequencyShiftPixel, ResolvedDiskBounds, DISK_BOUNDS_SOURCE_V1,
+    RankedBolometricPixel, RankedFrequencyShiftPixel, ResolvedDiskBounds,
+    CANONICAL_DISK_EMISSION_CLAIM, CANONICAL_DISK_EMISSION_MODEL, DISK_BOUNDS_SOURCE_V1,
     TEXTURE_ID_V1,
 };
 use relativity_trace::{
@@ -96,6 +97,8 @@ pub struct DiskBolometricOutputReport {
     pub convention: DiskBolometricConvention,
     pub emission_spec: DiagnosticBolometricEmissionSpec,
     pub emission_spec_digest: String,
+    pub accepted_emission_model: String,
+    pub accepted_emission_claim: String,
     pub display_spec: BolometricDebugDisplaySpec,
     pub display_spec_digest: String,
     pub resolved_disk_bounds: ResolvedDiskBounds,
@@ -236,14 +239,8 @@ pub fn run(
     let preset = load_preset(&preset_full)?;
 
     if emit_disk_bolometric_radiance {
-        if preset.disk.emission_model != "diagnostic_radial_profile" {
-            return Err(BolometricRenderError::UnsupportedEmissionModel(
-                preset.disk.emission_model.clone(),
-            )
-            .to_string()
-            .into());
-        }
-        let _ = &preset.disk.emission_claim;
+        validate_disk_emission_provenance(&preset.disk.emission_model, &preset.disk.emission_claim)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
     }
 
     if preset.celestial_sphere.texture != "procedural_coordinate_grid" {
@@ -469,7 +466,10 @@ pub fn run(
             &emission_spec,
             resolved_disk_bounds,
             &source_frequency_shift_digest,
-        );
+            CANONICAL_DISK_EMISSION_MODEL,
+            CANONICAL_DISK_EMISSION_CLAIM,
+        )
+        .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
         if bolo_art.mapping_failure_count != 0 {
             return Err("bolometric mapping_failure_count != 0".into());
         }
@@ -530,6 +530,8 @@ pub fn run(
             convention: bolo_convention,
             emission_spec_digest: diagnostic_bolometric_emission_spec_digest(&emission_spec),
             emission_spec,
+            accepted_emission_model: CANONICAL_DISK_EMISSION_MODEL.into(),
+            accepted_emission_claim: CANONICAL_DISK_EMISSION_CLAIM.into(),
             display_spec_digest: bolometric_debug_display_spec_digest(&display_spec),
             display_spec,
             resolved_disk_bounds,
@@ -745,6 +747,8 @@ pub fn content_digest(report: &LensedCelestialReport) -> String {
         convention: &'a DiskBolometricConvention,
         emission_spec: &'a DiagnosticBolometricEmissionSpec,
         emission_spec_digest: &'a str,
+        accepted_emission_model: &'a str,
+        accepted_emission_claim: &'a str,
         display_spec: &'a BolometricDebugDisplaySpec,
         display_spec_digest: &'a str,
         resolved_disk_bounds_inner_bits: u64,
@@ -808,10 +812,12 @@ pub fn content_digest(report: &LensedCelestialReport) -> String {
         convention: &b.convention,
         emission_spec: &b.emission_spec,
         emission_spec_digest: &b.emission_spec_digest,
+        accepted_emission_model: &b.accepted_emission_model,
+        accepted_emission_claim: &b.accepted_emission_claim,
         display_spec: &b.display_spec,
         display_spec_digest: &b.display_spec_digest,
-        resolved_disk_bounds_inner_bits: b.resolved_disk_bounds.inner_radius.to_bits(),
-        resolved_disk_bounds_outer_bits: b.resolved_disk_bounds.outer_radius.to_bits(),
+        resolved_disk_bounds_inner_bits: b.resolved_disk_bounds.inner_radius().to_bits(),
+        resolved_disk_bounds_outer_bits: b.resolved_disk_bounds.outer_radius().to_bits(),
         disk_bounds_source: &b.disk_bounds_source,
         source_frequency_shift_digest: &b.source_frequency_shift_digest,
         disk_hit_count: b.disk_hit_count,

@@ -22,12 +22,13 @@ pub use bolometric::{
     disk_bolometric_digest, render_bolometric_celestial_composite,
     sample_diagnostic_bolometric_emission, shade_emitted_bolometric_debug,
     shade_observed_bolometric_debug, transport_bolometric_specific_intensity,
-    verify_disk_bolometric_frame, BolometricDebugDisplaySpec, BolometricRegressionSample,
-    BolometricSpecificIntensity, BolometricTransportFactor, DiagnosticAngularEmissionModel,
-    DiagnosticBolometricEmissionSpec, DiskBolometricConvention, DiskBolometricFrame,
-    DiskBolometricMapArtifact, DiskBolometricPixel, DiskBolometricSample,
+    validate_disk_emission_provenance, verify_disk_bolometric_frame, BolometricDebugDisplaySpec,
+    BolometricRegressionSample, BolometricSpecificIntensity, BolometricTransportFactor,
+    DiagnosticAngularEmissionModel, DiagnosticBolometricEmissionSpec, DiskBolometricConvention,
+    DiskBolometricFrame, DiskBolometricMapArtifact, DiskBolometricPixel, DiskBolometricSample,
     EmissionNormalizationRadiusSource, RankedBolometricPixel, ResolvedDiskBounds,
-    BOLOMETRIC_CONVENTION_ID, DISK_BOUNDS_SOURCE_V1, DISPLAY_ID_V1, EMISSION_PROFILE_ID_V1,
+    BOLOMETRIC_CONVENTION_ID, CANONICAL_DISK_EMISSION_CLAIM, CANONICAL_DISK_EMISSION_MODEL,
+    DISK_BOUNDS_SOURCE_V1, DISPLAY_ID_V1, EMISSION_PROFILE_ID_V1,
 };
 pub use error::{BolometricRenderError, CelestialRenderError, FrequencyShiftError};
 pub use frequency_shift::{

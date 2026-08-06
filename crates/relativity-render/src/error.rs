@@ -66,6 +66,8 @@ pub enum BolometricRenderError {
     FlagSurfaceModeMismatch,
     #[error("unsupported disk emission model `{0}`")]
     UnsupportedEmissionModel(String),
+    #[error("unsupported disk emission claim `{0}`")]
+    UnsupportedEmissionClaim(String),
     #[error("celestial texture error: {0}")]
     Celestial(String),
 }

@@ -45,6 +45,28 @@ claim the traced disk inner edge is ISCO.
 
 Disk-bounds source tag: `resolved-trace-scene-thin-disk-v1`.
 
+`ResolvedDiskBounds` is a closed typed invariant: finite, `inner > 0`,
+`outer > inner`. Construction and deserialization go through `new()` /
+`validate()`; public sampling and digest entry points re-validate. Illegal
+bounds are rejected — never clamped.
+
+## Emission provenance
+
+Gate 2B1 accepts only the exact preset strings:
+
+```text
+emission_model = "diagnostic_radial_profile"
+emission_claim = "project diagnostic, not astrophysical or film-asset reconstruction"
+```
+
+These are validated before tracing. The accepted model and claim are recorded in
+the bolometric map artifact, worker report, and scientific digest. An altered
+claim or unsupported model rejects with no artifacts.
+
+Convention kebab claim
+(`project-diagnostic-not-astrophysical-or-film-reconstruction`) is a separate
+convention-id field and is not a substitute for the preset provenance string.
+
 ## Transport
 
 Consume Gate 2B0 frequency ratio `g = ν_obs / ν_em` only. Do not recompute `g`

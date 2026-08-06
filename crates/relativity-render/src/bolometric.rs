@@ -20,6 +20,29 @@ pub const EMISSION_PROFILE_ID_V1: &str = "diagnostic-radial-power-law-v1";
 pub const DISK_BOUNDS_SOURCE_V1: &str = "resolved-trace-scene-thin-disk-v1";
 pub const DISPLAY_ID_V1: &str = "fixed-log2-grayscale-v1";
 pub const EMISSION_UNITS_V1: &str = "arbitrary-normalized-bolometric-specific-intensity";
+/// Exact preset `disk.emission_model` accepted by Gate 2B1.
+pub const CANONICAL_DISK_EMISSION_MODEL: &str = "diagnostic_radial_profile";
+/// Exact preset `disk.emission_claim` accepted by Gate 2B1 (provenance string).
+pub const CANONICAL_DISK_EMISSION_CLAIM: &str =
+    "project diagnostic, not astrophysical or film-asset reconstruction";
+
+/// Reject non-canonical preset emission model/claim before tracing.
+pub fn validate_disk_emission_provenance(
+    emission_model: &str,
+    emission_claim: &str,
+) -> Result<(), BolometricRenderError> {
+    if emission_model != CANONICAL_DISK_EMISSION_MODEL {
+        return Err(BolometricRenderError::UnsupportedEmissionModel(
+            emission_model.into(),
+        ));
+    }
+    if emission_claim != CANONICAL_DISK_EMISSION_CLAIM {
+        return Err(BolometricRenderError::UnsupportedEmissionClaim(
+            emission_claim.into(),
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -100,37 +123,67 @@ pub fn diagnostic_bolometric_emission_v1() -> DiagnosticBolometricEmissionSpec {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct ResolvedDiskBounds {
-    pub inner_radius: f64,
-    pub outer_radius: f64,
+    inner_radius: f64,
+    outer_radius: f64,
 }
 
 impl ResolvedDiskBounds {
     pub fn new(inner_radius: f64, outer_radius: f64) -> Result<Self, BolometricRenderError> {
-        if !inner_radius.is_finite() || !outer_radius.is_finite() {
+        let bounds = Self {
+            inner_radius,
+            outer_radius,
+        };
+        bounds.validate()?;
+        Ok(bounds)
+    }
+
+    /// Full invariant: finite, `inner > 0`, `outer > inner`. Never clamps.
+    pub fn validate(self) -> Result<(), BolometricRenderError> {
+        if !self.inner_radius.is_finite() || !self.outer_radius.is_finite() {
             return Err(BolometricRenderError::InvalidDiskBounds(
                 "bounds must be finite".into(),
             ));
         }
-        if !(inner_radius > 0.0) {
+        if !(self.inner_radius > 0.0) {
             return Err(BolometricRenderError::InvalidDiskBounds(
                 "inner_radius must be > 0".into(),
             ));
         }
-        if !(outer_radius > inner_radius) {
+        if !(self.outer_radius > self.inner_radius) {
             return Err(BolometricRenderError::InvalidDiskBounds(
                 "outer_radius must be > inner_radius".into(),
             ));
         }
-        Ok(Self {
-            inner_radius,
-            outer_radius,
-        })
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn inner_radius(self) -> f64 {
+        self.inner_radius
+    }
+
+    #[must_use]
+    pub fn outer_radius(self) -> f64 {
+        self.outer_radius
     }
 
     pub fn contains(self, radius: f64) -> bool {
         radius.is_finite() && radius >= self.inner_radius && radius <= self.outer_radius
+    }
+}
+
+impl<'de> Deserialize<'de> for ResolvedDiskBounds {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Raw {
+            inner_radius: f64,
+            outer_radius: f64,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        ResolvedDiskBounds::new(raw.inner_radius, raw.outer_radius)
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -211,6 +264,7 @@ pub fn sample_diagnostic_bolometric_emission(
     radius: f64,
 ) -> Result<BolometricSpecificIntensity, BolometricRenderError> {
     spec.validate()?;
+    bounds.validate()?;
     if !radius.is_finite() {
         return Err(BolometricRenderError::InvalidIntensity(
             "radius must be finite".into(),
@@ -219,7 +273,7 @@ pub fn sample_diagnostic_bolometric_emission(
     if !bounds.contains(radius) {
         return Err(BolometricRenderError::RadiusOutsideAnnulus { radius });
     }
-    let ratio = bounds.inner_radius / radius;
+    let ratio = bounds.inner_radius() / radius;
     let intensity = spec.normalization * ratio.powi(spec.radial_exponent as i32);
     BolometricSpecificIntensity::new(intensity)
 }
@@ -363,6 +417,7 @@ pub fn build_disk_bolometric_frame(
     bounds: ResolvedDiskBounds,
 ) -> Result<DiskBolometricFrame, BolometricRenderError> {
     spec.validate()?;
+    bounds.validate()?;
     let grid = frequency_frame.grid();
     let mut pixels = Vec::with_capacity(grid.pixel_count());
     for row in 0..grid.height {
@@ -429,6 +484,7 @@ pub fn verify_disk_bolometric_frame(
     bounds: ResolvedDiskBounds,
 ) -> Result<(), BolometricRenderError> {
     spec.validate()?;
+    bounds.validate()?;
     if frequency_frame.grid() != bolometric_frame.grid() {
         return Err(BolometricRenderError::GridMismatch);
     }
@@ -530,18 +586,24 @@ pub fn disk_bolometric_digest(
     emission_spec: &DiagnosticBolometricEmissionSpec,
     bounds: ResolvedDiskBounds,
     source_frequency_shift_digest: &str,
-) -> String {
+    accepted_emission_model: &str,
+    accepted_emission_claim: &str,
+) -> Result<String, BolometricRenderError> {
+    bounds.validate()?;
+    emission_spec.validate()?;
     let mut h = Sha256::new();
     update_tagged_bytes(&mut h, b"domain", b"disk-bolometric-digest-v1");
     hash_convention(&mut h, convention);
     hash_emission_spec(&mut h, emission_spec);
-    h.update(bounds.inner_radius.to_bits().to_le_bytes());
-    h.update(bounds.outer_radius.to_bits().to_le_bytes());
+    h.update(bounds.inner_radius().to_bits().to_le_bytes());
+    h.update(bounds.outer_radius().to_bits().to_le_bytes());
     update_tagged_str(
         &mut h,
         b"source-frequency-shift-digest",
         source_frequency_shift_digest,
     );
+    update_tagged_str(&mut h, b"accepted-emission-model", accepted_emission_model);
+    update_tagged_str(&mut h, b"accepted-emission-claim", accepted_emission_claim);
     h.update(frame.grid.width.to_le_bytes());
     h.update(frame.grid.height.to_le_bytes());
     for (idx, pixel) in frame.pixels.iter().enumerate() {
@@ -566,7 +628,7 @@ pub fn disk_bolometric_digest(
             }
         }
     }
-    hex_sha(&h.finalize())
+    Ok(hex_sha(&h.finalize()))
 }
 
 fn hash_convention(h: &mut Sha256, c: &DiskBolometricConvention) {
@@ -656,6 +718,8 @@ pub struct DiskBolometricMapArtifact {
     pub convention: DiskBolometricConvention,
     pub emission_spec: DiagnosticBolometricEmissionSpec,
     pub emission_spec_digest: String,
+    pub accepted_emission_model: String,
+    pub accepted_emission_claim: String,
     pub resolved_disk_bounds: ResolvedDiskBounds,
     pub source_frequency_shift_digest: String,
     pub disk_hit_count: u64,
@@ -720,7 +784,11 @@ pub fn build_disk_bolometric_map_artifact(
     emission_spec: &DiagnosticBolometricEmissionSpec,
     bounds: ResolvedDiskBounds,
     source_frequency_shift_digest: &str,
-) -> DiskBolometricMapArtifact {
+    accepted_emission_model: &str,
+    accepted_emission_claim: &str,
+) -> Result<DiskBolometricMapArtifact, BolometricRenderError> {
+    bounds.validate()?;
+    emission_spec.validate()?;
     let mut disk_hits: Vec<(u64, u32, u32, DiskBolometricSample)> = Vec::new();
     let mut records = Vec::with_capacity(frame.pixels.len());
     let mut attenuated = 0u64;
@@ -839,7 +907,9 @@ pub fn build_disk_bolometric_map_artifact(
         emission_spec,
         bounds,
         source_frequency_shift_digest,
-    );
+        accepted_emission_model,
+        accepted_emission_claim,
+    )?;
     let mut art = DiskBolometricMapArtifact {
         schema_version: 1,
         width: frame.grid.width,
@@ -847,6 +917,8 @@ pub fn build_disk_bolometric_map_artifact(
         convention: convention.clone(),
         emission_spec: emission_spec.clone(),
         emission_spec_digest,
+        accepted_emission_model: accepted_emission_model.into(),
+        accepted_emission_claim: accepted_emission_claim.into(),
         resolved_disk_bounds: bounds,
         source_frequency_shift_digest: source_frequency_shift_digest.into(),
         disk_hit_count,
@@ -868,7 +940,7 @@ pub fn build_disk_bolometric_map_artifact(
         content_digest_excluding_digest_field: String::new(),
     };
     art.content_digest_excluding_digest_field = artifact_content_digest(&art);
-    art
+    Ok(art)
 }
 
 fn artifact_content_digest(art: &DiskBolometricMapArtifact) -> String {
@@ -880,6 +952,8 @@ fn artifact_content_digest(art: &DiskBolometricMapArtifact) -> String {
         convention: &'a DiskBolometricConvention,
         emission_spec: &'a DiagnosticBolometricEmissionSpec,
         emission_spec_digest: &'a str,
+        accepted_emission_model: &'a str,
+        accepted_emission_claim: &'a str,
         resolved_disk_bounds_inner_bits: u64,
         resolved_disk_bounds_outer_bits: u64,
         source_frequency_shift_digest: &'a str,
@@ -907,8 +981,10 @@ fn artifact_content_digest(art: &DiskBolometricMapArtifact) -> String {
         convention: &art.convention,
         emission_spec: &art.emission_spec,
         emission_spec_digest: &art.emission_spec_digest,
-        resolved_disk_bounds_inner_bits: art.resolved_disk_bounds.inner_radius.to_bits(),
-        resolved_disk_bounds_outer_bits: art.resolved_disk_bounds.outer_radius.to_bits(),
+        accepted_emission_model: &art.accepted_emission_model,
+        accepted_emission_claim: &art.accepted_emission_claim,
+        resolved_disk_bounds_inner_bits: art.resolved_disk_bounds.inner_radius().to_bits(),
+        resolved_disk_bounds_outer_bits: art.resolved_disk_bounds.outer_radius().to_bits(),
         source_frequency_shift_digest: &art.source_frequency_shift_digest,
         disk_hit_count: art.disk_hit_count,
         mapped_count: art.mapped_count,
@@ -1266,8 +1342,26 @@ mod tests {
             }
             _ => panic!("expected disk"),
         }
-        let d1 = disk_bolometric_digest(&bolo, &DiskBolometricConvention::v1(), &spec, b, "src");
-        let d2 = disk_bolometric_digest(&bolo2, &DiskBolometricConvention::v1(), &spec, b, "src");
+        let d1 = disk_bolometric_digest(
+            &bolo,
+            &DiskBolometricConvention::v1(),
+            &spec,
+            b,
+            "src",
+            CANONICAL_DISK_EMISSION_MODEL,
+            CANONICAL_DISK_EMISSION_CLAIM,
+        )
+        .unwrap();
+        let d2 = disk_bolometric_digest(
+            &bolo2,
+            &DiskBolometricConvention::v1(),
+            &spec,
+            b,
+            "src",
+            CANONICAL_DISK_EMISSION_MODEL,
+            CANONICAL_DISK_EMISSION_CLAIM,
+        )
+        .unwrap();
         assert_ne!(d1, d2);
     }
 
@@ -1285,10 +1379,28 @@ mod tests {
         let spec = diagnostic_bolometric_emission_v1();
         let b = bounds_3_20();
         let bolo = build_disk_bolometric_frame(&frame, &spec, b).unwrap();
-        let d = disk_bolometric_digest(&bolo, &DiskBolometricConvention::v1(), &spec, b, "src");
+        let d = disk_bolometric_digest(
+            &bolo,
+            &DiskBolometricConvention::v1(),
+            &spec,
+            b,
+            "src",
+            CANONICAL_DISK_EMISSION_MODEL,
+            CANONICAL_DISK_EMISSION_CLAIM,
+        )
+        .unwrap();
         let display = bolometric_debug_display_v1();
         let _ = shade_observed_bolometric_debug(&bolo, &display).unwrap();
-        let d2 = disk_bolometric_digest(&bolo, &DiskBolometricConvention::v1(), &spec, b, "src");
+        let d2 = disk_bolometric_digest(
+            &bolo,
+            &DiskBolometricConvention::v1(),
+            &spec,
+            b,
+            "src",
+            CANONICAL_DISK_EMISSION_MODEL,
+            CANONICAL_DISK_EMISSION_CLAIM,
+        )
+        .unwrap();
         assert_eq!(d, d2);
     }
 
@@ -1314,8 +1426,135 @@ mod tests {
     fn invalid_bounds_and_intensity_rejected() {
         assert!(ResolvedDiskBounds::new(0.0, 10.0).is_err());
         assert!(ResolvedDiskBounds::new(10.0, 10.0).is_err());
+        assert!(ResolvedDiskBounds::new(-1.0, 10.0).is_err());
+        assert!(ResolvedDiskBounds::new(f64::NAN, 10.0).is_err());
+        assert!(ResolvedDiskBounds::new(3.0, f64::INFINITY).is_err());
         assert!(BolometricSpecificIntensity::new(-1.0).is_err());
         assert!(BolometricSpecificIntensity::new(f64::NAN).is_err());
         assert!(FrequencyShift::new(-1.0).is_err());
+    }
+
+    #[test]
+    fn illegal_bounds_struct_literal_rejected_by_public_apis() {
+        // Same-module bypass of `new()`; public scientific entry points must still reject.
+        let bad = ResolvedDiskBounds {
+            inner_radius: 0.0,
+            outer_radius: 10.0,
+        };
+        assert!(matches!(
+            bad.validate(),
+            Err(BolometricRenderError::InvalidDiskBounds(_))
+        ));
+        let spec = diagnostic_bolometric_emission_v1();
+        assert!(matches!(
+            sample_diagnostic_bolometric_emission(&spec, bad, 5.0),
+            Err(BolometricRenderError::InvalidDiskBounds(_))
+        ));
+        let grid = TraceGrid {
+            width: 1,
+            height: 1,
+        };
+        let frame = DiskFrequencyShiftFrame::try_new(
+            grid,
+            vec![DiskFrequencyShiftPixel::DiskHit(fs_sample(6.0, 1.0))],
+        )
+        .unwrap();
+        assert!(matches!(
+            build_disk_bolometric_frame(&frame, &spec, bad),
+            Err(BolometricRenderError::InvalidDiskBounds(_))
+        ));
+        assert!(matches!(
+            disk_bolometric_digest(
+                &DiskBolometricFrame::try_new(
+                    grid,
+                    vec![DiskBolometricPixel::NotDiskHit {
+                        outcome_class: OutcomeClass::Escaped,
+                    }],
+                )
+                .unwrap(),
+                &DiskBolometricConvention::v1(),
+                &spec,
+                bad,
+                "src",
+                CANONICAL_DISK_EMISSION_MODEL,
+                CANONICAL_DISK_EMISSION_CLAIM,
+            ),
+            Err(BolometricRenderError::InvalidDiskBounds(_))
+        ));
+    }
+
+    #[test]
+    fn illegal_bounds_deserialize_rejected() {
+        let json = r#"{"inner_radius":0.0,"outer_radius":10.0}"#;
+        let err = serde_json::from_str::<ResolvedDiskBounds>(json).unwrap_err();
+        assert!(err.to_string().contains("inner_radius must be > 0"));
+        let equal = r#"{"inner_radius":5.0,"outer_radius":5.0}"#;
+        assert!(serde_json::from_str::<ResolvedDiskBounds>(equal).is_err());
+        let inverted = r#"{"inner_radius":20.0,"outer_radius":3.0}"#;
+        assert!(serde_json::from_str::<ResolvedDiskBounds>(inverted).is_err());
+    }
+
+    #[test]
+    fn emission_provenance_exact_match_required() {
+        assert!(validate_disk_emission_provenance(
+            CANONICAL_DISK_EMISSION_MODEL,
+            CANONICAL_DISK_EMISSION_CLAIM,
+        )
+        .is_ok());
+        assert!(matches!(
+            validate_disk_emission_provenance("novikov_thorne", CANONICAL_DISK_EMISSION_CLAIM),
+            Err(BolometricRenderError::UnsupportedEmissionModel(_))
+        ));
+        assert!(matches!(
+            validate_disk_emission_provenance(
+                CANONICAL_DISK_EMISSION_MODEL,
+                "project-diagnostic-not-astrophysical-or-film-reconstruction"
+            ),
+            Err(BolometricRenderError::UnsupportedEmissionClaim(_))
+        ));
+        assert!(matches!(
+            validate_disk_emission_provenance(
+                CANONICAL_DISK_EMISSION_MODEL,
+                "astrophysical reconstruction"
+            ),
+            Err(BolometricRenderError::UnsupportedEmissionClaim(_))
+        ));
+    }
+
+    #[test]
+    fn accepted_claim_is_hashed_into_scientific_digest() {
+        let grid = TraceGrid {
+            width: 1,
+            height: 1,
+        };
+        let frame = DiskFrequencyShiftFrame::try_new(
+            grid,
+            vec![DiskFrequencyShiftPixel::DiskHit(fs_sample(6.0, 1.0))],
+        )
+        .unwrap();
+        let spec = diagnostic_bolometric_emission_v1();
+        let b = bounds_3_20();
+        let bolo = build_disk_bolometric_frame(&frame, &spec, b).unwrap();
+        let d_canon = disk_bolometric_digest(
+            &bolo,
+            &DiskBolometricConvention::v1(),
+            &spec,
+            b,
+            "src",
+            CANONICAL_DISK_EMISSION_MODEL,
+            CANONICAL_DISK_EMISSION_CLAIM,
+        )
+        .unwrap();
+        let d_alt = disk_bolometric_digest(
+            &bolo,
+            &DiskBolometricConvention::v1(),
+            &spec,
+            b,
+            "src",
+            CANONICAL_DISK_EMISSION_MODEL,
+            "altered claim",
+        )
+        .unwrap();
+        assert_ne!(d_canon, d_alt);
     }
 }
