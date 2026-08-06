@@ -1710,6 +1710,23 @@ mod tests {
     }
 
     #[test]
+    fn malformed_source_crop_is_typed_rejection_not_panic() {
+        let mut source = frame();
+        source.pixels.clear();
+        source.scientific_digest = oracle_scientific_digest(&source);
+        let err = crop_oracle_frame(
+            &source,
+            PixelCrop {
+                left: 0,
+                top: 0,
+                width: 1,
+                height: 1,
+            },
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
     fn json_roundtrip_preserves_scientific_digest() {
         let frame = frame();
         let bytes = serde_json::to_vec(&frame).unwrap();
