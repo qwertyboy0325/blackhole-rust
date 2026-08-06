@@ -17,6 +17,7 @@ mod evaluate_gate2a1_celestial;
 mod evaluate_gate2a2_lensed_celestial;
 mod evaluate_gate2b0_frequency_shift;
 mod evaluate_gate2b1_bolometric_radiance;
+mod evaluate_r1_e0_oracle_corpus;
 mod inspect;
 mod integrate_ray;
 mod oracle_benchmark;
@@ -264,7 +265,7 @@ fn main() {
             } else if scope == "gate-2b1-bolometric-radiance" {
                 evaluate_gate2b1_bolometric_radiance::evaluate()
             } else if scope == "r1-e0-oracle-corpus" {
-                oracle_benchmark::evaluate_scope()
+                evaluate_r1_e0_oracle_corpus::evaluate()
             } else {
                 match preset {
                     Some(p) => evaluate::evaluate(&p, &scope),
@@ -417,6 +418,7 @@ fn main() {
             },
             threads,
             require_release,
+            true,
         ),
         Commands::SpikeDop853 { candidate } => {
             let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

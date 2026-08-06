@@ -169,7 +169,7 @@ impl OracleScientificClaim {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct OracleFrame {
     pub schema_version: u32,
     pub oracle_id: String,
@@ -182,6 +182,144 @@ pub struct OracleFrame {
     pub source_digests: OracleSourceDigests,
     pub pixels: Vec<OraclePixel>,
     pub scientific_digest: String,
+}
+
+impl<'de> Deserialize<'de> for OracleFrame {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Raw {
+            schema_version: u32,
+            oracle_id: String,
+            width: u32,
+            height: u32,
+            sensor_window: SensorWindow,
+            surface_set: TraceSurfaceSet,
+            channel_set: OracleChannelSet,
+            scientific_claim: OracleScientificClaim,
+            source_digests: OracleSourceDigests,
+            pixels: Vec<OraclePixel>,
+            scientific_digest: String,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        let frame = OracleFrame {
+            schema_version: raw.schema_version,
+            oracle_id: raw.oracle_id,
+            width: raw.width,
+            height: raw.height,
+            sensor_window: raw.sensor_window,
+            surface_set: raw.surface_set,
+            channel_set: raw.channel_set,
+            scientific_claim: raw.scientific_claim,
+            source_digests: raw.source_digests,
+            pixels: raw.pixels,
+            scientific_digest: raw.scientific_digest,
+        };
+        frame.validate().map_err(serde::de::Error::custom)?;
+        Ok(frame)
+    }
+}
+
+impl OracleFrame {
+    /// Full public invariant. Never clamps; rejects malformed frames.
+    pub fn validate(&self) -> Result<(), OracleError> {
+        if self.schema_version != ORACLE_SCHEMA_VERSION {
+            return Err(OracleError::InvalidFrame(format!(
+                "schema_version {} != {ORACLE_SCHEMA_VERSION}",
+                self.schema_version
+            )));
+        }
+        if self.oracle_id != ORACLE_ID_V1 {
+            return Err(OracleError::InvalidFrame(format!(
+                "oracle_id `{}` != `{ORACLE_ID_V1}`",
+                self.oracle_id
+            )));
+        }
+        if self.width == 0 || self.height == 0 {
+            return Err(OracleError::InvalidFrame(
+                "width and height must be > 0".into(),
+            ));
+        }
+        let expected_len = (self.width as usize)
+            .checked_mul(self.height as usize)
+            .ok_or_else(|| OracleError::InvalidFrame("dimension overflow".into()))?;
+        if self.pixels.len() != expected_len {
+            return Err(OracleError::LengthMismatch {
+                frame: "oracle",
+                len: self.pixels.len(),
+                expected: expected_len,
+            });
+        }
+        self.sensor_window.validate()?;
+        if self.scientific_claim != OracleScientificClaim::v1() {
+            return Err(OracleError::InvalidFrame(
+                "scientific_claim must equal OracleScientificClaim::v1()".into(),
+            ));
+        }
+        validate_stored_source_digests(&self.source_digests, self.channel_set)?;
+        if self.channel_set == OracleChannelSet::FullBolometricDisk
+            && self.surface_set != TraceSurfaceSet::OpaqueDiskHorizonEscape
+        {
+            return Err(OracleError::InvalidSurfaceSet {
+                channel_set: self.channel_set,
+                surface_set: self.surface_set,
+            });
+        }
+        for row in 0..self.height {
+            for col in 0..self.width {
+                let idx = pixel_index(
+                    TraceGrid {
+                        width: self.width,
+                        height: self.height,
+                    },
+                    col,
+                    row,
+                );
+                let pixel = &self.pixels[idx];
+                let expected_local = u64::from(row) * u64::from(self.width) + u64::from(col);
+                if pixel.local_index != expected_local || pixel.col != col || pixel.row != row {
+                    return Err(OracleError::InvalidFrame(format!(
+                        "row-major index mismatch at ({col},{row}): local_index={} col={} row={}",
+                        pixel.local_index, pixel.col, pixel.row
+                    )));
+                }
+                if !pixel.sensor_x.is_finite()
+                    || !pixel.sensor_y.is_finite()
+                    || pixel.sensor_x < self.sensor_window.x_min
+                    || pixel.sensor_x > self.sensor_window.x_max
+                    || pixel.sensor_y < self.sensor_window.y_min
+                    || pixel.sensor_y > self.sensor_window.y_max
+                {
+                    return Err(OracleError::InvalidFrame(format!(
+                        "sensor coordinates outside window at ({col},{row})"
+                    )));
+                }
+                validate_outcome_channel_consistency(pixel, self.channel_set)?;
+                validate_pixel_finite(pixel)?;
+            }
+        }
+        let recomputed = oracle_scientific_digest(self);
+        if self.scientific_digest != recomputed {
+            return Err(OracleError::ScientificDigestMismatch);
+        }
+        Ok(())
+    }
+
+    pub fn pixel_at(&self, col: u32, row: u32) -> Result<&OraclePixel, OracleError> {
+        if col >= self.width || row >= self.height {
+            return Err(OracleError::PixelIndexOutOfRange { index: usize::MAX });
+        }
+        let idx = pixel_index(
+            TraceGrid {
+                width: self.width,
+                height: self.height,
+            },
+            col,
+            row,
+        );
+        self.pixels
+            .get(idx)
+            .ok_or(OracleError::PixelIndexOutOfRange { index: idx })
+    }
 }
 
 pub struct OracleFrameInputs<'a> {
@@ -241,6 +379,12 @@ pub enum OracleError {
     InvalidCrop(&'static str),
     #[error("comparison requires identical layouts: {0}")]
     IncompatibleComparison(&'static str),
+    #[error("invalid oracle frame: {0}")]
+    InvalidFrame(String),
+    #[error("stored scientific digest does not match recomputed digest")]
+    ScientificDigestMismatch,
+    #[error("oracle pixel index out of range: {index}")]
+    PixelIndexOutOfRange { index: usize },
 }
 
 pub fn build_oracle_frame(inputs: OracleFrameInputs<'_>) -> Result<OracleFrame, OracleError> {
@@ -312,7 +456,155 @@ pub fn build_oracle_frame(inputs: OracleFrameInputs<'_>) -> Result<OracleFrame, 
         scientific_digest: String::new(),
     };
     frame.scientific_digest = oracle_scientific_digest(&frame);
+    frame.validate()?;
     Ok(frame)
+}
+
+fn validate_stored_source_digests(
+    digests: &OracleSourceDigests,
+    channel_set: OracleChannelSet,
+) -> Result<(), OracleError> {
+    if digests.numerical_profile_digest.is_empty() {
+        return Err(OracleError::MissingSourceDigest("numerical_profile_digest"));
+    }
+    if digests.trace_data_digest.is_empty() {
+        return Err(OracleError::MissingSourceDigest("trace_data_digest"));
+    }
+    if digests.outcome_class_digest.is_empty() {
+        return Err(OracleError::MissingSourceDigest("outcome_class_digest"));
+    }
+    if digests.celestial_coordinate_digest.is_empty() {
+        return Err(OracleError::MissingSourceDigest(
+            "celestial_coordinate_digest",
+        ));
+    }
+    match channel_set {
+        OracleChannelSet::FullBolometricDisk => {
+            if digests
+                .frequency_shift_digest
+                .as_ref()
+                .is_none_or(|s| s.is_empty())
+            {
+                return Err(OracleError::MissingSourceDigest("frequency_shift_digest"));
+            }
+            if digests
+                .bolometric_digest
+                .as_ref()
+                .is_none_or(|s| s.is_empty())
+            {
+                return Err(OracleError::MissingSourceDigest("bolometric_digest"));
+            }
+        }
+        OracleChannelSet::GeometryCelestial => {
+            if digests.frequency_shift_digest.is_some() || digests.bolometric_digest.is_some() {
+                return Err(OracleError::InvalidFrame(
+                    "geometry-celestial frames must omit frequency/bolometric source digests"
+                        .into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_outcome_channel_consistency(
+    pixel: &OraclePixel,
+    channel_set: OracleChannelSet,
+) -> Result<(), OracleError> {
+    match pixel.outcome_class {
+        OutcomeClass::Escaped => {
+            if pixel.celestial.is_none() {
+                return Err(pixel_mismatch(
+                    pixel.col,
+                    pixel.row,
+                    "escaped pixel missing celestial sample".into(),
+                ));
+            }
+            if pixel.disk.is_some() {
+                return Err(pixel_mismatch(
+                    pixel.col,
+                    pixel.row,
+                    "escaped pixel must not carry disk sample".into(),
+                ));
+            }
+            if pixel.failure_class.is_some() {
+                return Err(pixel_mismatch(
+                    pixel.col,
+                    pixel.row,
+                    "escaped pixel must not carry failure_class".into(),
+                ));
+            }
+        }
+        OutcomeClass::DiskHit => {
+            if pixel.celestial.is_some() {
+                return Err(pixel_mismatch(
+                    pixel.col,
+                    pixel.row,
+                    "disk-hit pixel must not carry celestial sample".into(),
+                ));
+            }
+            match channel_set {
+                OracleChannelSet::FullBolometricDisk => {
+                    if pixel.disk.is_none() {
+                        return Err(pixel_mismatch(
+                            pixel.col,
+                            pixel.row,
+                            "full-bolometric disk-hit missing disk sample".into(),
+                        ));
+                    }
+                }
+                OracleChannelSet::GeometryCelestial => {
+                    if pixel.disk.is_some() {
+                        return Err(pixel_mismatch(
+                            pixel.col,
+                            pixel.row,
+                            "geometry-celestial disk-hit must not carry disk sample".into(),
+                        ));
+                    }
+                }
+            }
+            if pixel.failure_class.is_some() {
+                return Err(pixel_mismatch(
+                    pixel.col,
+                    pixel.row,
+                    "disk-hit pixel must not carry failure_class".into(),
+                ));
+            }
+        }
+        OutcomeClass::Failed => {
+            if pixel.celestial.is_some() || pixel.disk.is_some() {
+                return Err(pixel_mismatch(
+                    pixel.col,
+                    pixel.row,
+                    "failed pixel must not carry celestial/disk samples".into(),
+                ));
+            }
+            if pixel.failure_class.is_none() {
+                return Err(pixel_mismatch(
+                    pixel.col,
+                    pixel.row,
+                    "failed pixel missing failure_class".into(),
+                ));
+            }
+        }
+        OutcomeClass::HorizonEvent | OutcomeClass::HorizonApproach | OutcomeClass::AffineLimit => {
+            if pixel.celestial.is_some() || pixel.disk.is_some() {
+                return Err(pixel_mismatch(
+                    pixel.col,
+                    pixel.row,
+                    "non-escaped/non-disk pixel must not carry celestial/disk samples".into(),
+                ));
+            }
+            if pixel.failure_class.is_some() {
+                return Err(pixel_mismatch(
+                    pixel.col,
+                    pixel.row,
+                    "non-failed pixel must not carry failure_class".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_len(frame: &'static str, len: usize, expected: usize) -> Result<(), OracleError> {
@@ -733,6 +1025,7 @@ pub fn crop_oracle_frame(
     source: &OracleFrame,
     crop: PixelCrop,
 ) -> Result<OracleFrame, OracleError> {
+    source.validate()?;
     if crop.width == 0 || crop.height == 0 {
         return Err(OracleError::InvalidCrop("crop must be non-empty"));
     }
@@ -743,23 +1036,22 @@ pub fn crop_oracle_frame(
     {
         return Err(OracleError::InvalidCrop("crop must lie inside source"));
     }
+    let sx0 = source.sensor_window.x_min;
+    let sx1 = source.sensor_window.x_max;
+    let sy0 = source.sensor_window.y_min;
+    let sy1 = source.sensor_window.y_max;
     let sensor_window = SensorWindow::new(
-        2.0 * f64::from(crop.left) / f64::from(source.width) - 1.0,
-        2.0 * f64::from(crop.left + crop.width) / f64::from(source.width) - 1.0,
-        1.0 - 2.0 * f64::from(crop.top + crop.height) / f64::from(source.height),
-        1.0 - 2.0 * f64::from(crop.top) / f64::from(source.height),
+        sx0 + (sx1 - sx0) * f64::from(crop.left) / f64::from(source.width),
+        sx0 + (sx1 - sx0) * f64::from(crop.left + crop.width) / f64::from(source.width),
+        sy1 - (sy1 - sy0) * f64::from(crop.top + crop.height) / f64::from(source.height),
+        sy1 - (sy1 - sy0) * f64::from(crop.top) / f64::from(source.height),
     )?;
-    let source_grid = TraceGrid {
-        width: source.width,
-        height: source.height,
-    };
     let mut pixels = Vec::with_capacity((crop.width as usize) * (crop.height as usize));
     for row in 0..crop.height {
         for col in 0..crop.width {
             let source_col = crop.left + col;
             let source_row = crop.top + row;
-            let source_idx = pixel_index(source_grid, source_col, source_row);
-            let mut pixel = source.pixels[source_idx].clone();
+            let mut pixel = source.pixel_at(source_col, source_row)?.clone();
             let local_index = u64::from(row) * u64::from(crop.width) + u64::from(col);
             pixel.local_index = local_index;
             pixel.col = col;
@@ -781,6 +1073,7 @@ pub fn crop_oracle_frame(
         scientific_digest: String::new(),
     };
     frame.scientific_digest = oracle_scientific_digest(&frame);
+    frame.validate()?;
     Ok(frame)
 }
 
@@ -824,6 +1117,8 @@ pub fn compare_oracle_frames(
     reference: &OracleFrame,
     candidate: &OracleFrame,
 ) -> Result<OracleComparisonMetrics, OracleError> {
+    reference.validate()?;
+    candidate.validate()?;
     validate_comparison_layout(reference, candidate)?;
     let mut outcome_disagreement_count = 0;
     let mut rhs_errors = ErrorAccumulator::new();
@@ -840,29 +1135,32 @@ pub fn compare_oracle_frames(
 
     for (idx, (r, c)) in reference.pixels.iter().zip(&candidate.pixels).enumerate() {
         let idx = idx as u64;
-        if r.outcome_class != c.outcome_class {
+        let outcomes_compatible = r.outcome_class == c.outcome_class;
+        if !outcomes_compatible {
             outcome_disagreement_count += 1;
         }
         rhs_errors.push(idx, r.rhs_evaluations.abs_diff(c.rhs_evaluations) as f64);
 
         match (&r.celestial, &c.celestial) {
             (Some(a), Some(b)) => {
-                celestial_pair_count += 1;
-                let dot = a.unit_coordinate_direction[0] * b.unit_coordinate_direction[0]
-                    + a.unit_coordinate_direction[1] * b.unit_coordinate_direction[1]
-                    + a.unit_coordinate_direction[2] * b.unit_coordinate_direction[2];
-                celestial_angle.push(idx, dot.clamp(-1.0, 1.0).acos());
-                let du_raw = (a.u - b.u).abs();
-                celestial_u.push(idx, du_raw.min(1.0 - du_raw));
-                celestial_v.push(idx, (a.v - b.v).abs());
+                if outcomes_compatible {
+                    celestial_pair_count += 1;
+                    let dot = a.unit_coordinate_direction[0] * b.unit_coordinate_direction[0]
+                        + a.unit_coordinate_direction[1] * b.unit_coordinate_direction[1]
+                        + a.unit_coordinate_direction[2] * b.unit_coordinate_direction[2];
+                    celestial_angle.push(idx, dot.clamp(-1.0, 1.0).acos());
+                    let du_raw = (a.u - b.u).abs();
+                    celestial_u.push(idx, du_raw.min(1.0 - du_raw));
+                    celestial_v.push(idx, (a.v - b.v).abs());
+                }
             }
             (None, None) => {}
             _ => celestial_presence_mismatch_count += 1,
         }
 
-        if r.outcome_class == c.outcome_class {
-            match (&r.disk, &c.disk) {
-                (Some(a), Some(b)) => {
+        match (&r.disk, &c.disk) {
+            (Some(a), Some(b)) => {
+                if outcomes_compatible {
                     disk_pair_count += 1;
                     log2_g.push(idx, (b.g_factor.log2() - a.g_factor.log2()).abs());
                     log2_emitted.push(
@@ -878,9 +1176,9 @@ pub fn compare_oracle_frames(
                         .abs(),
                     );
                 }
-                (None, None) => {}
-                _ => disk_presence_mismatch_count += 1,
             }
+            (None, None) => {}
+            _ => disk_presence_mismatch_count += 1,
         }
     }
 
@@ -1188,6 +1486,23 @@ mod tests {
             }
         )
         .is_err());
+
+        let nested = crop_oracle_frame(
+            &crop,
+            PixelCrop {
+                left: 0,
+                top: 0,
+                width: 1,
+                height: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(nested.sensor_window.x_min, 0.0);
+        assert_eq!(nested.sensor_window.x_max, 1.0);
+        assert_eq!(nested.sensor_window.y_min, 0.0);
+        assert_eq!(nested.sensor_window.y_max, 1.0);
+        assert_eq!(nested.pixels[0].source_index, 1);
+        assert_eq!(nested.pixels[0].sensor_x.to_bits(), 0.5f64.to_bits());
     }
 
     #[test]
@@ -1212,6 +1527,7 @@ mod tests {
         candidate.pixels[0].celestial.as_mut().unwrap().u = 0.01;
         candidate.pixels[3].rhs_evaluations = 50;
         candidate.pixels[1].rhs_evaluations = 30;
+        candidate.scientific_digest = oracle_scientific_digest(&candidate);
         let m = compare_oracle_frames(&reference, &candidate).unwrap();
         let u = m.celestial_wrap_u_error.unwrap();
         assert!((u.maximum_absolute_error - 0.02).abs() < 1e-15);
@@ -1224,12 +1540,25 @@ mod tests {
     fn outcome_and_channel_presence_mismatches_are_reported() {
         let reference = frame();
         let mut candidate = reference.clone();
+        // DiskHit → Escaped: both frames remain valid; presence differs independently.
         candidate.pixels[1].outcome_class = OutcomeClass::Escaped;
-        candidate.pixels[0].celestial = None;
+        candidate.pixels[1].disk = None;
+        candidate.pixels[1].celestial = Some(OracleCelestialSample {
+            boundary_oblate_radius: 80.0,
+            theta: 1.5,
+            psi: 0.5,
+            unit_coordinate_direction: [0.0, 0.0, 1.0],
+            u: 0.5,
+            v: 0.5,
+            escape_event_value: 0.0,
+        });
+        candidate.scientific_digest = oracle_scientific_digest(&candidate);
         let m = compare_oracle_frames(&reference, &candidate).unwrap();
         assert_eq!(m.outcome_disagreement_count, 1);
         assert_eq!(m.celestial_presence_mismatch_count, 1);
-        assert_eq!(m.disk_presence_mismatch_count, 0);
+        assert_eq!(m.disk_presence_mismatch_count, 1);
+        assert_eq!(m.disk_pair_count, 0);
+        assert!(m.log2_g_error.is_none());
     }
 
     #[test]
@@ -1237,6 +1566,45 @@ mod tests {
         let reference = frame();
         let mut candidate = reference.clone();
         candidate.width = 1;
+        candidate.scientific_digest = oracle_scientific_digest(&candidate);
         assert!(compare_oracle_frames(&reference, &candidate).is_err());
+    }
+
+    #[test]
+    fn malformed_frame_validate_and_deserialize_rejected() {
+        let mut bad = frame();
+        bad.pixels[1].outcome_class = OutcomeClass::Escaped;
+        // disk still present → outcome/channel inconsistency
+        assert!(matches!(
+            bad.validate(),
+            Err(OracleError::PixelMismatch { .. })
+        ));
+        bad.scientific_digest = oracle_scientific_digest(&bad);
+        let json = serde_json::to_string(&bad).unwrap();
+        assert!(serde_json::from_str::<OracleFrame>(&json).is_err());
+
+        let mut truncated = frame();
+        truncated.pixels.pop();
+        assert!(matches!(
+            truncated.validate(),
+            Err(OracleError::LengthMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn malformed_source_crop_is_typed_rejection_not_panic() {
+        let mut source = frame();
+        source.pixels.clear();
+        source.scientific_digest = oracle_scientific_digest(&source);
+        let err = crop_oracle_frame(
+            &source,
+            PixelCrop {
+                left: 0,
+                top: 0,
+                width: 1,
+                height: 1,
+            },
+        );
+        assert!(err.is_err());
     }
 }

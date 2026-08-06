@@ -29,7 +29,16 @@ remain not implemented.
 
 Source frames use the existing `sensor_at_pixel_center(trace.grid, col, row)`
 mapping exactly. Crops preserve source coordinates and sensor positions while
-local coordinates are re-indexed row-major from zero.
+local coordinates are re-indexed row-major from zero. Crop-of-crop sensor
+windows are sub-windows of the source `sensor_window`, never remapped as if the
+source were the full `[-1,1]^2` frame.
+
+`OracleFrame::validate()` seals the public invariant: schema/oracle ID,
+dimensions/pixel length, row-major indices, sensor window membership,
+outcome/channel consistency, finite/range/positivity rules, and equality of the
+stored scientific digest with a recomputation. Deserialization and public
+scientific entry points (`build`, `crop`, `compare`) reject malformed frames;
+they never clamp.
 
 The oracle scientific digest hashes schema version, oracle ID, scientific claim,
 dimensions, sensor window, surface set, channel set, source scientific digests,
@@ -39,6 +48,10 @@ tags, length-prefixed strings, fixed-endian integers, and `f64::to_bits()`.
 The digest excludes case IDs, artifact paths, wall-clock time, host, PID, memory
 measurement, PPM bytes, presentation metadata, `Debug`, `Display`, and serde
 bytes as the sole schema.
+
+Comparison metrics count outcome disagreement and channel-presence mismatch
+independently. Scalar channel errors are accumulated only when outcomes are
+compatible and both sides carry the channel.
 
 ## Limitations
 

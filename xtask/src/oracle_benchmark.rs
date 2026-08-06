@@ -116,6 +116,7 @@ pub fn run(
     execution: CliExecution,
     threads: Option<usize>,
     require_release: bool,
+    update_committed_lock: bool,
 ) -> Result<(), Box<dyn Error>> {
     let build = BuildExecutionMetadata::current();
     if require_release {
@@ -245,10 +246,12 @@ pub fn run(
     };
     let lock_bytes = serde_json::to_vec_pretty(&lock)?;
     std::fs::write(out_dir.join("corpus-lock-v1.json"), &lock_bytes)?;
-    std::fs::write(
-        root.join("experiments/oracle-benchmark/corpus-lock-v1.json"),
-        &lock_bytes,
-    )?;
+    if update_committed_lock {
+        std::fs::write(
+            root.join("experiments/oracle-benchmark/corpus-lock-v1.json"),
+            &lock_bytes,
+        )?;
+    }
 
     let summary = serde_json::json!({
         "corpus_id": manifest.corpus_id,
@@ -279,28 +282,6 @@ pub fn run(
             lock.crop_cases.len()
         ),
     )?;
-    Ok(())
-}
-
-pub fn evaluate_scope() -> Result<(), Box<dyn Error>> {
-    let root = workspace_root()?;
-    let manifest_path = root.join("experiments/oracle-benchmark/corpus-v1.toml");
-    let lock_path = root.join("experiments/oracle-benchmark/corpus-lock-v1.json");
-    let manifest_text = std::fs::read_to_string(manifest_path)?;
-    let manifest: CorpusManifest = toml::from_str(&manifest_text)?;
-    validate_manifest(&manifest)?;
-    let lock: CorpusLock = serde_json::from_slice(&std::fs::read(lock_path)?)?;
-    if lock.schema_version != 1 || lock.source_cases.len() != 6 || lock.crop_cases.len() != 2 {
-        return Err("r1-e0 corpus lock shape is invalid".into());
-    }
-    if lock.source_cases.iter().any(|s| {
-        s.definition.spin_a_over_m < 0.999
-            && s.definition.channel_set == OracleChannelSet::FullBolometricDisk
-    }) {
-        return Err("lower-spin full-bolometric source case is forbidden in E0".into());
-    }
-    println!("R1 strict reference checks: manifest/lock schema smoke PASS");
-    println!("E0 experimental corpus checks: source/crop lock smoke PASS");
     Ok(())
 }
 

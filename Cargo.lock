@@ -567,6 +567,7 @@ dependencies = [
  "relativity-render",
  "relativity-trace",
  "serde",
+ "serde_json",
  "sha2",
  "thiserror",
 ]
