@@ -2,16 +2,45 @@
 
 ## Result
 
-Owner closure `5201409295` in progress: repeat determinism, evaluator semantic
-closure, and full Pareto/failure semantics.
+Owner closure `5201409295` complete. Authoritative evaluate **PASS** with full
+repeat determinism, semantic evaluator checks, and scientific Pareto/failure
+dimensions. Hypothesis classification updated under those semantics.
 
 | Item | Value |
 | --- | --- |
 | Approved base | `86dd63dc537d5e4f41f5e798f5f30a4e3694558e` |
+| Evaluated commit | `815b1780447491e7085e8045f2b5706e533f0101` |
 | Tracking | GitHub Issue #12 / Draft PR #15 |
 | E0 lock digest | `647cb722b8ca5bc83b7ec77bfa612c97429ead61e36f10d47db75ade269941fb` |
 | Baseline oracle digest | `ee3c2c92f94ec291c172696fb9a4e75bccdea1bd019d20a74a9a4b3439eeb383` |
-| Hypothesis classification | provisional pending re-evaluate after Pareto closure |
+| Experiment digest | `8f335b68cfcdade8d42b87fff88af8c6a2eb13dfc281d6bd09492801a1a39688` |
+| Evaluate digest | `fcabe78e0374df45d60d0f397683faee3bc5140cace30d34b4311c9fed582a40` |
+| Hypothesis classification | `NOT_SUPPORTED_ON_E0_CORPUS` |
+| Recommendation | `PAUSE_RESEARCH_WEDGE` |
+
+```text
+E1 core implementation          PASS
+E1 hypothesis result            NOT_SUPPORTED_ON_E0_CORPUS
+Repeat determinism evidence     PASS
+Evaluator semantic closure      PASS
+Pareto/failure semantics        PASS
+PR #15                          DRAFT / NOT MERGED
+E2 / Gate 2B2                   NOT STARTED
+```
+
+## Closure checks (owner blockers)
+
+1. **Repeat determinism** — both boundary crops re-run physics-aware; sample
+   schedules, PPM/PGM, metrics JSON, and curve digests (points only) match the
+   canonical publish.
+2. **Evaluator semantics** — validates 8×3×5 matrix + artifacts, ablation
+   3×5×5, sample parity = 0, finite metrics, final full-coverage exactness,
+   scope exclusions via Cargo deps + real import lines (not comment/string
+   mentions).
+3. **Pareto / failure** — primary dimensions include ray count, outcome
+   disagreement, RGB MSE, celestial angular RMSE, and `log2(I_obs)` RMSE when
+   present. Failure records include target/provenance coordinates, leaf
+   rectangle/depth, and feature vector at last split when applicable.
 
 ## Matrix
 
@@ -36,10 +65,11 @@ Adaptive budgets are derived from the corresponding uniform ladder counts.
 
 ## Claim boundary
 
-E1 PASS does not require hypothesis support. Observed corpus-bounded result is
-`MIXED_ON_E0_CORPUS`: physics-aware is not a consistent Pareto winner over both
-baselines across the committed boundary crops and ≥3 sources under the stated
-evidence rule.
+E1 evaluate PASS does not require hypothesis support. Under full scientific
+Pareto dimensions, physics-aware does not Pareto-beat both baselines on the
+committed boundary crops or on ≥1 source case under the stated evidence rule
+(`min_points=2`). Prior provisional `MIXED_ON_E0_CORPUS` (RGB/outcome-only) is
+superseded; owner allowed classification to change after semantic closure.
 
 ## Exclusions confirmed
 
@@ -49,5 +79,5 @@ GPU, wgpu, egui, and GUI were not started.
 ## Owner review
 
 Stop at E1 research review. Do not merge until owner accepts classification and
-next-step recommendation. Do not start the recommended package without explicit
+`PAUSE_RESEARCH_WEDGE`. Do not start E2 / Gate 2B2 without explicit
 authorization.
