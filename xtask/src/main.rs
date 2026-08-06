@@ -221,6 +221,9 @@ enum Commands {
         threads: Option<usize>,
         #[arg(long, default_value_t = false)]
         require_release: bool,
+        /// When set, do not overwrite experiments/oracle-benchmark/corpus-lock-v1.json.
+        #[arg(long, default_value_t = false)]
+        skip_committed_lock_update: bool,
     },
 }
 
@@ -409,6 +412,7 @@ fn main() {
             execution,
             threads,
             require_release,
+            skip_committed_lock_update,
         } => oracle_benchmark::run(
             &manifest,
             &output_dir,
@@ -418,7 +422,7 @@ fn main() {
             },
             threads,
             require_release,
-            true,
+            !skip_committed_lock_update,
         ),
         Commands::SpikeDop853 { candidate } => {
             let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

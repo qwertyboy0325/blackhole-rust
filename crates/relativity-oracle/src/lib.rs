@@ -415,6 +415,7 @@ impl OracleFrame {
                 validate_pixel_finite(pixel)?;
             }
         }
+        validate_source_coordinates(self)?;
         let recomputed = oracle_scientific_digest(self);
         if self.scientific_digest != recomputed {
             return Err(OracleError::ScientificDigestMismatch);
@@ -576,6 +577,92 @@ pub fn build_oracle_frame(inputs: OracleFrameInputs<'_>) -> Result<OracleFrame, 
     frame.scientific_digest = oracle_scientific_digest(&frame);
     frame.validate()?;
     Ok(frame)
+}
+
+fn validate_source_coordinates(frame: &OracleFrame) -> Result<(), OracleError> {
+    let mut inferred_width: Option<u64> = None;
+    for pixel in &frame.pixels {
+        if pixel.source_row == 0 {
+            if pixel.source_index != u64::from(pixel.source_col) {
+                return Err(OracleError::InvalidFrame(format!(
+                    "source_index {} disagrees with source_col {} at local ({},{})",
+                    pixel.source_index, pixel.source_col, pixel.col, pixel.row
+                )));
+            }
+            continue;
+        }
+        let Some(numerator) = pixel.source_index.checked_sub(u64::from(pixel.source_col)) else {
+            return Err(OracleError::InvalidFrame(format!(
+                "source_index {} < source_col {} at local ({},{})",
+                pixel.source_index, pixel.source_col, pixel.col, pixel.row
+            )));
+        };
+        let row = u64::from(pixel.source_row);
+        if numerator % row != 0 {
+            return Err(OracleError::InvalidFrame(format!(
+                "source_index/source_col/source_row are not row-major consistent at local ({},{})",
+                pixel.col, pixel.row
+            )));
+        }
+        let width = numerator / row;
+        if width == 0 || u64::from(pixel.source_col) >= width {
+            return Err(OracleError::InvalidFrame(format!(
+                "inferred source_width {width} rejects source_col {} at local ({},{})",
+                pixel.source_col, pixel.col, pixel.row
+            )));
+        }
+        match inferred_width {
+            None => inferred_width = Some(width),
+            Some(prev) if prev != width => {
+                return Err(OracleError::InvalidFrame(format!(
+                    "inconsistent inferred source_width: {prev} vs {width}"
+                )));
+            }
+            Some(_) => {}
+        }
+    }
+    let source_width = inferred_width.unwrap_or_else(|| {
+        let max_col = frame.pixels.iter().map(|p| p.source_col).max().unwrap_or(0);
+        u64::from(max_col) + 1
+    });
+    if source_width == 0 {
+        return Err(OracleError::InvalidFrame("source_width must be > 0".into()));
+    }
+    for pixel in &frame.pixels {
+        let expected = u64::from(pixel.source_row) * source_width + u64::from(pixel.source_col);
+        if pixel.source_index != expected {
+            return Err(OracleError::InvalidFrame(format!(
+                "source_index {} != source_row {} * {source_width} + source_col {} at local ({},{})",
+                pixel.source_index, pixel.source_row, pixel.source_col, pixel.col, pixel.row
+            )));
+        }
+        if u64::from(pixel.source_col) >= source_width {
+            return Err(OracleError::InvalidFrame(format!(
+                "source_col {} >= source_width {source_width} at local ({},{})",
+                pixel.source_col, pixel.col, pixel.row
+            )));
+        }
+    }
+    if frame.sensor_window == SensorWindow::full_frame() {
+        if source_width != u64::from(frame.width) {
+            return Err(OracleError::InvalidFrame(format!(
+                "full-frame source_width {source_width} != frame.width {}",
+                frame.width
+            )));
+        }
+        for pixel in &frame.pixels {
+            if pixel.source_col != pixel.col
+                || pixel.source_row != pixel.row
+                || pixel.source_index != pixel.local_index
+            {
+                return Err(OracleError::InvalidFrame(format!(
+                    "full-frame source coordinates must equal local at ({},{})",
+                    pixel.col, pixel.row
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_stored_source_digests(
@@ -1231,6 +1318,30 @@ pub struct OracleComparisonMetrics {
     pub log2_observed_error: OptionalScalarErrorMetrics,
 }
 
+/// Exact self-comparison: all scientific disagreement / error metrics are zero.
+#[must_use]
+pub fn self_comparison_is_exact(metrics: &OracleComparisonMetrics) -> bool {
+    fn scalar_exact(metrics: Option<&ScalarErrorMetrics>) -> bool {
+        match metrics {
+            None => true,
+            Some(m) => m.maximum_absolute_error == 0.0 && m.mae == 0.0 && m.rmse == 0.0,
+        }
+    }
+    metrics.outcome_disagreement_count == 0
+        && metrics.outcome_disagreement_rate == 0.0
+        && metrics.celestial_presence_mismatch_count == 0
+        && metrics.disk_presence_mismatch_count == 0
+        && metrics.rhs_absolute_error.maximum_absolute_error == 0
+        && metrics.rhs_absolute_error.mae == 0.0
+        && metrics.rhs_absolute_error.rmse == 0.0
+        && scalar_exact(metrics.celestial_angular_error_radians.as_ref())
+        && scalar_exact(metrics.celestial_wrap_u_error.as_ref())
+        && scalar_exact(metrics.celestial_v_error.as_ref())
+        && scalar_exact(metrics.log2_g_error.as_ref())
+        && scalar_exact(metrics.log2_emitted_error.as_ref())
+        && scalar_exact(metrics.log2_observed_error.as_ref())
+}
+
 pub fn compare_oracle_frames(
     reference: &OracleFrame,
     candidate: &OracleFrame,
@@ -1627,6 +1738,7 @@ mod tests {
     fn self_comparison_is_zero() {
         let f = frame();
         let m = compare_oracle_frames(&f, &f).unwrap();
+        assert!(self_comparison_is_exact(&m));
         assert_eq!(m.outcome_disagreement_count, 0);
         assert_eq!(m.rhs_absolute_error.maximum_absolute_error, 0);
         assert_eq!(
@@ -1636,6 +1748,27 @@ mod tests {
             0.0
         );
         assert_eq!(m.log2_g_error.unwrap().maximum_absolute_error, 0.0);
+    }
+
+    #[test]
+    fn source_coordinates_are_validated() {
+        let mut bad = frame();
+        bad.pixels[1].source_index = 99;
+        bad.scientific_digest = oracle_scientific_digest(&bad);
+        assert!(matches!(bad.validate(), Err(OracleError::InvalidFrame(_))));
+        let json = serde_json::to_vec(&bad).unwrap();
+        assert!(serde_json::from_slice::<OracleFrame>(&json).is_err());
+
+        let mut swapped = frame();
+        swapped.pixels[0].source_col = 1;
+        swapped.pixels[0].source_row = 0;
+        swapped.pixels[0].source_index = 1;
+        swapped.scientific_digest = oracle_scientific_digest(&swapped);
+        // full-frame requires source == local
+        assert!(matches!(
+            swapped.validate(),
+            Err(OracleError::InvalidFrame(_))
+        ));
     }
 
     #[test]

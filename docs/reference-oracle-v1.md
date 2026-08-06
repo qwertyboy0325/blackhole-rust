@@ -34,11 +34,13 @@ windows are sub-windows of the source `sensor_window`, never remapped as if the
 source were the full `[-1,1]^2` frame.
 
 `OracleFrame::validate()` seals the public invariant: schema/oracle ID,
-dimensions/pixel length, row-major indices, sensor window membership,
-outcome/channel consistency, finite/range/positivity rules, and equality of the
-stored scientific digest with a recomputation. Deserialization and public
-scientific entry points (`build`, `crop`, `compare`) reject malformed frames;
-they never clamp.
+dimensions/pixel length, row-major indices, source coordinates
+(`source_index`/`source_col`/`source_row` row-major consistency; full-frame
+identity with local coords), sensor window membership, outcome/channel
+consistency, finite/range/positivity rules, and equality of the stored
+scientific digest with a recomputation. Deserialization and public scientific
+entry points (`build`, `crop`, `compare`) reject malformed frames; they never
+clamp.
 
 The oracle scientific digest hashes schema version, oracle ID, scientific claim,
 dimensions, sensor window, surface set, channel set, source scientific digests,

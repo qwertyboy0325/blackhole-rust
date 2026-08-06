@@ -3,9 +3,10 @@
 use crate::build_meta::{
     is_optimized_release_execution, require_release_execution, BuildExecutionMetadata,
 };
-use crate::oracle_benchmark;
-use crate::trace_outcome_map::CliExecution;
-use relativity_oracle::{OracleChannelSet, OracleFrame, ORACLE_ID_V1, ORACLE_SCHEMA_VERSION};
+use relativity_oracle::{
+    compare_oracle_frames, self_comparison_is_exact, OracleChannelSet, OracleFrame, ORACLE_ID_V1,
+    ORACLE_SCHEMA_VERSION,
+};
 use relativity_trace::{hex_sha, OutcomeCounts};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -208,21 +209,20 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "lower-spin full-bolometric absent".into(),
     );
 
-    let out_a = "artifacts/r1-e0-oracle-corpus/eval-run-a";
-    let out_b = "artifacts/r1-e0-oracle-corpus/eval-run-b";
-    let out_serial = "artifacts/r1-e0-oracle-corpus/eval-run-serial";
-    let out_cli = "artifacts/r1-e0-oracle-corpus/eval-run-cli";
+    let out_a = "artifacts/r1-e0-oracle-corpus/eval-subprocess-a";
+    let out_b = "artifacts/r1-e0-oracle-corpus/eval-subprocess-b";
+    let out_serial = "artifacts/r1-e0-oracle-corpus/eval-serial";
     let _ = std::fs::remove_dir_all(root.join("artifacts/r1-e0-oracle-corpus"));
 
-    regenerate_corpus_in_process(out_a, CliExecution::Parallel, Some(authoritative_threads))?;
-    regenerate_corpus_in_process(out_b, CliExecution::Parallel, Some(authoritative_threads))?;
-    regenerate_corpus_in_process(out_serial, CliExecution::Serial, None)?;
-    regenerate_corpus_via_cli(&root, out_cli, authoritative_threads)?;
+    // Owner contract: two independent 128×128 baseline subprocesses.
+    regenerate_corpus_via_cli(&root, out_a, "parallel", Some(authoritative_threads))?;
+    regenerate_corpus_via_cli(&root, out_b, "parallel", Some(authoritative_threads))?;
+    // Thread/execution determinism against the same committed lock.
+    regenerate_corpus_via_cli(&root, out_serial, "serial", None)?;
 
     let lock_a_bytes = std::fs::read(root.join(out_a).join("corpus-lock-v1.json"))?;
     let lock_b_bytes = std::fs::read(root.join(out_b).join("corpus-lock-v1.json"))?;
     let lock_serial_bytes = std::fs::read(root.join(out_serial).join("corpus-lock-v1.json"))?;
-    let lock_cli_bytes = std::fs::read(root.join(out_cli).join("corpus-lock-v1.json"))?;
     let regenerated_lock_digest = hex_sha(&lock_a_bytes);
 
     push(
@@ -233,7 +233,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     );
     push(
         &mut checks,
-        "repeated_generation_determinism",
+        "two_independent_subprocess_determinism",
         lock_a_bytes == lock_b_bytes,
         format!("a={} b={}", hex_sha(&lock_a_bytes), hex_sha(&lock_b_bytes)),
     );
@@ -245,16 +245,6 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             "parallel={} serial={}",
             hex_sha(&lock_a_bytes),
             hex_sha(&lock_serial_bytes)
-        ),
-    );
-    push(
-        &mut checks,
-        "subprocess_cli_determinism",
-        lock_a_bytes == lock_cli_bytes,
-        format!(
-            "in_process={} cli={}",
-            hex_sha(&lock_a_bytes),
-            hex_sha(&lock_cli_bytes)
         ),
     );
 
@@ -311,6 +301,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let mut validated_frames = 0u64;
+    let mut exact_self_comparisons = 0u64;
     for case in &committed.source_cases {
         let path = root
             .join(out_a)
@@ -326,6 +317,15 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             )
             .into());
         }
+        let metrics = compare_oracle_frames(&frame, &frame)?;
+        if !self_comparison_is_exact(&metrics) {
+            return Err(format!(
+                "self-comparison not exact for source `{}`: {metrics:?}",
+                case.definition.id
+            )
+            .into());
+        }
+        exact_self_comparisons += 1;
         validated_frames += 1;
     }
     for crop in &committed.crop_cases {
@@ -343,6 +343,15 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             )
             .into());
         }
+        let metrics = compare_oracle_frames(&frame, &frame)?;
+        if !self_comparison_is_exact(&metrics) {
+            return Err(format!(
+                "self-comparison not exact for crop `{}`: {metrics:?}",
+                crop.id
+            )
+            .into());
+        }
+        exact_self_comparisons += 1;
         validated_frames += 1;
     }
     push(
@@ -350,6 +359,12 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "oracle_frames_validate_against_lock",
         validated_frames == 8,
         format!("validated_frames={validated_frames}"),
+    );
+    push(
+        &mut checks,
+        "complete_self_comparison_sources_and_crops",
+        exact_self_comparisons == 8,
+        format!("exact_self_comparisons={exact_self_comparisons}"),
     );
 
     let all_pass = checks.iter().all(|c| c.status == "PASS");
@@ -377,47 +392,40 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn regenerate_corpus_in_process(
-    output_dir: &str,
-    execution: CliExecution,
-    threads: Option<usize>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    oracle_benchmark::run(MANIFEST_PATH, output_dir, execution, threads, true, false)
-}
-
 fn regenerate_corpus_via_cli(
     root: &Path,
     output_dir: &str,
-    threads: usize,
+    execution: &str,
+    threads: Option<usize>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let committed_before = std::fs::read(root.join(COMMITTED_LOCK_PATH))?;
-    let threads_s = threads.to_string();
-    let args = [
-        "run",
-        "--release",
-        "-q",
-        "-p",
-        "xtask",
-        "--",
-        "oracle-benchmark-corpus",
-        "--manifest",
-        MANIFEST_PATH,
-        "--output-dir",
-        output_dir,
-        "--execution",
-        "parallel",
-        "--threads",
-        threads_s.as_str(),
-        "--require-release",
+    let mut args = vec![
+        "run".into(),
+        "--release".into(),
+        "-q".into(),
+        "-p".into(),
+        "xtask".into(),
+        "--".into(),
+        "oracle-benchmark-corpus".into(),
+        "--manifest".into(),
+        MANIFEST_PATH.into(),
+        "--output-dir".into(),
+        output_dir.into(),
+        "--execution".into(),
+        execution.into(),
+        "--require-release".into(),
+        "--skip-committed-lock-update".into(),
     ];
+    if let Some(threads) = threads {
+        args.push("--threads".into());
+        args.push(threads.to_string());
+    }
     let out = Command::new("cargo")
         .current_dir(root)
-        .args(args)
+        .args(&args)
         .output()?;
-    std::fs::write(root.join(COMMITTED_LOCK_PATH), &committed_before)?;
     if !out.status.success() {
         return Err(format!(
-            "oracle-benchmark-corpus subprocess failed: {}",
+            "oracle-benchmark-corpus subprocess failed ({execution}): {}",
             String::from_utf8_lossy(&out.stderr)
         )
         .into());

@@ -3,8 +3,9 @@ use crate::preset::{load_preset, Preset};
 use crate::reference_pipeline::{compute_reference_scientific_frames, ReferenceScientificFrames};
 use crate::trace_outcome_map::{resolve_execution, CliExecution};
 use relativity_oracle::{
-    build_oracle_frame, compare_oracle_frames, crop_oracle_frame, OracleChannelSet, OracleFrame,
-    OracleFrameInputs, PixelCrop, SensorWindow, ORACLE_ID_V1, ORACLE_SCHEMA_VERSION,
+    build_oracle_frame, compare_oracle_frames, crop_oracle_frame, self_comparison_is_exact,
+    OracleChannelSet, OracleFrame, OracleFrameInputs, PixelCrop, SensorWindow, ORACLE_ID_V1,
+    ORACLE_SCHEMA_VERSION,
 };
 use relativity_render::{
     bolometric_debug_display_v1, procedural_coordinate_grid_v1,
@@ -179,8 +180,12 @@ pub fn run(
             serialized_oracle_bytes,
         )?;
         let self_metrics = compare_oracle_frames(&oracle, &oracle)?;
-        if self_metrics.outcome_disagreement_count != 0 {
-            return Err("oracle self-comparison failed".into());
+        if !self_comparison_is_exact(&self_metrics) {
+            return Err(format!(
+                "oracle self-comparison failed for source `{}`: {self_metrics:?}",
+                case.id
+            )
+            .into());
         }
         lock_sources.push(LockedSourceCase {
             definition: case.clone(),
@@ -219,7 +224,18 @@ pub fn run(
             .ok_or("crop source missing from manifest")?;
         let (crop, score) = select_boundary_crop(source, 64, 64, 8)?;
         let cropped_oracle = crop_oracle_frame(source, crop)?;
+        let crop_self = compare_oracle_frames(&cropped_oracle, &cropped_oracle)?;
+        if !self_comparison_is_exact(&crop_self) {
+            return Err(format!(
+                "oracle self-comparison failed for crop `{crop_id}`: {crop_self:?}"
+            )
+            .into());
+        }
         let cropped_ppm = crop_ppm(source_ppm, source.width, crop);
+        let image_self = compare_rgb(&cropped_ppm, &cropped_ppm)?;
+        if !image_self.exact_match {
+            return Err(format!("RGB self-comparison failed for crop `{crop_id}`").into());
+        }
         let crop_dir = out_dir.join("crops").join(crop_id);
         std::fs::create_dir_all(&crop_dir)?;
         write_oracle_and_ppm(&crop_dir, &cropped_oracle, &cropped_ppm)?;

@@ -19,26 +19,35 @@ Authoritative `PASS` evaluated at commit `6e1b2acec8afcf175a5f1ad8c930e78cb50010
 
 ### Authoritative evaluator
 
-`evaluate --scope r1-e0-oracle-corpus` regenerates the corpus (parallel ×2,
-serial, CLI subprocess), compares locks to the committed
-`experiments/oracle-benchmark/corpus-lock-v1.json`, validates all eight
-oracle frames under checked deserialization, and checks inherited Gate digests
+`evaluate --scope r1-e0-oracle-corpus` launches **two independent** 128×128
+baseline `oracle-benchmark-corpus` subprocesses plus one serial subprocess for
+thread/execution determinism. Locks are compared to the committed
+`experiments/oracle-benchmark/corpus-lock-v1.json`. All eight oracle frames are
+validated under checked deserialization, and inherited Gate digests are checked
 for `kerr0999-edge-opaque`. Writes `evaluation.json` with content digest.
 
 ### OracleFrame public invariant
 
 `OracleFrame::validate()` seals schema/oracle ID, dimensions/length, row-major
-indices, sensor-window membership, outcome/channel consistency,
-finite/range/positivity, and stored scientific digest equality. Deserialize,
-`build`, `crop`, and `compare` call it. Crop uses checked pixel access;
-crop-of-crop sensor windows are sub-windows of the source window. Scientific
-`f64` fields are JSON-encoded as hex `to_bits()` for bit-exact load.
+indices, **source_index/source_col/source_row consistency** (row-major over an
+inferred source width; full-frame identity with local coords), sensor-window
+membership, outcome/channel consistency, finite/range/positivity, and stored
+scientific digest equality. Deserialize, `build`, `crop`, and `compare` call it.
+Crop uses checked pixel access; crop-of-crop sensor windows are sub-windows of
+the source window. Scientific `f64` fields are JSON-encoded as hex `to_bits()`
+for bit-exact load.
 
 ### Channel-presence metrics
 
 `compare_oracle_frames` counts outcome disagreement and disk/celestial presence
 mismatch independently. Scalar errors accumulate only when outcomes are
 compatible and both sides carry the channel.
+
+### Complete self-comparison
+
+Corpus generation requires `self_comparison_is_exact` on every source frame and
+every crop (all scientific disagreement/error metrics zero), plus RGB
+self-comparison on crops.
 
 ## Inherited Gate digests (`kerr0999-edge-opaque`)
 
