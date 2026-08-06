@@ -11,7 +11,7 @@ repeat `outcome-disagreement.pgm` comparison.
 | --- | --- |
 | Approved base | `86dd63dc537d5e4f41f5e798f5f30a4e3694558e` |
 | Evaluated commit | `d1f5a60898ac229450a78e533544fd57b991961f` |
-| Tracking | GitHub Issue #12 / Draft PR #15 |
+| Tracking | GitHub Issue #12 / PR #15 **merged** |
 | E0 lock digest | `647cb722b8ca5bc83b7ec77bfa612c97429ead61e36f10d47db75ade269941fb` |
 | Baseline oracle digest | `ee3c2c92f94ec291c172696fb9a4e75bccdea1bd019d20a74a9a4b3439eeb383` |
 | Experiment digest | `f1690e46caf2fee90fab0b92d1d9c19b783d9b868c1de447870217e39bb2932f` |
@@ -24,8 +24,8 @@ E1 implementation core           PASS
 CI                               (tip CI after push)
 Authoritative evaluator          PASS
 NOT_SUPPORTED classification     FINAL (recomputed; not ray-count artifact)
-PR #15                           DRAFT / NOT MERGED
-Performance planning prompt      HOLD
+PR #15                           MERGED on main (705ae5c)
+Execution-performance package    see e1-execution-performance-report.md
 E2 / Gate 2B2                    NOT STARTED
 ```
 
@@ -69,9 +69,10 @@ semantics. Recommendation: `PAUSE_RESEARCH_WEDGE`.
 
 E2 ray differentials, E3 ray bundles, Gate 2B2, spectra, physical RGB, OpenEXR,
 GPU, wgpu, egui, and GUI were not started. Execution-performance restructuring
-remains HOLD until after owner accepts merge.
+shipped as a follow-up PR off main; see
+`docs/work-log/e1-execution-performance-report.md`.
 
 ## Owner review
 
-Stop at E1 research review. Do not merge until owner accepts. Do not start
-performance restructuring or E2 / Gate 2B2 without explicit authorization.
+Semantic closure accepted via PR #15 merge. Research wedge remains paused.
+Do not start estimator iteration or E2 / Gate 2B2 without explicit authorization.

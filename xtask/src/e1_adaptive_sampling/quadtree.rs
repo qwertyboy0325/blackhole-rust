@@ -185,6 +185,48 @@ pub fn stencil_source_indices(mapping: &DomainMapping, local_rect: &PixelRect) -
     idxs
 }
 
+/// Uniform leaf tiling for a square power-of-two domain.
+pub fn build_uniform_leaves(domain_size: u32, leaf_size: u32) -> Vec<QuadCell> {
+    let mut leaves = vec![QuadCell {
+        rect: PixelRect {
+            left: 0,
+            top: 0,
+            width: domain_size,
+            height: domain_size,
+        },
+        depth: 0,
+    }];
+    while leaves.iter().any(|l| l.rect.width > leaf_size) {
+        let mut next = Vec::new();
+        for leaf in leaves {
+            if leaf.rect.width > leaf_size {
+                for child in leaf.rect.split().unwrap() {
+                    next.push(QuadCell {
+                        rect: child,
+                        depth: leaf.depth + 1,
+                    });
+                }
+            } else {
+                next.push(leaf);
+            }
+        }
+        leaves = next;
+    }
+    leaves
+}
+
+/// Exact unique stencil-index count for a uniform leaf size (no tracing).
+pub fn uniform_unique_ray_count(mapping: &DomainMapping, leaf_size: u32) -> u64 {
+    let leaves = build_uniform_leaves(mapping.local_width(), leaf_size);
+    let mut set = BTreeSet::new();
+    for leaf in &leaves {
+        for idx in stencil_source_indices(mapping, &leaf.rect) {
+            set.insert(idx);
+        }
+    }
+    set.len() as u64
+}
+
 /// Screen diagonal from pixel-edge sensor bounds on the **source** grid.
 pub fn screen_diagonal_source(mapping: &DomainMapping, local_rect: &PixelRect) -> f64 {
     let sw = f64::from(mapping.source_width);
@@ -375,5 +417,94 @@ mod tests {
         assert_eq!(mapping.source_to_local(24, 56), Some((0, 0)));
         assert_eq!(mapping.source_to_local(87, 119), Some((63, 63)));
         assert_eq!(mapping.source_to_local(0, 0), None);
+    }
+
+    #[test]
+    fn uniform_unique_ray_counts_match_observed_ladders() {
+        let source = DomainMapping {
+            source_width: 128,
+            source_height: 128,
+            domain: PixelRect {
+                left: 0,
+                top: 0,
+                width: 128,
+                height: 128,
+            },
+        };
+        assert_eq!(uniform_unique_ray_count(&source, 32), 144);
+        assert_eq!(uniform_unique_ray_count(&source, 16), 576);
+        assert_eq!(uniform_unique_ray_count(&source, 8), 2304);
+        assert_eq!(uniform_unique_ray_count(&source, 4), 8192);
+        assert_eq!(uniform_unique_ray_count(&source, 2), 16384);
+
+        let crop = DomainMapping {
+            source_width: 128,
+            source_height: 128,
+            domain: PixelRect {
+                left: 0,
+                top: 0,
+                width: 64,
+                height: 64,
+            },
+        };
+        assert_eq!(uniform_unique_ray_count(&crop, 16), 144);
+        assert_eq!(uniform_unique_ray_count(&crop, 8), 576);
+        assert_eq!(uniform_unique_ray_count(&crop, 4), 2048);
+        assert_eq!(uniform_unique_ray_count(&crop, 2), 4096);
+        assert_eq!(uniform_unique_ray_count(&crop, 1), 4096);
+    }
+
+    fn uniform_index_set(mapping: &DomainMapping, leaf: u32) -> BTreeSet<u64> {
+        let leaves = build_uniform_leaves(mapping.local_width(), leaf);
+        let mut set = BTreeSet::new();
+        for leaf_cell in leaves {
+            for idx in stencil_source_indices(mapping, &leaf_cell.rect) {
+                set.insert(idx);
+            }
+        }
+        set
+    }
+
+    #[test]
+    fn progressive_uniform_stencil_sets_are_nested() {
+        let source = DomainMapping {
+            source_width: 128,
+            source_height: 128,
+            domain: PixelRect {
+                left: 0,
+                top: 0,
+                width: 128,
+                height: 128,
+            },
+        };
+        let mut prev = BTreeSet::new();
+        for &leaf in &[32u32, 16, 8, 4, 2] {
+            let set = uniform_index_set(&source, leaf);
+            assert!(
+                prev.is_subset(&set),
+                "leaf={leaf}: coarser stencil set must be subset of finer"
+            );
+            prev = set;
+        }
+
+        let crop = DomainMapping {
+            source_width: 128,
+            source_height: 128,
+            domain: PixelRect {
+                left: 24,
+                top: 56,
+                width: 64,
+                height: 64,
+            },
+        };
+        let mut prev = BTreeSet::new();
+        for &leaf in &[16u32, 8, 4, 2, 1] {
+            let set = uniform_index_set(&crop, leaf);
+            assert!(
+                prev.is_subset(&set),
+                "crop leaf={leaf}: coarser stencil set must be subset of finer"
+            );
+            prev = set;
+        }
     }
 }

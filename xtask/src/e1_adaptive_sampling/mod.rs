@@ -5,9 +5,13 @@ pub mod experiment;
 pub mod metrics;
 pub mod quadtree;
 pub mod reconstruct;
+pub mod reference_session;
 pub mod report;
 pub mod sample;
 pub mod score;
 
-pub use experiment::{run, ExperimentFilters};
+pub use experiment::{
+    run, ExperimentFilters, ExperimentOptions, LadderMode, WriteArtifacts,
+    DETERMINISM_BUDGET_ARTIFACTS,
+};
 pub use score::MethodId;

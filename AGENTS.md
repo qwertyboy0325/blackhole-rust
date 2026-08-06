@@ -4,13 +4,16 @@
 
 Gate 0, 1A, 1B0–1B2, Gate 2A0–2A2, Gate 2B0, and Gate 2B1 are complete.
 R1/E0 is complete.
-E1 physics-aware adaptive quadtree sampling is in progress.
+E1 physics-aware adaptive quadtree sampling is merged (PR #15).
+E1 execution-performance restructuring: authoritative evaluate PASS after
+owner closure `5202437486` on PR #16; pending owner merge review.
 
 E1 is experimental:
 - preserve the CPU f64 oracle;
 - prevent oracle-data leakage into scheduling;
 - report ray/error curves and failures;
 - do not require permanent schema governance for prototype internals.
+- research recommendation remains `PAUSE_RESEARCH_WEDGE` until owner authorizes estimator iteration.
 
 Do not begin E2 ray differentials, E3 ray bundles, Gate 2B2 spectral
 transport, physical RGB, OpenEXR, GPU, wgpu, egui or GUI work.

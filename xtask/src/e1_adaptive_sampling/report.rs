@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::path::Path;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ScheduleEvent {
     pub step: u64,
     pub requested_target: u64,
@@ -60,9 +60,15 @@ pub struct CurvePoint {
     pub sample_parity: SampleParityReport,
     pub schedule: Vec<ScheduleEvent>,
     pub worst_pixels: Vec<WorstPixelRecord>,
+    /// Candidate point cost including tracing/scheduling/recon/metrics/artifacts.
+    /// Progressive ladders: cumulative from method start through this budget.
+    /// Cold ladders: full from-scratch cost for this budget alone.
     pub wall_clock_seconds: f64,
+    /// Incremental tracing + adaptive/uniform scheduling for this budget stage.
+    pub tracing_and_schedule_wall_clock_seconds: f64,
     pub reconstruction_wall_clock_seconds: f64,
     pub metric_wall_clock_seconds: f64,
+    pub artifact_wall_clock_seconds: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -958,8 +964,10 @@ mod tests {
             schedule: vec![],
             worst_pixels: vec![],
             wall_clock_seconds: 0.0,
+            tracing_and_schedule_wall_clock_seconds: 0.0,
             reconstruction_wall_clock_seconds: 0.0,
             metric_wall_clock_seconds: 0.0,
+            artifact_wall_clock_seconds: 0.0,
         }
     }
 

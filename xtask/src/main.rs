@@ -240,6 +240,7 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         require_release: bool,
         #[arg(long)]
+        /// Comma-separated case ids to run (default: all).
         case: Option<String>,
         #[arg(long)]
         method: Option<String>,
@@ -247,6 +248,15 @@ enum Commands {
         maximum_budget_level: Option<usize>,
         #[arg(long, default_value_t = false)]
         skip_ablations: bool,
+        /// Reuse a verified E0 reference directory (skips in-process corpus regen).
+        #[arg(long)]
+        reference_dir: Option<String>,
+        /// progressive (default) or cold budget-from-zero ladders.
+        #[arg(long, default_value = "progressive")]
+        ladder: String,
+        /// full (writes reconstruction.ppm) or minimal (determinism evidence bundle only).
+        #[arg(long, default_value = "full")]
+        write_artifacts: String,
     },
 }
 
@@ -459,6 +469,9 @@ fn main() {
             method,
             maximum_budget_level,
             skip_ablations,
+            reference_dir,
+            ladder,
+            write_artifacts,
         } => match method
             .as_deref()
             .map(|m| {
@@ -467,22 +480,42 @@ fn main() {
             })
             .transpose()
         {
-            Ok(method) => e1_adaptive_sampling::run(
-                &config,
-                &output_dir,
-                match execution {
-                    ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
-                    ExecutionArg::Parallel => trace_outcome_map::CliExecution::Parallel,
-                },
-                threads,
-                require_release,
-                e1_adaptive_sampling::ExperimentFilters {
-                    case,
-                    method,
-                    maximum_budget_level,
-                    skip_ablations,
-                },
-            ),
+            Ok(method) => {
+                let ladder = match ladder.as_str() {
+                    "progressive" => Ok(e1_adaptive_sampling::LadderMode::Progressive),
+                    "cold" => Ok(e1_adaptive_sampling::LadderMode::Cold),
+                    other => Err(format!("unknown ladder mode {other}").into()),
+                };
+                let write_artifacts = match write_artifacts.as_str() {
+                    "full" => Ok(e1_adaptive_sampling::WriteArtifacts::Full),
+                    "minimal" => Ok(e1_adaptive_sampling::WriteArtifacts::Minimal),
+                    other => Err(format!("unknown write_artifacts {other}").into()),
+                };
+                match (ladder, write_artifacts) {
+                    (Ok(ladder), Ok(write_artifacts)) => e1_adaptive_sampling::run(
+                        &config,
+                        &output_dir,
+                        match execution {
+                            ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
+                            ExecutionArg::Parallel => trace_outcome_map::CliExecution::Parallel,
+                        },
+                        threads,
+                        require_release,
+                        e1_adaptive_sampling::ExperimentFilters {
+                            case,
+                            method,
+                            maximum_budget_level,
+                            skip_ablations,
+                        },
+                        e1_adaptive_sampling::ExperimentOptions {
+                            reference_dir: reference_dir.map(std::path::PathBuf::from),
+                            ladder,
+                            write_artifacts,
+                        },
+                    ),
+                    (Err(e), _) | (_, Err(e)) => Err(e),
+                }
+            }
             Err(e) => Err(e),
         },
         Commands::SpikeDop853 { candidate } => {
