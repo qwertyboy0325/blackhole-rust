@@ -43,15 +43,12 @@
 /artifacts/gate-2a2-lensed-celestial/**/*.sha256
 /artifacts/gate-2a2-lensed-celestial/**/*.ppm
 /artifacts/gate-2a2-lensed-celestial/**/*.pgm
-/artifacts/gate-2b0-frequency-shift/**/*.json
-/artifacts/gate-2b0-frequency-shift/**/*.md
-/artifacts/gate-2b0-frequency-shift/**/*.sha256
-/artifacts/gate-2b0-frequency-shift/**/*.ppm
-/artifacts/gate-2b0-frequency-shift/**/*.pgm
+/artifacts/gate-2b0-frequency-shift/
 /artifacts/manual-lensed-opaque/
 /artifacts/manual-lensed-sky/
 /artifacts/manual-frequency-shift/
 /artifacts/manual-frequency-shift-smoke/
+.DS_Store
 *.swp
 *.swo
 .idea/
