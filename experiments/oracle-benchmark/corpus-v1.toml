@@ -1,0 +1,66 @@
+schema_version = 1
+corpus_id = "e0-oracle-corpus-v1"
+reference_renderer_base_commit = "dcceef661574d21ce4c0aa8817fcf9d9fa1039a1"
+base_preset = "presets/gargantua-baseline.toml"
+width = 128
+height = 128
+
+[[source_cases]]
+id = "kerr0999-edge-opaque"
+spin_a_over_m = 0.999
+observer_r = 20.0
+observer_theta_degrees = 85.0
+observer_phi_degrees = 0.0
+horizontal_fov_degrees = 50.0
+surface_set = "opaque-disk-horizon-escape"
+channel_set = "full-bolometric-disk"
+
+[[source_cases]]
+id = "kerr0999-edge-sky"
+spin_a_over_m = 0.999
+observer_r = 20.0
+observer_theta_degrees = 85.0
+observer_phi_degrees = 0.0
+horizontal_fov_degrees = 50.0
+surface_set = "horizon-escape-only"
+channel_set = "geometry-celestial"
+
+[[source_cases]]
+id = "kerr0999-midinc-opaque"
+spin_a_over_m = 0.999
+observer_r = 20.0
+observer_theta_degrees = 60.0
+observer_phi_degrees = 0.0
+horizontal_fov_degrees = 50.0
+surface_set = "opaque-disk-horizon-escape"
+channel_set = "full-bolometric-disk"
+
+[[source_cases]]
+id = "kerr0999-midinc-sky"
+spin_a_over_m = 0.999
+observer_r = 20.0
+observer_theta_degrees = 60.0
+observer_phi_degrees = 0.0
+horizontal_fov_degrees = 50.0
+surface_set = "horizon-escape-only"
+channel_set = "geometry-celestial"
+
+[[source_cases]]
+id = "kerr050-edge-sky"
+spin_a_over_m = 0.5
+observer_r = 20.0
+observer_theta_degrees = 85.0
+observer_phi_degrees = 0.0
+horizontal_fov_degrees = 50.0
+surface_set = "horizon-escape-only"
+channel_set = "geometry-celestial"
+
+[[source_cases]]
+id = "schwarzschild-edge-sky"
+spin_a_over_m = 0.0
+observer_r = 20.0
+observer_theta_degrees = 85.0
+observer_phi_degrees = 0.0
+horizontal_fov_degrees = 50.0
+surface_set = "horizon-escape-only"
+channel_set = "geometry-celestial"

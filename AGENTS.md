@@ -2,10 +2,15 @@
 
 ## Current gate
 
-Gate 0, 1A, 1B0–1B2, Gate 2A0–2A2, and Gate 2B0 are complete.
-Gate 2B1 diagnostic bolometric emission and g⁴ transport is in progress.
-Do not begin spectral sampling, blackbody temperature, physical RGB, OpenEXR,
-GPU, wgpu, egui or GUI work in this gate.
+Gate 0, 1A, 1B0–1B2, Gate 2A0–2A2, Gate 2B0, and Gate 2B1 are complete.
+R1 reference-oracle freeze and E0 benchmark-corpus foundation are in progress.
+
+Reference-track oracle changes require strict inherited regression.
+Experimental benchmark statistics require reproducible configuration,
+error/cost evidence, and failure analysis, but not permanent schema governance.
+
+Do not begin E1 adaptive sampling, spectral transport, physical RGB, OpenEXR,
+GPU, wgpu, egui or GUI work in this package.
 
 ## Authority and scope
 

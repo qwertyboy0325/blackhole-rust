@@ -19,7 +19,9 @@ mod evaluate_gate2b0_frequency_shift;
 mod evaluate_gate2b1_bolometric_radiance;
 mod inspect;
 mod integrate_ray;
+mod oracle_benchmark;
 mod preset;
+mod reference_pipeline;
 mod render_lensed_celestial;
 mod render_tier;
 mod spike_dop853;
@@ -206,6 +208,19 @@ enum Commands {
         #[arg(long)]
         scope: String,
     },
+    /// Generate the R1/E0 oracle benchmark corpus candidate lock and artifacts.
+    OracleBenchmarkCorpus {
+        #[arg(long)]
+        manifest: String,
+        #[arg(long)]
+        output_dir: String,
+        #[arg(long, value_enum)]
+        execution: ExecutionArg,
+        #[arg(long)]
+        threads: Option<usize>,
+        #[arg(long, default_value_t = false)]
+        require_release: bool,
+    },
 }
 
 fn main() {
@@ -248,6 +263,8 @@ fn main() {
                 evaluate_gate2b0_frequency_shift::evaluate()
             } else if scope == "gate-2b1-bolometric-radiance" {
                 evaluate_gate2b1_bolometric_radiance::evaluate()
+            } else if scope == "r1-e0-oracle-corpus" {
+                oracle_benchmark::evaluate_scope()
             } else {
                 match preset {
                     Some(p) => evaluate::evaluate(&p, &scope),
@@ -385,6 +402,22 @@ fn main() {
                 Err(format!("unsupported corpus-report scope {scope}").into())
             }
         }
+        Commands::OracleBenchmarkCorpus {
+            manifest,
+            output_dir,
+            execution,
+            threads,
+            require_release,
+        } => oracle_benchmark::run(
+            &manifest,
+            &output_dir,
+            match execution {
+                ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
+                ExecutionArg::Parallel => trace_outcome_map::CliExecution::Parallel,
+            },
+            threads,
+            require_release,
+        ),
         Commands::SpikeDop853 { candidate } => {
             let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .parent()

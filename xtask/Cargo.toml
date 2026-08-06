@@ -19,6 +19,7 @@ relativity-core = { path = "../crates/relativity-core" }
 relativity-integrate = { path = "../crates/relativity-integrate" }
 relativity-trace = { path = "../crates/relativity-trace" }
 relativity-render = { path = "../crates/relativity-render" }
+relativity-oracle = { path = "../crates/relativity-oracle" }
 gate-1b0-ode-solvers = { path = "../spikes/gate-1b0-ode-solvers" }
 gate-1b0-ivp = { path = "../spikes/gate-1b0-ivp" }
 gate-1b0-contract = { path = "../spikes/gate-1b0-contract" }
