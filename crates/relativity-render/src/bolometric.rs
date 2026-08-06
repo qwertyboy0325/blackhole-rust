@@ -1502,7 +1502,10 @@ mod tests {
         )
         .is_ok());
         assert!(matches!(
-            validate_disk_emission_provenance("novikov_thorne", CANONICAL_DISK_EMISSION_CLAIM),
+            validate_disk_emission_provenance(
+                "unsupported_emission_model_x",
+                CANONICAL_DISK_EMISSION_CLAIM
+            ),
             Err(BolometricRenderError::UnsupportedEmissionModel(_))
         ));
         assert!(matches!(

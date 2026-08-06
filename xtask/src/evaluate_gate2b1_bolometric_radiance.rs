@@ -794,9 +794,10 @@ fn check_cli_negative(
                 CANONICAL_DISK_EMISSION_CLAIM,
                 "altered claim incompatible with project diagnostic",
             ),
-            PresetMutation::UnsupportedModel => {
-                base.replace(CANONICAL_DISK_EMISSION_MODEL, "novikov_thorne")
-            }
+            PresetMutation::UnsupportedModel => base.replace(
+                CANONICAL_DISK_EMISSION_MODEL,
+                "unsupported_emission_model_x",
+            ),
         };
         if mutated == base {
             return Err(format!("preset mutation {name} did not change file").into());
