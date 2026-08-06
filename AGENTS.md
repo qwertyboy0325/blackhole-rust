@@ -5,7 +5,8 @@
 Gate 0, 1A, 1B0–1B2, Gate 2A0–2A2, Gate 2B0, and Gate 2B1 are complete.
 R1/E0 is complete.
 E1 physics-aware adaptive quadtree sampling is merged (PR #15).
-E1 execution-performance restructuring is in progress on a follow-up branch.
+E1 execution-performance restructuring: authoritative evaluate PASS on
+`e1-execution-performance`; pending owner review of the follow-up PR.
 
 E1 is experimental:
 - preserve the CPU f64 oracle;
