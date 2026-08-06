@@ -49,6 +49,10 @@ The digest excludes case IDs, artifact paths, wall-clock time, host, PID, memory
 measurement, PPM bytes, presentation metadata, `Debug`, `Display`, and serde
 bytes as the sole schema.
 
+Oracle JSON artifacts encode every scientific `f64` as a 16-digit lowercase hex
+`to_bits()` string so deserialization is bit-exact and the stored scientific
+digest remains verifiable after load.
+
 Comparison metrics count outcome disagreement and channel-presence mismatch
 independently. Scalar channel errors are accumulated only when outcomes are
 compatible and both sides carry the channel.

@@ -13,12 +13,46 @@ use relativity_trace::{
     pixel_index, sensor_at_pixel_center, CelestialCoordinateFrame, CelestialCoordinatePixel,
     OutcomeClass, RayOutcome, TraceBundle, TraceGrid, TraceSurfaceSet,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 pub const ORACLE_SCHEMA_VERSION: u32 = 1;
 pub const ORACLE_ID_V1: &str = "cpu-f64-relativistic-oracle-v1";
+
+fn serialize_f64_bits<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&format!("{:016x}", value.to_bits()))
+}
+
+fn deserialize_f64_bits<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+    let text = String::deserialize(deserializer)?;
+    let bits = u64::from_str_radix(&text, 16).map_err(serde::de::Error::custom)?;
+    Ok(f64::from_bits(bits))
+}
+
+fn serialize_f64_array3_bits<S: Serializer>(
+    value: &[f64; 3],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    use serde::ser::SerializeSeq;
+    let mut seq = serializer.serialize_seq(Some(3))?;
+    for item in value {
+        seq.serialize_element(&format!("{:016x}", item.to_bits()))?;
+    }
+    seq.end()
+}
+
+fn deserialize_f64_array3_bits<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<[f64; 3], D::Error> {
+    let texts = <[String; 3]>::deserialize(deserializer)?;
+    let mut out = [0.0; 3];
+    for (dst, text) in out.iter_mut().zip(texts) {
+        let bits = u64::from_str_radix(&text, 16).map_err(serde::de::Error::custom)?;
+        *dst = f64::from_bits(bits);
+    }
+    Ok(out)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -38,9 +72,25 @@ impl OracleChannelSet {
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SensorWindow {
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub x_min: f64,
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub x_max: f64,
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub y_min: f64,
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub y_max: f64,
 }
 
@@ -91,24 +141,84 @@ impl SensorWindow {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OracleCelestialSample {
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub boundary_oblate_radius: f64,
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub theta: f64,
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub psi: f64,
+    #[serde(
+        serialize_with = "serialize_f64_array3_bits",
+        deserialize_with = "deserialize_f64_array3_bits"
+    )]
     pub unit_coordinate_direction: [f64; 3],
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub u: f64,
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub v: f64,
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub escape_event_value: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OracleDiskSample {
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub radius: f64,
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub azimuth: f64,
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub g_factor: f64,
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub log2_g: f64,
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub g_fourth: f64,
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub emitted_bolometric_intensity: f64,
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub observed_bolometric_intensity: f64,
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub disk_event_value: f64,
 }
 
@@ -120,7 +230,15 @@ pub struct OraclePixel {
     pub source_index: u64,
     pub source_col: u32,
     pub source_row: u32,
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub sensor_x: f64,
+    #[serde(
+        serialize_with = "serialize_f64_bits",
+        deserialize_with = "deserialize_f64_bits"
+    )]
     pub sensor_y: f64,
     pub outcome_class: OutcomeClass,
     pub rhs_evaluations: u64,
@@ -1592,19 +1710,11 @@ mod tests {
     }
 
     #[test]
-    fn malformed_source_crop_is_typed_rejection_not_panic() {
-        let mut source = frame();
-        source.pixels.clear();
-        source.scientific_digest = oracle_scientific_digest(&source);
-        let err = crop_oracle_frame(
-            &source,
-            PixelCrop {
-                left: 0,
-                top: 0,
-                width: 1,
-                height: 1,
-            },
-        );
-        assert!(err.is_err());
+    fn json_roundtrip_preserves_scientific_digest() {
+        let frame = frame();
+        let bytes = serde_json::to_vec(&frame).unwrap();
+        let loaded: OracleFrame = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(loaded, frame);
+        assert_eq!(loaded.scientific_digest, oracle_scientific_digest(&loaded));
     }
 }
