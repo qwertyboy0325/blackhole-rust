@@ -2,7 +2,7 @@
 
 ## Result
 
-Authoritative `PASS` evaluated at commit `EVAL_COMMIT_PLACEHOLDER`
+Authoritative `PASS` evaluated at commit `6e1b2acec8afcf175a5f1ad8c930e78cb50010de`
 (owner closures for evaluator authority, OracleFrame invariant, presence metrics).
 
 | Item | Value |
@@ -12,7 +12,7 @@ Authoritative `PASS` evaluated at commit `EVAL_COMMIT_PLACEHOLDER`
 | Draft PR | #14 |
 | Owner closure comment | `5200642850` |
 | Reviewed head before closures | `9f8681e9a22283a97caca28c04b685fbaea47272` |
-| Evaluator digest | `EVAL_DIGEST_PLACEHOLDER` |
+| Evaluator digest | `9f158ba0f8c95228817fc80be9ed63ade69c4f6b7e1d43788760ea1f6115680b` |
 | Corpus lock digest | `647cb722b8ca5bc83b7ec77bfa612c97429ead61e36f10d47db75ade269941fb` |
 
 ## Closures
