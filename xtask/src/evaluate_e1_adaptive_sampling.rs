@@ -795,12 +795,17 @@ fn scope_exclusion_scan(root: &Path) -> Result<ExclusionScan, Box<dyn std::error
             }
         }
     }
-    let import_needles = [
+    // Match real import lines only (not string-literal needles in this evaluator).
+    let import_prefixes = [
         "use wgpu",
         "use egui",
         "use eframe",
+        "pub use wgpu",
+        "pub use egui",
+        "pub use eframe",
         "extern crate wgpu",
         "extern crate egui",
+        "extern crate eframe",
     ];
     for dir in ["crates", "xtask/src"] {
         for path in walkdir_rs(&root.join(dir))? {
@@ -808,9 +813,23 @@ fn scope_exclusion_scan(root: &Path) -> Result<ExclusionScan, Box<dyn std::error
                 continue;
             }
             let text = std::fs::read_to_string(&path).unwrap_or_default();
-            for pat in import_needles {
-                if text.contains(pat) {
-                    hits.push(format!("{}:{pat}", path.strip_prefix(root)?.display()));
+            for (lineno, raw) in text.lines().enumerate() {
+                let code = raw.split("//").next().unwrap_or("").trim();
+                for pat in import_prefixes {
+                    if !code.starts_with(pat) {
+                        continue;
+                    }
+                    let boundary_ok = code
+                        .as_bytes()
+                        .get(pat.len())
+                        .is_none_or(|b| matches!(b, b':' | b';' | b' ' | b'\t'));
+                    if boundary_ok {
+                        hits.push(format!(
+                            "{}:{}:{pat}",
+                            path.strip_prefix(root)?.display(),
+                            lineno + 1
+                        ));
+                    }
                 }
             }
         }
