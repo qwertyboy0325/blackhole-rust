@@ -2,45 +2,48 @@
 
 ## Result
 
-Owner closure `5201409295` complete. Authoritative evaluate **PASS** with full
-repeat determinism, semantic evaluator checks, and scientific Pareto/failure
-dimensions. Hypothesis classification updated under those semantics.
+Owner closure `5201833970` complete. Authoritative evaluate **PASS** with full
+final scientific exactness, corrected matched-budget hypothesis semantics,
+explicit optional scientific dimensions, structured failure categories, and
+repeat `outcome-disagreement.pgm` comparison.
 
 | Item | Value |
 | --- | --- |
 | Approved base | `86dd63dc537d5e4f41f5e798f5f30a4e3694558e` |
-| Evaluated commit | `815b1780447491e7085e8045f2b5706e533f0101` |
+| Evaluated commit | `d1f5a60898ac229450a78e533544fd57b991961f` |
 | Tracking | GitHub Issue #12 / Draft PR #15 |
 | E0 lock digest | `647cb722b8ca5bc83b7ec77bfa612c97429ead61e36f10d47db75ade269941fb` |
 | Baseline oracle digest | `ee3c2c92f94ec291c172696fb9a4e75bccdea1bd019d20a74a9a4b3439eeb383` |
-| Experiment digest | `8f335b68cfcdade8d42b87fff88af8c6a2eb13dfc281d6bd09492801a1a39688` |
-| Evaluate digest | `fcabe78e0374df45d60d0f397683faee3bc5140cace30d34b4311c9fed582a40` |
+| Experiment digest | `f1690e46caf2fee90fab0b92d1d9c19b783d9b868c1de447870217e39bb2932f` |
+| Evaluate digest | `4d84e629a2a885cab93996caef6a7c7291a206c544e2c23212ac308f2d64e3b9` |
 | Hypothesis classification | `NOT_SUPPORTED_ON_E0_CORPUS` |
 | Recommendation | `PAUSE_RESEARCH_WEDGE` |
 
 ```text
-E1 core implementation          PASS
-E1 hypothesis result            NOT_SUPPORTED_ON_E0_CORPUS
-Repeat determinism evidence     PASS
-Evaluator semantic closure      PASS
-Pareto/failure semantics        PASS
-PR #15                          DRAFT / NOT MERGED
-E2 / Gate 2B2                   NOT STARTED
+E1 implementation core           PASS
+CI                               (tip CI after push)
+Authoritative evaluator          PASS
+NOT_SUPPORTED classification     FINAL (recomputed; not ray-count artifact)
+PR #15                           DRAFT / NOT MERGED
+Performance planning prompt      HOLD
+E2 / Gate 2B2                    NOT STARTED
 ```
 
-## Closure checks (owner blockers)
+## Closure checks (`5201833970`)
 
-1. **Repeat determinism** — both boundary crops re-run physics-aware; sample
-   schedules, PPM/PGM, metrics JSON, and curve digests (points only) match the
-   canonical publish.
-2. **Evaluator semantics** — validates 8×3×5 matrix + artifacts, ablation
-   3×5×5, sample parity = 0, finite metrics, final full-coverage exactness,
-   scope exclusions via Cargo deps + real import lines (not comment/string
-   mentions).
-3. **Pareto / failure** — primary dimensions include ray count, outcome
-   disagreement, RGB MSE, celestial angular RMSE, and `log2(I_obs)` RMSE when
-   present. Failure records include target/provenance coordinates, leaf
-   rectangle/depth, and feature vector at last split when applicable.
+1. **Final scientific exactness** — finals require exact ray counts
+   (`16384` source / `4096` crop), RGB exact, parity zero, outcome/RHS/presence
+   zero, and all applicable scientific scalars exact zero.
+2. **Matched-budget hypothesis** — cross-method wins use
+   `error_improves_at_matched_budget` (no `cand.rays <= base.rays` double gate).
+   Same-method frontier still uses ray-aware `dominates`. After correction,
+   classification remains `NOT_SUPPORTED_ON_E0_CORPUS` (physics-aware still does
+   not meet the crop/source win thresholds).
+3. **Optional scientific metrics** — mixed `Some`/`None` on an applicable
+   dimension blocks dominance and matched wins; case-level consistency checked.
+4. **Failure + repeat** — `failure-analysis.json` includes
+   observed/not-observed categories; repeat byte-compares
+   `outcome-disagreement.pgm`.
 
 ## Matrix
 
@@ -56,28 +59,19 @@ Sampler APIs take scene/domain/method/trace callback only. `OracleFrame` and
 reference PPM are consumed only after reconstruction for metrics and
 selected-sample parity.
 
-## Uniform observed final ray counts
-
-- Source 128² finals: `16384` unique rays
-- Crop 64² finals: `4096` unique rays
-
-Adaptive budgets are derived from the corresponding uniform ladder counts.
-
 ## Claim boundary
 
-E1 evaluate PASS does not require hypothesis support. Under full scientific
-Pareto dimensions, physics-aware does not Pareto-beat both baselines on the
-committed boundary crops or on ≥1 source case under the stated evidence rule
-(`min_points=2`). Prior provisional `MIXED_ON_E0_CORPUS` (RGB/outcome-only) is
-superseded; owner allowed classification to change after semantic closure.
+E1 evaluate PASS does not require hypothesis support. Corpus-bounded result is
+`NOT_SUPPORTED_ON_E0_CORPUS` under corrected matched-budget and optional-metric
+semantics. Recommendation: `PAUSE_RESEARCH_WEDGE`.
 
 ## Exclusions confirmed
 
 E2 ray differentials, E3 ray bundles, Gate 2B2, spectra, physical RGB, OpenEXR,
-GPU, wgpu, egui, and GUI were not started.
+GPU, wgpu, egui, and GUI were not started. Execution-performance restructuring
+remains HOLD until after owner accepts merge.
 
 ## Owner review
 
-Stop at E1 research review. Do not merge until owner accepts classification and
-`PAUSE_RESEARCH_WEDGE`. Do not start E2 / Gate 2B2 without explicit
-authorization.
+Stop at E1 research review. Do not merge until owner accepts. Do not start
+performance restructuring or E2 / Gate 2B2 without explicit authorization.
