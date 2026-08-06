@@ -11,10 +11,14 @@ use crate::render_tier::{
 use crate::trace_outcome_map::{
     resolve_execution, write_trace_execution_report, CliExecution, TRACE_EXECUTION_FILENAME,
 };
+use relativity_core::EquatorialAngularDirection;
 use relativity_render::{
-    procedural_coordinate_grid_v1, procedural_texture_spec_digest, render_lensed_celestial,
-    validate_mode_surface_set, verify_lensed_celestial_frame, LensedCelestialMode,
-    ProceduralCelestialTextureSpec, TEXTURE_ID_V1,
+    build_disk_frequency_shift_frame, build_disk_frequency_shift_map_artifact,
+    g_visualization_range_counts, procedural_coordinate_grid_v1, procedural_texture_spec_digest,
+    render_lensed_celestial, shade_g_factor_debug, validate_mode_surface_set,
+    verify_lensed_celestial_frame, verify_observer_unit_frequency, DiskFrequencyShiftConvention,
+    DiskVelocityModel, FrequencyShiftError, FrequencyShiftRegressionSample, LensedCelestialMode,
+    ProceduralCelestialTextureSpec, RankedFrequencyShiftPixel, TEXTURE_ID_V1,
 };
 use relativity_trace::{
     build_celestial_coordinate_frame, build_celestial_coordinate_map_artifact, encode_ppm, hex_sha,
@@ -63,6 +67,8 @@ pub struct LensedCelestialReport {
     pub resolved_boundary_radius: f64,
     pub radius_policy: String,
     pub mapping_failure_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_frequency_shift: Option<DiskFrequencyShiftOutputReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_wall_clock_seconds: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -70,6 +76,36 @@ pub struct LensedCelestialReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub render_wall_clock_seconds: Option<f64>,
     pub content_digest_excluding_digest_field: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DiskFrequencyShiftOutputReport {
+    pub observer_frequency_verification_passes: u32,
+    pub frequency_shift_passes: u32,
+    pub convention: DiskFrequencyShiftConvention,
+    pub velocity_model: DiskVelocityModel,
+    pub resolved_direction: EquatorialAngularDirection,
+    pub disk_hit_count: u64,
+    pub mapped_count: u64,
+    pub mapping_failure_count: u64,
+    pub redshifted_count: u64,
+    pub blueshifted_count: u64,
+    pub exact_unity_count: u64,
+    pub minimum_g: Option<RankedFrequencyShiftPixel>,
+    pub maximum_g: Option<RankedFrequencyShiftPixel>,
+    pub closest_to_unity: Option<RankedFrequencyShiftPixel>,
+    pub maximum_abs_disk_radius_residual: f64,
+    pub maximum_observer_unit_frequency_residual: f64,
+    pub frequency_shift_digest: String,
+    pub frequency_shift_json_digest: String,
+    pub g_factor_debug_ppm_digest: String,
+    pub below_visualization_range_count: u64,
+    pub above_visualization_range_count: u64,
+    pub regression_corpus: Vec<FrequencyShiftRegressionSample>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_wall_clock_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mapping_wall_clock_seconds: Option<f64>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -85,6 +121,7 @@ pub fn run(
     require_release: bool,
     execution: CliExecution,
     threads: Option<usize>,
+    emit_disk_frequency_shift: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let build = BuildExecutionMetadata::current();
     if require_release {
@@ -94,6 +131,14 @@ pub fn run(
     validate_mode_surface_set(mode, surface_set)
         .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
 
+    if emit_disk_frequency_shift
+        && !(surface_set == TraceSurfaceSet::OpaqueDiskHorizonEscape
+            && mode == LensedCelestialMode::OpaqueDiskMask)
+    {
+        return Err(FrequencyShiftError::FlagSurfaceModeMismatch
+            .to_string()
+            .into());
+    }
     if texture_id != TEXTURE_ID_V1 {
         return Err(format!(
             "unsupported --texture `{texture_id}`; only `{TEXTURE_ID_V1}` is accepted"
@@ -230,6 +275,85 @@ pub fn run(
     debug_assert_eq!(hex_sha(&lensed_ppm), lensed.ppm_digest);
     std::fs::write(out_dir.join(&lensed_ppm_filename), &lensed_ppm)?;
 
+    // ---- Phase 4 (optional): observer ν verification + disk frequency-shift ----
+    let disk_frequency_shift = if emit_disk_frequency_shift {
+        let t_ver = Instant::now();
+        let verification = verify_observer_unit_frequency(&scene.kerr, &scene)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+        let verification_wall = t_ver.elapsed().as_secs_f64();
+
+        let t_fs = Instant::now();
+        let fs_frame = build_disk_frequency_shift_frame(
+            &scene.kerr,
+            &bundle,
+            DiskVelocityModel::ProgradeCircularGeodesic,
+        )
+        .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+        let fs_convention = DiskFrequencyShiftConvention::v1();
+        let fs_art =
+            build_disk_frequency_shift_map_artifact(&fs_frame, &fs_convention, verification);
+        if fs_art.mapping_failure_count != 0 {
+            return Err("frequency-shift mapping_failure_count != 0".into());
+        }
+        if fs_art.mapped_count != fs_art.disk_hit_count {
+            return Err("frequency-shift mapped_count != disk_hit_count".into());
+        }
+        if fs_art.disk_hit_count != counts.disk_hit {
+            return Err("frequency-shift disk_hit_count disagrees with outcome_counts".into());
+        }
+        let mapping_fs_wall = t_fs.elapsed().as_secs_f64();
+
+        let fs_json = serde_json::to_vec_pretty(&fs_art)?;
+        let frequency_shift_json_digest = hex_sha(&fs_json);
+        std::fs::write(out_dir.join("disk-frequency-shift-map.json"), &fs_json)?;
+
+        let g_frame = shade_g_factor_debug(&fs_frame);
+        let g_ppm = encode_ppm(&g_frame);
+        let g_factor_debug_ppm_digest = hex_sha(&g_ppm);
+        std::fs::write(out_dir.join("g-factor-debug.ppm"), &g_ppm)?;
+        let (below, above) = g_visualization_range_counts(&fs_frame);
+
+        let resolved_direction = fs_frame
+            .pixels()
+            .iter()
+            .find_map(|p| match p {
+                relativity_render::DiskFrequencyShiftPixel::DiskHit(s) => {
+                    Some(s.resolved_direction)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| relativity_core::prograde_equatorial_direction(&scene.kerr));
+
+        Some(DiskFrequencyShiftOutputReport {
+            observer_frequency_verification_passes: 1,
+            frequency_shift_passes: 1,
+            convention: fs_convention,
+            velocity_model: DiskVelocityModel::ProgradeCircularGeodesic,
+            resolved_direction,
+            disk_hit_count: fs_art.disk_hit_count,
+            mapped_count: fs_art.mapped_count,
+            mapping_failure_count: fs_art.mapping_failure_count,
+            redshifted_count: fs_art.redshifted_count,
+            blueshifted_count: fs_art.blueshifted_count,
+            exact_unity_count: fs_art.exact_unity_count,
+            minimum_g: fs_art.minimum_g.clone(),
+            maximum_g: fs_art.maximum_g.clone(),
+            closest_to_unity: fs_art.closest_to_unity.clone(),
+            maximum_abs_disk_radius_residual: fs_art.maximum_abs_disk_radius_residual,
+            maximum_observer_unit_frequency_residual: verification.maximum_residual,
+            frequency_shift_digest: fs_art.frequency_shift_digest.clone(),
+            frequency_shift_json_digest,
+            g_factor_debug_ppm_digest,
+            below_visualization_range_count: below,
+            above_visualization_range_count: above,
+            regression_corpus: fs_art.regression_corpus.clone(),
+            verification_wall_clock_seconds: Some(verification_wall),
+            mapping_wall_clock_seconds: Some(mapping_fs_wall),
+        })
+    } else {
+        None
+    };
+
     write_build_execution_report(&out_dir, &build)?;
     write_trace_execution_report(&out_dir, &exec_meta)?;
 
@@ -267,6 +391,7 @@ pub fn run(
         resolved_boundary_radius: scene.escape_radius,
         radius_policy: RADIUS_POLICY_GATE_1B2_CAP.into(),
         mapping_failure_count: art.mapping_failure_count,
+        disk_frequency_shift,
         trace_wall_clock_seconds: Some(trace_wall),
         mapping_wall_clock_seconds: Some(mapping_wall),
         render_wall_clock_seconds: Some(render_wall),
@@ -335,6 +460,31 @@ fn summarize_bundle(bundle: &relativity_trace::TraceBundle) -> (OutcomeCounts, u
 
 pub fn content_digest(report: &LensedCelestialReport) -> String {
     #[derive(Serialize)]
+    struct FreqProj<'a> {
+        observer_frequency_verification_passes: u32,
+        frequency_shift_passes: u32,
+        convention: &'a DiskFrequencyShiftConvention,
+        velocity_model: DiskVelocityModel,
+        resolved_direction: EquatorialAngularDirection,
+        disk_hit_count: u64,
+        mapped_count: u64,
+        mapping_failure_count: u64,
+        redshifted_count: u64,
+        blueshifted_count: u64,
+        exact_unity_count: u64,
+        minimum_g: &'a Option<RankedFrequencyShiftPixel>,
+        maximum_g: &'a Option<RankedFrequencyShiftPixel>,
+        closest_to_unity: &'a Option<RankedFrequencyShiftPixel>,
+        maximum_abs_disk_radius_residual_bits: u64,
+        maximum_observer_unit_frequency_residual_bits: u64,
+        frequency_shift_digest: &'a str,
+        frequency_shift_json_digest: &'a str,
+        g_factor_debug_ppm_digest: &'a str,
+        below_visualization_range_count: u64,
+        above_visualization_range_count: u64,
+        regression_corpus: &'a [FrequencyShiftRegressionSample],
+    }
+    #[derive(Serialize)]
     struct Proj<'a> {
         schema_version: u32,
         width: u32,
@@ -368,8 +518,36 @@ pub fn content_digest(report: &LensedCelestialReport) -> String {
         resolved_boundary_radius_bits: u64,
         radius_policy: &'a str,
         mapping_failure_count: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        disk_frequency_shift: Option<FreqProj<'a>>,
         content_digest_excluding_digest_field: &'a str,
     }
+    let freq = report.disk_frequency_shift.as_ref().map(|f| FreqProj {
+        observer_frequency_verification_passes: f.observer_frequency_verification_passes,
+        frequency_shift_passes: f.frequency_shift_passes,
+        convention: &f.convention,
+        velocity_model: f.velocity_model,
+        resolved_direction: f.resolved_direction,
+        disk_hit_count: f.disk_hit_count,
+        mapped_count: f.mapped_count,
+        mapping_failure_count: f.mapping_failure_count,
+        redshifted_count: f.redshifted_count,
+        blueshifted_count: f.blueshifted_count,
+        exact_unity_count: f.exact_unity_count,
+        minimum_g: &f.minimum_g,
+        maximum_g: &f.maximum_g,
+        closest_to_unity: &f.closest_to_unity,
+        maximum_abs_disk_radius_residual_bits: f.maximum_abs_disk_radius_residual.to_bits(),
+        maximum_observer_unit_frequency_residual_bits: f
+            .maximum_observer_unit_frequency_residual
+            .to_bits(),
+        frequency_shift_digest: &f.frequency_shift_digest,
+        frequency_shift_json_digest: &f.frequency_shift_json_digest,
+        g_factor_debug_ppm_digest: &f.g_factor_debug_ppm_digest,
+        below_visualization_range_count: f.below_visualization_range_count,
+        above_visualization_range_count: f.above_visualization_range_count,
+        regression_corpus: &f.regression_corpus,
+    });
     let proj = Proj {
         schema_version: report.schema_version,
         width: report.width,
@@ -403,6 +581,7 @@ pub fn content_digest(report: &LensedCelestialReport) -> String {
         resolved_boundary_radius_bits: report.resolved_boundary_radius.to_bits(),
         radius_policy: &report.radius_policy,
         mapping_failure_count: report.mapping_failure_count,
+        disk_frequency_shift: freq,
         content_digest_excluding_digest_field: "",
     };
     hex_sha(&serde_json::to_vec(&proj).expect("serialize"))
@@ -478,6 +657,7 @@ mod tests {
             resolved_boundary_radius: 80.0,
             radius_policy: RADIUS_POLICY_GATE_1B2_CAP.into(),
             mapping_failure_count: 0,
+            disk_frequency_shift: None,
             trace_wall_clock_seconds: Some(1.0),
             mapping_wall_clock_seconds: Some(0.1),
             render_wall_clock_seconds: Some(0.01),
@@ -495,6 +675,47 @@ mod tests {
         assert_eq!(content_digest(&a), content_digest(&b));
         a.mode = LensedCelestialMode::OpaqueDiskMask;
         a.surface_set = TraceSurfaceSet::OpaqueDiskHorizonEscape;
+        assert_ne!(content_digest(&a), content_digest(&b));
+    }
+
+    #[test]
+    fn frequency_timing_excluded_from_report_digest() {
+        let mut a = sample_report();
+        a.disk_frequency_shift = Some(DiskFrequencyShiftOutputReport {
+            observer_frequency_verification_passes: 1,
+            frequency_shift_passes: 1,
+            convention: DiskFrequencyShiftConvention::v1(),
+            velocity_model: DiskVelocityModel::ProgradeCircularGeodesic,
+            resolved_direction: EquatorialAngularDirection::PositivePhi,
+            disk_hit_count: 1,
+            mapped_count: 1,
+            mapping_failure_count: 0,
+            redshifted_count: 0,
+            blueshifted_count: 1,
+            exact_unity_count: 0,
+            minimum_g: None,
+            maximum_g: None,
+            closest_to_unity: None,
+            maximum_abs_disk_radius_residual: 0.0,
+            maximum_observer_unit_frequency_residual: 0.0,
+            frequency_shift_digest: "fs".into(),
+            frequency_shift_json_digest: "fj".into(),
+            g_factor_debug_ppm_digest: "gp".into(),
+            below_visualization_range_count: 0,
+            above_visualization_range_count: 0,
+            regression_corpus: vec![],
+            verification_wall_clock_seconds: Some(0.01),
+            mapping_wall_clock_seconds: Some(0.02),
+        });
+        let mut b = a.clone();
+        if let Some(f) = b.disk_frequency_shift.as_mut() {
+            f.verification_wall_clock_seconds = Some(9.0);
+            f.mapping_wall_clock_seconds = Some(8.0);
+        }
+        assert_eq!(content_digest(&a), content_digest(&b));
+        if let Some(f) = b.disk_frequency_shift.as_mut() {
+            f.frequency_shift_digest = "changed".into();
+        }
         assert_ne!(content_digest(&a), content_digest(&b));
     }
 }

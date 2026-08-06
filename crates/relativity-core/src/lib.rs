@@ -5,9 +5,11 @@
 
 #![forbid(unsafe_code)]
 
+pub mod circular_orbit;
 pub mod coords;
 pub mod corpus;
 pub mod error;
+pub mod frequency;
 pub mod hamiltonian;
 pub mod kerr;
 pub mod metric;
@@ -16,6 +18,10 @@ pub mod radius;
 pub mod ray_init;
 pub mod types;
 
+pub use circular_orbit::{
+    circular_equatorial_geodesic_bl, prograde_equatorial_direction, CircularEquatorialOrbit,
+    EquatorialAngularDirection,
+};
 pub use coords::{
     bl_metric, bl_to_ks_position, cartesian_from_spherical_ks, covector_bl_to_ks,
     covector_ks_to_bl, jacobian_cartesian_ks_from_bl, ks_to_bl_position,
@@ -25,6 +31,10 @@ pub use coords::{
 };
 pub use corpus::{stratified_corpus, CorpusPoint, CorpusTag, ExpectedOutcome, CORPUS_SEED};
 pub use error::{CoreError, DomainReason, EvalStatus};
+pub use frequency::{
+    contract_covector_vector, frequency_shift_ratio, measured_frequency_from_backward_covector,
+    measured_frequency_from_future_covector, FrequencyShift, MeasuredFrequency,
+};
 pub use hamiltonian::{evaluate_hamiltonian, HamiltonianEval};
 pub use kerr::KerrParams;
 pub use metric::{
