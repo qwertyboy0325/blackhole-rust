@@ -7,14 +7,17 @@ use crate::e1_adaptive_sampling::config::{
     E1Config, APPROVED_BASE, REQUIRED_BASELINE_ORACLE_DIGEST, REQUIRED_LOCK_DIGEST,
 };
 use crate::e1_adaptive_sampling::metrics::final_scientific_exact;
+use crate::e1_adaptive_sampling::reference_session;
 use crate::e1_adaptive_sampling::report::{
     case_optional_metric_consistency, classify_hypothesis, E1ExperimentReport,
 };
+use crate::trace_outcome_map::CliExecution;
 use relativity_trace::hex_sha;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Instant;
 
 const SOURCE_CASES: [&str; 6] = [
     "kerr0999-edge-opaque",
@@ -174,8 +177,34 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(1);
     let smoke_threads = threads.min(2);
 
-    let smoke_a = root.join("artifacts/e1-adaptive-sampling/determinism-smoke-t1");
-    let smoke_b = root.join("artifacts/e1-adaptive-sampling/determinism-smoke-tN");
+    let artifact_root = root.join("artifacts/e1-adaptive-sampling");
+    std::fs::create_dir_all(&artifact_root)?;
+    let shared_ref = artifact_root.join("shared-reference");
+    let t_ref = Instant::now();
+    let session = reference_session::materialize(
+        &root,
+        &cfg,
+        &shared_ref,
+        CliExecution::Parallel,
+        Some(threads),
+        true,
+    )?;
+    let reference_wall = if session.materialize_wall_seconds > 0.0 {
+        session.materialize_wall_seconds
+    } else {
+        t_ref.elapsed().as_secs_f64()
+    };
+    push(
+        &mut checks,
+        "shared_reference_validated",
+        true,
+        format!("lock={} wall_s={reference_wall:.3}", session.lock_digest),
+    );
+    let ref_arg = shared_ref.to_string_lossy().into_owned();
+
+    let smoke_a = artifact_root.join("determinism-smoke-t1");
+    let smoke_b = artifact_root.join("determinism-smoke-tN");
+    let t_smoke = Instant::now();
     run_experiment(
         &root,
         &smoke_a,
@@ -186,6 +215,10 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             "--maximum-budget-level",
             "3",
             "--skip-ablations",
+            "--reference-dir",
+            &ref_arg,
+            "--write-artifacts",
+            "minimal",
         ],
     )?;
     run_experiment(
@@ -198,8 +231,13 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             "--maximum-budget-level",
             "3",
             "--skip-ablations",
+            "--reference-dir",
+            &ref_arg,
+            "--write-artifacts",
+            "minimal",
         ],
     )?;
+    let smoke_wall = t_smoke.elapsed().as_secs_f64();
     let smoke_cmp = compare_case_method_tree(
         &smoke_a.join("cases/kerr0999-edge-sky-boundary-crop"),
         &smoke_b.join("cases/kerr0999-edge-sky-boundary-crop"),
@@ -219,13 +257,16 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Full canonical experiment
-    let full = root.join("artifacts/e1-adaptive-sampling");
-    // Preserve smoke dirs under full by writing canonical into a staging then merging?
-    // run_experiment wipes output dir — smokes live as siblings under e1-adaptive-sampling/
-    // so wipe would delete them. Use dedicated canonical dir then copy summaries up? Spec
-    // uses artifacts/e1-adaptive-sampling/. Keep smokes outside wipe by using subdir:
-    let canonical = root.join("artifacts/e1-adaptive-sampling/canonical");
-    run_experiment(&root, &canonical, threads, &[])?;
+    let full = artifact_root.clone();
+    let canonical = artifact_root.join("canonical");
+    let t_canon = Instant::now();
+    run_experiment(
+        &root,
+        &canonical,
+        threads,
+        &["--reference-dir", &ref_arg, "--write-artifacts", "full"],
+    )?;
+    let canon_wall = t_canon.elapsed().as_secs_f64();
     // Publish canonical tree as the main artifact root contents (without deleting smokes).
     publish_canonical(&canonical, &full)?;
 
@@ -309,6 +350,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     // Repeat both boundary crops, physics-aware full ladder, compare to canonical.
     let mut repeat_ok = true;
     let mut repeat_detail = Vec::new();
+    let t_repeat = Instant::now();
     for crop in CROP_CASES {
         let rep = full.join(format!("repeat-{crop}"));
         run_experiment(
@@ -321,6 +363,10 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
                 "--method",
                 "physics-aware",
                 "--skip-ablations",
+                "--reference-dir",
+                &ref_arg,
+                "--write-artifacts",
+                "minimal",
             ],
         )?;
         let diffs = compare_case_method_tree(
@@ -355,6 +401,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             repeat_detail.push(format!("{crop}: curve digest mismatch"));
         }
     }
+    let repeat_wall = t_repeat.elapsed().as_secs_f64();
     push(
         &mut checks,
         "repeat_crop_determinism",
@@ -401,6 +448,21 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     eval.content_digest_excluding_digest_field = digest.clone();
 
     std::fs::create_dir_all(&full)?;
+    let profile = serde_json::json!({
+        "note": "non-binding performance profile; not part of scientific PASS",
+        "reference_generation_or_validate_wall_seconds": reference_wall,
+        "smoke_wall_seconds": smoke_wall,
+        "canonical_wall_seconds": canon_wall,
+        "repeat_wall_seconds": repeat_wall,
+        "subprocess_count_experiments": 5,
+        "shared_reference_dir": ref_arg,
+        "ladder_mode": "progressive",
+        "pool_policy": "one_per_experiment_process",
+    });
+    std::fs::write(
+        full.join("execution-profile.json"),
+        serde_json::to_vec_pretty(&profile)?,
+    )?;
     std::fs::write(
         full.join("evaluation.json"),
         serde_json::to_vec_pretty(&eval)?,

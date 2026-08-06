@@ -10,11 +10,13 @@ use crate::e1_adaptive_sampling::metrics::{
     final_scientific_exact, verify_selected_sample_parity,
 };
 use crate::e1_adaptive_sampling::quadtree::{
-    stencil_source_indices, DomainMapping, PixelRect, QuadCell,
+    build_uniform_leaves, stencil_source_indices, uniform_unique_ray_count, DomainMapping,
+    PixelRect, QuadCell,
 };
 use crate::e1_adaptive_sampling::reconstruct::{
     encode_leaf_depth_pgm, encode_reconstruction_ppm, encode_sample_mask_pgm, reconstruct,
 };
+use crate::e1_adaptive_sampling::reference_session;
 use crate::e1_adaptive_sampling::report::{
     build_worst_pixel_records, classify_hypothesis, write_experiment_reports, CurvePoint,
     E1CaseReport, E1ExperimentReport, MatchedComparison, MethodCurve, ScheduleEvent,
@@ -23,7 +25,6 @@ use crate::e1_adaptive_sampling::sample::{SampleCache, TraceContext};
 use crate::e1_adaptive_sampling::score::{
     priority_cmp, score_cell, FeatureVector, MethodId, PriorityKey,
 };
-use crate::oracle_benchmark;
 use crate::preset::load_preset;
 use crate::trace_outcome_map::{resolve_execution, CliExecution};
 use relativity_oracle::{OracleChannelSet, OracleFrame, PixelCrop};
@@ -35,12 +36,41 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LadderMode {
+    Progressive,
+    Cold,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteArtifacts {
+    Full,
+    Minimal,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ExperimentFilters {
     pub case: Option<String>,
     pub method: Option<MethodId>,
     pub maximum_budget_level: Option<usize>,
     pub skip_ablations: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExperimentOptions {
+    pub reference_dir: Option<PathBuf>,
+    pub ladder: LadderMode,
+    pub write_artifacts: WriteArtifacts,
+}
+
+impl Default for ExperimentOptions {
+    fn default() -> Self {
+        Self {
+            reference_dir: None,
+            ladder: LadderMode::Progressive,
+            write_artifacts: WriteArtifacts::Full,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -114,6 +144,7 @@ pub fn run(
     threads: Option<usize>,
     require_release: bool,
     filters: ExperimentFilters,
+    options: ExperimentOptions,
 ) -> Result<(), Box<dyn Error>> {
     let t0 = Instant::now();
     let build = BuildExecutionMetadata::current();
@@ -134,24 +165,21 @@ pub fn run(
         .into());
     }
 
-    // Regenerate E0 reference with skip lock update.
-    let ref_dir = out.join("reference");
-    let _ = std::fs::remove_dir_all(&ref_dir);
-    std::fs::create_dir_all(&ref_dir)?;
-    let t_oracle = Instant::now();
-    oracle_benchmark::run(
-        &cfg.oracle_manifest,
-        ref_dir.to_str().ok_or("ref dir utf8")?,
-        execution,
-        threads,
-        require_release,
-        false, // do not update committed lock
-    )?;
-    let oracle_wall = t_oracle.elapsed().as_secs_f64();
-    let regen_lock = std::fs::read(ref_dir.join("corpus-lock-v1.json"))?;
-    if regen_lock != committed_lock {
-        return Err("regenerated lock bytes != committed lock".into());
-    }
+    let (ref_dir, oracle_wall) = if let Some(shared) = &options.reference_dir {
+        let session = reference_session::validate_existing(shared, &committed_lock)?;
+        (session.root, session.materialize_wall_seconds)
+    } else {
+        let ref_dir = out.join("reference");
+        let session = reference_session::materialize(
+            &root,
+            &cfg,
+            &ref_dir,
+            execution,
+            threads,
+            require_release,
+        )?;
+        (session.root, session.materialize_wall_seconds)
+    };
 
     let manifest: CorpusManifest = toml::from_str(&std::fs::read_to_string(resolve(
         &root,
@@ -171,6 +199,16 @@ pub fn run(
         CliExecution::Serial => None,
         CliExecution::Parallel => Some(resolve_execution(execution, threads)?.thread_count()),
     };
+    let owned_pool = parallel_threads
+        .filter(|t| *t > 1)
+        .map(|t| {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(t)
+                .build()
+                .map_err(|e| format!("rayon pool: {e}"))
+        })
+        .transpose()?;
+    let pool = owned_pool.as_ref();
 
     let mut case_reports = Vec::new();
     let mut ablation_reports = Vec::new();
@@ -204,6 +242,9 @@ pub fn run(
                 method,
                 &leaf_sizes[..max_level],
                 parallel_threads,
+                pool,
+                options.ladder,
+                options.write_artifacts,
                 &out.join("cases").join(&case.id).join(method_dir(method)),
             )?;
             method_curves.push(curve);
@@ -248,6 +289,9 @@ pub fn run(
                     method,
                     &leaf_sizes[..max_level],
                     parallel_threads,
+                    pool,
+                    options.ladder,
+                    options.write_artifacts,
                     &out.join("ablations").join(&case.id).join(method.as_str()),
                 )?;
                 ablation_reports.push(E1CaseReport {
@@ -417,12 +461,16 @@ fn recommendation_for(h: &str) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_method_ladder(
     cfg: &E1Config,
     case: &CaseSpec,
     method: MethodId,
     leaf_sizes: &[u32],
     parallel_threads: Option<usize>,
+    pool: Option<&rayon::ThreadPool>,
+    ladder: LadderMode,
+    write_artifacts: WriteArtifacts,
     out_root: &Path,
 ) -> Result<MethodCurve, Box<dyn Error>> {
     std::fs::create_dir_all(out_root)?;
@@ -441,171 +489,125 @@ fn run_method_ladder(
         mapping: case.mapping,
     };
 
-    // Uniform budgets first when adaptive.
-    let uniform_budgets = if method == MethodId::UniformQuadtreeV1 {
-        Vec::new()
-    } else {
-        let mut budgets = Vec::new();
-        for &leaf in leaf_sizes {
-            let mut cache = SampleCache::new();
-            let leaves = build_uniform_leaves(case.mapping.local_width(), leaf);
-            ensure_leaves_stencils(&mut cache, &ctx, &leaves, parallel_threads)?;
-            budgets.push(cache.unique_traced_rays());
-        }
-        budgets
-    };
+    let uniform_budgets: Vec<u64> = leaf_sizes
+        .iter()
+        .map(|&leaf| uniform_unique_ray_count(&case.mapping, leaf))
+        .collect();
 
     let mut points = Vec::new();
-    let mut prev_uniform_rays = Vec::new();
-
-    for (level, &leaf) in leaf_sizes.iter().enumerate() {
-        let t_case = Instant::now();
-        let mut cache = SampleCache::new();
-        let mut schedule = Vec::new();
-        let leaves = if method == MethodId::UniformQuadtreeV1 {
-            let leaves = build_uniform_leaves(case.mapping.local_width(), leaf);
-            let newly = ensure_leaves_stencils(&mut cache, &ctx, &leaves, parallel_threads)?;
-            schedule.push(ScheduleEvent {
-                step: 0,
-                requested_target: cache.unique_traced_rays(),
-                actual_unique_rays: cache.unique_traced_rays(),
-                overshoot: 0,
-                selected: None,
-                score: None,
-                features: None,
-                newly_traced: newly,
-                leaf_count: leaves.len() as u64,
-                max_depth: leaves.iter().map(|l| l.depth).max().unwrap_or(0),
-            });
-            prev_uniform_rays.push(cache.unique_traced_rays());
-            leaves
-        } else {
-            let target = uniform_budgets[level];
-            run_adaptive(
-                cfg,
-                method,
-                &ctx,
-                &mut cache,
-                target,
-                parallel_threads,
-                &mut schedule,
-            )?
-        };
-
-        let t_recon = Instant::now();
-        let mut recon = reconstruct(
-            case.mapping.local_width(),
-            case.mapping.local_height(),
-            &leaves,
-            cache.samples(),
-        )?;
-        // Patch target source coordinates for each local pixel.
-        for p in &mut recon.pixels {
-            let sp = case.mapping.local_to_source(p.local_col, p.local_row);
-            p.source_col = sp.source_col;
-            p.source_row = sp.source_row;
-            p.source_index = sp.source_index(case.mapping.source_width);
-        }
-        let recon_s = t_recon.elapsed().as_secs_f64();
-
-        let sample_refs: Vec<&_> = cache.samples().values().collect();
-        let parity =
-            verify_selected_sample_parity(&sample_refs, &case.oracle, &case.reference_ppm)?;
-        if parity.selected_sample_mismatch_count != 0 {
-            return Err(format!(
-                "selected sample mismatch on {}/{}: {:?}",
-                case.id,
-                method.as_str(),
-                parity
-            )
-            .into());
-        }
-
-        let t_metric = Instant::now();
-        let sci = compare_reconstruction_to_oracle(&case.oracle, &recon)?;
-        let ppm = encode_reconstruction_ppm(&recon);
-        let rgb = compare_reconstruction_rgb(&case.reference_ppm, &ppm)?;
-        let worst_pixels = build_worst_pixel_records(
-            &case.oracle,
-            &recon,
-            &leaves,
-            &schedule,
-            &sci,
-            &case.reference_ppm,
-        );
-        let metric_s = t_metric.elapsed().as_secs_f64();
-
-        // Full-domain coverage finals: source leaf=2 stencils cover every pixel;
-        // crop leaf=1 traces every pixel. Intermediate filtered ladders must not
-        // be held to exact reconstruction.
-        let is_full_coverage_final = leaf == 1 || (!case.is_crop && leaf == 2);
-        if is_full_coverage_final {
-            if let Err(detail) = final_scientific_exact(
-                case.is_crop,
-                cache.unique_traced_rays(),
-                &sci,
-                &rgb,
-                &parity,
-            ) {
-                return Err(format!(
-                    "final full-coverage entry not exact for {}/{} leaf={leaf}: {detail}",
-                    case.id,
-                    method.as_str()
-                )
-                .into());
+    match ladder {
+        LadderMode::Cold => {
+            for (level, &leaf) in leaf_sizes.iter().enumerate() {
+                let mut cache = SampleCache::new();
+                let mut schedule = Vec::new();
+                let leaves = if method == MethodId::UniformQuadtreeV1 {
+                    let leaves = build_uniform_leaves(case.mapping.local_width(), leaf);
+                    let newly =
+                        ensure_leaves_stencils(&mut cache, &ctx, &leaves, parallel_threads, pool)?;
+                    schedule.push(ScheduleEvent {
+                        step: 0,
+                        requested_target: cache.unique_traced_rays(),
+                        actual_unique_rays: cache.unique_traced_rays(),
+                        overshoot: 0,
+                        selected: None,
+                        score: None,
+                        features: None,
+                        newly_traced: newly,
+                        leaf_count: leaves.len() as u64,
+                        max_depth: leaves.iter().map(|l| l.depth).max().unwrap_or(0),
+                    });
+                    leaves
+                } else {
+                    run_adaptive(
+                        cfg,
+                        method,
+                        &ctx,
+                        &mut cache,
+                        uniform_budgets[level],
+                        parallel_threads,
+                        pool,
+                        &mut schedule,
+                    )?
+                };
+                points.push(snapshot_budget(
+                    case,
+                    method,
+                    leaf,
+                    &cache,
+                    &leaves,
+                    &schedule,
+                    write_artifacts,
+                    out_root,
+                )?);
             }
         }
-
-        let budget_id = format!("leaf-{leaf}");
-        let dir = out_root.join(&budget_id);
-        std::fs::create_dir_all(&dir)?;
-        std::fs::write(dir.join("reconstruction.ppm"), &ppm)?;
-        let traced_locals: Vec<_> = cache
-            .samples()
-            .values()
-            .map(|s| (s.local_col, s.local_row))
-            .collect();
-        std::fs::write(
-            dir.join("sample-mask.pgm"),
-            encode_sample_mask_pgm(recon.width, recon.height, &traced_locals),
-        )?;
-        std::fs::write(
-            dir.join("leaf-depth.pgm"),
-            encode_leaf_depth_pgm(recon.width, recon.height, &leaves),
-        )?;
-        std::fs::write(
-            dir.join("outcome-disagreement.pgm"),
-            encode_outcome_disagreement_pgm(&case.oracle, &recon),
-        )?;
-        let sci_json = serde_json::to_vec_pretty(&sci)?;
-        std::fs::write(dir.join("scientific-error-summary.json"), sci_json)?;
-        std::fs::write(
-            dir.join("schedule-summary.json"),
-            serde_json::to_vec_pretty(&schedule)?,
-        )?;
-
-        let domain_rays = u64::from(recon.width) * u64::from(recon.height);
-        points.push(CurvePoint {
-            budget_id,
-            leaf_size: leaf,
-            unique_traced_rays: cache.unique_traced_rays(),
-            ray_fraction: cache.unique_traced_rays() as f64 / domain_rays as f64,
-            total_rhs_evaluations: cache.total_rhs_evaluations(),
-            mean_rhs_per_ray: if cache.unique_traced_rays() == 0 {
-                0.0
-            } else {
-                cache.total_rhs_evaluations() as f64 / cache.unique_traced_rays() as f64
-            },
-            maximum_rhs: cache.maximum_rhs(),
-            scientific: sci,
-            rgb,
-            sample_parity: parity,
-            schedule,
-            worst_pixels,
-            wall_clock_seconds: t_case.elapsed().as_secs_f64(),
-            reconstruction_wall_clock_seconds: recon_s,
-            metric_wall_clock_seconds: metric_s,
-        });
+        LadderMode::Progressive => {
+            let mut cache = SampleCache::new();
+            let mut schedule = Vec::new();
+            let mut leaves: Option<Vec<QuadCell>> = None;
+            for (level, &leaf) in leaf_sizes.iter().enumerate() {
+                let t_case = Instant::now();
+                let leaves_now = if method == MethodId::UniformQuadtreeV1 {
+                    let leaves = build_uniform_leaves(case.mapping.local_width(), leaf);
+                    let newly =
+                        ensure_leaves_stencils(&mut cache, &ctx, &leaves, parallel_threads, pool)?;
+                    schedule.push(ScheduleEvent {
+                        step: schedule.len() as u64,
+                        requested_target: uniform_budgets[level],
+                        actual_unique_rays: cache.unique_traced_rays(),
+                        overshoot: cache
+                            .unique_traced_rays()
+                            .saturating_sub(uniform_budgets[level]),
+                        selected: None,
+                        score: None,
+                        features: None,
+                        newly_traced: newly,
+                        leaf_count: leaves.len() as u64,
+                        max_depth: leaves.iter().map(|l| l.depth).max().unwrap_or(0),
+                    });
+                    leaves
+                } else {
+                    let target = uniform_budgets[level];
+                    if let Some(leaves_mut) = leaves.as_mut() {
+                        continue_adaptive(
+                            cfg,
+                            method,
+                            &ctx,
+                            &mut cache,
+                            leaves_mut,
+                            target,
+                            parallel_threads,
+                            pool,
+                            &mut schedule,
+                        )?;
+                    } else {
+                        let init = run_adaptive(
+                            cfg,
+                            method,
+                            &ctx,
+                            &mut cache,
+                            target,
+                            parallel_threads,
+                            pool,
+                            &mut schedule,
+                        )?;
+                        leaves = Some(init);
+                    }
+                    leaves.as_ref().unwrap().clone()
+                };
+                let _ = t_case;
+                points.push(snapshot_budget(
+                    case,
+                    method,
+                    leaf,
+                    &cache,
+                    &leaves_now,
+                    &schedule,
+                    write_artifacts,
+                    out_root,
+                )?);
+            }
+        }
     }
 
     Ok(MethodCurve {
@@ -615,6 +617,134 @@ fn run_method_ladder(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn snapshot_budget(
+    case: &CaseSpec,
+    method: MethodId,
+    leaf: u32,
+    cache: &SampleCache,
+    leaves: &[QuadCell],
+    schedule: &[ScheduleEvent],
+    write_artifacts: WriteArtifacts,
+    out_root: &Path,
+) -> Result<CurvePoint, Box<dyn Error>> {
+    let t_case = Instant::now();
+    let t_recon = Instant::now();
+    let mut recon = reconstruct(
+        case.mapping.local_width(),
+        case.mapping.local_height(),
+        leaves,
+        cache.samples(),
+    )?;
+    for p in &mut recon.pixels {
+        let sp = case.mapping.local_to_source(p.local_col, p.local_row);
+        p.source_col = sp.source_col;
+        p.source_row = sp.source_row;
+        p.source_index = sp.source_index(case.mapping.source_width);
+    }
+    let recon_s = t_recon.elapsed().as_secs_f64();
+
+    let sample_refs: Vec<&_> = cache.samples().values().collect();
+    let parity = verify_selected_sample_parity(&sample_refs, &case.oracle, &case.reference_ppm)?;
+    if parity.selected_sample_mismatch_count != 0 {
+        return Err(format!(
+            "selected sample mismatch on {}/{}: {:?}",
+            case.id,
+            method.as_str(),
+            parity
+        )
+        .into());
+    }
+
+    let t_metric = Instant::now();
+    let sci = compare_reconstruction_to_oracle(&case.oracle, &recon)?;
+    let ppm = encode_reconstruction_ppm(&recon);
+    let rgb = compare_reconstruction_rgb(&case.reference_ppm, &ppm)?;
+    let worst_pixels = build_worst_pixel_records(
+        &case.oracle,
+        &recon,
+        leaves,
+        schedule,
+        &sci,
+        &case.reference_ppm,
+    );
+    let metric_s = t_metric.elapsed().as_secs_f64();
+
+    let is_full_coverage_final = leaf == 1 || (!case.is_crop && leaf == 2);
+    if is_full_coverage_final {
+        if let Err(detail) = final_scientific_exact(
+            case.is_crop,
+            cache.unique_traced_rays(),
+            &sci,
+            &rgb,
+            &parity,
+        ) {
+            return Err(format!(
+                "final full-coverage entry not exact for {}/{} leaf={leaf}: {detail}",
+                case.id,
+                method.as_str()
+            )
+            .into());
+        }
+    }
+
+    let budget_id = format!("leaf-{leaf}");
+    let dir = out_root.join(&budget_id);
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join("reconstruction.ppm"), &ppm)?;
+    let traced_locals: Vec<_> = cache
+        .samples()
+        .values()
+        .map(|s| (s.local_col, s.local_row))
+        .collect();
+    std::fs::write(
+        dir.join("sample-mask.pgm"),
+        encode_sample_mask_pgm(recon.width, recon.height, &traced_locals),
+    )?;
+    std::fs::write(
+        dir.join("leaf-depth.pgm"),
+        encode_leaf_depth_pgm(recon.width, recon.height, leaves),
+    )?;
+    std::fs::write(
+        dir.join("outcome-disagreement.pgm"),
+        encode_outcome_disagreement_pgm(&case.oracle, &recon),
+    )?;
+    std::fs::write(
+        dir.join("scientific-error-summary.json"),
+        serde_json::to_vec_pretty(&sci)?,
+    )?;
+    // Minimal still writes schedule for repeat determinism byte-compare.
+    let _ = write_artifacts;
+    std::fs::write(
+        dir.join("schedule-summary.json"),
+        serde_json::to_vec_pretty(&schedule)?,
+    )?;
+
+    let domain_rays = u64::from(recon.width) * u64::from(recon.height);
+    Ok(CurvePoint {
+        budget_id,
+        leaf_size: leaf,
+        unique_traced_rays: cache.unique_traced_rays(),
+        ray_fraction: cache.unique_traced_rays() as f64 / domain_rays as f64,
+        total_rhs_evaluations: cache.total_rhs_evaluations(),
+        mean_rhs_per_ray: if cache.unique_traced_rays() == 0 {
+            0.0
+        } else {
+            cache.total_rhs_evaluations() as f64 / cache.unique_traced_rays() as f64
+        },
+        maximum_rhs: cache.maximum_rhs(),
+        scientific: sci,
+        rgb,
+        sample_parity: parity,
+        schedule: schedule.to_vec(),
+        worst_pixels,
+        wall_clock_seconds: t_case.elapsed().as_secs_f64(),
+        reconstruction_wall_clock_seconds: recon_s,
+        metric_wall_clock_seconds: metric_s,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_adaptive(
     cfg: &E1Config,
     method: MethodId,
@@ -622,6 +752,7 @@ fn run_adaptive(
     cache: &mut SampleCache,
     target_rays: u64,
     parallel_threads: Option<usize>,
+    pool: Option<&rayon::ThreadPool>,
     schedule: &mut Vec<ScheduleEvent>,
 ) -> Result<Vec<QuadCell>, Box<dyn Error>> {
     let root = QuadCell {
@@ -634,9 +765,9 @@ fn run_adaptive(
         depth: 0,
     };
     let mut leaves = vec![root];
-    let newly = ensure_leaves_stencils(cache, ctx, &leaves, parallel_threads)?;
+    let newly = ensure_leaves_stencils(cache, ctx, &leaves, parallel_threads, pool)?;
     schedule.push(ScheduleEvent {
-        step: 0,
+        step: schedule.len() as u64,
         requested_target: target_rays,
         actual_unique_rays: cache.unique_traced_rays(),
         overshoot: cache.unique_traced_rays().saturating_sub(target_rays),
@@ -647,10 +778,33 @@ fn run_adaptive(
         leaf_count: 1,
         max_depth: 0,
     });
+    continue_adaptive(
+        cfg,
+        method,
+        ctx,
+        cache,
+        &mut leaves,
+        target_rays,
+        parallel_threads,
+        pool,
+        schedule,
+    )?;
+    Ok(leaves)
+}
 
-    let mut step = 1u64;
+#[allow(clippy::too_many_arguments)]
+fn continue_adaptive(
+    cfg: &E1Config,
+    method: MethodId,
+    ctx: &TraceContext<'_>,
+    cache: &mut SampleCache,
+    leaves: &mut Vec<QuadCell>,
+    target_rays: u64,
+    parallel_threads: Option<usize>,
+    pool: Option<&rayon::ThreadPool>,
+    schedule: &mut Vec<ScheduleEvent>,
+) -> Result<(), Box<dyn Error>> {
     while cache.unique_traced_rays() < target_rays {
-        // Score leaves
         let mut best: Option<(usize, f64, PriorityKey, FeatureVector)> = None;
         for (i, leaf) in leaves.iter().enumerate() {
             if !leaf.rect.is_splittable() {
@@ -691,10 +845,10 @@ fn run_adaptive(
                 depth: parent.depth + 1,
             });
         }
-        let newly = ensure_leaves_stencils(cache, ctx, &new_cells, parallel_threads)?;
+        let newly = ensure_leaves_stencils(cache, ctx, &new_cells, parallel_threads, pool)?;
         leaves.extend(new_cells);
         schedule.push(ScheduleEvent {
-            step,
+            step: schedule.len() as u64,
             requested_target: target_rays,
             actual_unique_rays: cache.unique_traced_rays(),
             overshoot: cache.unique_traced_rays().saturating_sub(target_rays),
@@ -705,38 +859,8 @@ fn run_adaptive(
             leaf_count: leaves.len() as u64,
             max_depth: leaves.iter().map(|l| l.depth).max().unwrap_or(0),
         });
-        step += 1;
     }
-    Ok(leaves)
-}
-
-fn build_uniform_leaves(domain_size: u32, leaf_size: u32) -> Vec<QuadCell> {
-    let mut leaves = vec![QuadCell {
-        rect: PixelRect {
-            left: 0,
-            top: 0,
-            width: domain_size,
-            height: domain_size,
-        },
-        depth: 0,
-    }];
-    while leaves.iter().any(|l| l.rect.width > leaf_size) {
-        let mut next = Vec::new();
-        for leaf in leaves {
-            if leaf.rect.width > leaf_size {
-                for child in leaf.rect.split().unwrap() {
-                    next.push(QuadCell {
-                        rect: child,
-                        depth: leaf.depth + 1,
-                    });
-                }
-            } else {
-                next.push(leaf);
-            }
-        }
-        leaves = next;
-    }
-    leaves
+    Ok(())
 }
 
 fn ensure_leaves_stencils(
@@ -744,6 +868,7 @@ fn ensure_leaves_stencils(
     ctx: &TraceContext<'_>,
     leaves: &[QuadCell],
     parallel_threads: Option<usize>,
+    pool: Option<&rayon::ThreadPool>,
 ) -> Result<Vec<u64>, Box<dyn Error>> {
     let mut all = BTreeSet::new();
     for leaf in leaves {
@@ -752,7 +877,7 @@ fn ensure_leaves_stencils(
         }
     }
     let idxs: Vec<u64> = all.into_iter().collect();
-    cache.ensure_traced(ctx, &idxs, parallel_threads)
+    cache.ensure_traced(ctx, &idxs, parallel_threads, pool)
 }
 
 fn load_cases(
