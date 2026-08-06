@@ -11,6 +11,7 @@ use crate::e1_adaptive_sampling::reference_session;
 use crate::e1_adaptive_sampling::report::{
     case_optional_metric_consistency, classify_hypothesis, E1ExperimentReport,
 };
+use crate::e1_adaptive_sampling::DETERMINISM_BUDGET_ARTIFACTS;
 use crate::trace_outcome_map::CliExecution;
 use relativity_trace::hex_sha;
 use serde::Serialize;
@@ -32,6 +33,12 @@ const CROP_CASES: [&str; 2] = [
     "kerr0999-edge-sky-boundary-crop",
 ];
 const PRIMARY_METHOD_DIRS: [&str; 3] = ["uniform", "intensity-only", "physics-aware"];
+/// Bounded progressive↔cold equivalence matrix (owner closure 5202437486).
+const LADDER_EQUIV_CASES: &str = concat!(
+    "kerr0999-edge-opaque,",
+    "kerr0999-edge-opaque-boundary-crop,",
+    "kerr0999-edge-sky-boundary-crop"
+);
 const ABLATION_IDS: [&str; 5] = [
     "physics-no-outcome",
     "physics-no-lens-map",
@@ -256,6 +263,71 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
 
+    // Progressive vs cold semantic equivalence on a bounded representative matrix.
+    let equiv_prog = artifact_root.join("ladder-equiv-progressive");
+    let equiv_cold = artifact_root.join("ladder-equiv-cold");
+    let t_equiv = Instant::now();
+    run_experiment(
+        &root,
+        &equiv_prog,
+        threads,
+        &[
+            "--case",
+            LADDER_EQUIV_CASES,
+            "--skip-ablations",
+            "--reference-dir",
+            &ref_arg,
+            "--ladder",
+            "progressive",
+            "--write-artifacts",
+            "minimal",
+        ],
+    )?;
+    run_experiment(
+        &root,
+        &equiv_cold,
+        threads,
+        &[
+            "--case",
+            LADDER_EQUIV_CASES,
+            "--skip-ablations",
+            "--reference-dir",
+            &ref_arg,
+            "--ladder",
+            "cold",
+            "--write-artifacts",
+            "minimal",
+        ],
+    )?;
+    let equiv_wall = t_equiv.elapsed().as_secs_f64();
+    let mut equiv_diffs = Vec::new();
+    for case in LADDER_EQUIV_CASES.split(',') {
+        let case = case.trim();
+        let d = compare_progressive_cold_case(
+            &equiv_prog.join("cases").join(case),
+            &equiv_cold.join("cases").join(case),
+            &PRIMARY_METHOD_DIRS,
+        )?;
+        equiv_diffs.extend(d.into_iter().map(|x| format!("{case}/{x}")));
+    }
+    let prog_summary: E1ExperimentReport =
+        serde_json::from_slice(&std::fs::read(equiv_prog.join("experiment-summary.json"))?)?;
+    let cold_summary: E1ExperimentReport =
+        serde_json::from_slice(&std::fs::read(equiv_cold.join("experiment-summary.json"))?)?;
+    equiv_diffs.extend(compare_summary_semantics(&prog_summary, &cold_summary)?);
+    push(
+        &mut checks,
+        "progressive_cold_semantic_equivalence",
+        equiv_diffs.is_empty(),
+        if equiv_diffs.is_empty() {
+            format!(
+                "cases=opaque+2crops methods=3 budgets=full wall_s={equiv_wall:.3}; uniform stencil nesting unit-tested"
+            )
+        } else {
+            format!("diffs={equiv_diffs:?}")
+        },
+    );
+
     // Full canonical experiment
     let full = artifact_root.clone();
     let canonical = artifact_root.join("canonical");
@@ -452,12 +524,23 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "note": "non-binding performance profile; not part of scientific PASS",
         "reference_generation_or_validate_wall_seconds": reference_wall,
         "smoke_wall_seconds": smoke_wall,
+        "progressive_cold_equivalence_wall_seconds": equiv_wall,
         "canonical_wall_seconds": canon_wall,
         "repeat_wall_seconds": repeat_wall,
-        "subprocess_count_experiments": 5,
+        "subprocess_count_experiments": 7,
         "shared_reference_dir": ref_arg,
         "ladder_mode": "progressive",
         "pool_policy": "one_per_experiment_process",
+        "timing_semantics": {
+            "wall_clock_seconds": "progressive=cumulative-to-budget; cold=per-budget-from-zero; includes tracing+schedule+recon+metrics+artifacts",
+            "phase_fields": [
+                "tracing_and_schedule_wall_clock_seconds",
+                "reconstruction_wall_clock_seconds",
+                "metric_wall_clock_seconds",
+                "artifact_wall_clock_seconds"
+            ]
+        },
+        "minimal_artifacts": DETERMINISM_BUDGET_ARTIFACTS,
     });
     std::fs::write(
         full.join("execution-profile.json"),
@@ -539,6 +622,7 @@ fn validate_matrix(
                     .join(&p.budget_id);
                 for name in [
                     "reconstruction.ppm",
+                    "reconstruction.digest",
                     "sample-mask.pgm",
                     "leaf-depth.pgm",
                     "outcome-disagreement.pgm",
@@ -780,6 +864,24 @@ fn compare_case_method_tree(
     b_case: &Path,
     methods: &[&str],
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    compare_budget_artifacts(a_case, b_case, methods, /*include_schedule=*/ true)
+}
+
+fn compare_progressive_cold_case(
+    a_case: &Path,
+    b_case: &Path,
+    methods: &[&str],
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    // Schedule raw bytes differ in target metadata; split sequence checked in summary.
+    compare_budget_artifacts(a_case, b_case, methods, /*include_schedule=*/ false)
+}
+
+fn compare_budget_artifacts(
+    a_case: &Path,
+    b_case: &Path,
+    methods: &[&str],
+    include_schedule: bool,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut diffs = Vec::new();
     for method in methods {
         let a_root = a_case.join(method);
@@ -795,14 +897,10 @@ fn compare_case_method_tree(
             .collect::<Vec<_>>();
         budgets.sort();
         for budget in budgets {
-            for name in [
-                "reconstruction.ppm",
-                "sample-mask.pgm",
-                "leaf-depth.pgm",
-                "outcome-disagreement.pgm",
-                "scientific-error-summary.json",
-                "schedule-summary.json",
-            ] {
+            for name in DETERMINISM_BUDGET_ARTIFACTS {
+                if !include_schedule && *name == "schedule-summary.json" {
+                    continue;
+                }
                 let pa = a_root.join(&budget).join(name);
                 let pb = b_root.join(&budget).join(name);
                 if !pa.is_file() || !pb.is_file() {
@@ -824,6 +922,88 @@ fn compare_case_method_tree(
     Ok(diffs)
 }
 
+fn compare_summary_semantics(
+    progressive: &E1ExperimentReport,
+    cold: &E1ExperimentReport,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut diffs = Vec::new();
+    for p_case in &progressive.cases {
+        let Some(c_case) = cold.cases.iter().find(|c| c.case_id == p_case.case_id) else {
+            diffs.push(format!("{}: missing in cold", p_case.case_id));
+            continue;
+        };
+        for p_method in &p_case.methods {
+            let Some(c_method) = c_case
+                .methods
+                .iter()
+                .find(|m| m.method_id == p_method.method_id)
+            else {
+                diffs.push(format!(
+                    "{}/{}: missing method in cold",
+                    p_case.case_id, p_method.method_id
+                ));
+                continue;
+            };
+            if p_method.points.len() != c_method.points.len() {
+                diffs.push(format!(
+                    "{}/{}: point count {} vs {}",
+                    p_case.case_id,
+                    p_method.method_id,
+                    p_method.points.len(),
+                    c_method.points.len()
+                ));
+                continue;
+            }
+            for (p, c) in p_method.points.iter().zip(c_method.points.iter()) {
+                let label = format!("{}/{}/{}", p_case.case_id, p_method.method_id, p.budget_id);
+                if p.unique_traced_rays != c.unique_traced_rays {
+                    diffs.push(format!(
+                        "{label}: unique_traced_rays {} vs {}",
+                        p.unique_traced_rays, c.unique_traced_rays
+                    ));
+                }
+                if p.scientific != c.scientific {
+                    diffs.push(format!("{label}: scientific metrics differ"));
+                }
+                if p.rgb != c.rgb {
+                    diffs.push(format!("{label}: rgb metrics differ"));
+                }
+                if p.sample_parity != c.sample_parity {
+                    diffs.push(format!("{label}: sample_parity differ"));
+                }
+                // Uniform progressive accumulates one schedule event per leaf size;
+                // cold emits a single per-budget event. Selected indices are covered
+                // by sample-mask / unique_traced_rays comparisons.
+                if !p_method.method_id.contains("uniform")
+                    && !schedule_split_sequence_equivalent(&p.schedule, &c.schedule)
+                {
+                    diffs.push(format!("{label}: schedule/split sequence differ"));
+                }
+            }
+        }
+    }
+    Ok(diffs)
+}
+
+/// Compare adaptive/uniform split sequences, ignoring ladder-mode target metadata.
+fn schedule_split_sequence_equivalent(
+    a: &[crate::e1_adaptive_sampling::report::ScheduleEvent],
+    b: &[crate::e1_adaptive_sampling::report::ScheduleEvent],
+) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b.iter()).all(|(x, y)| {
+        x.actual_unique_rays == y.actual_unique_rays
+            && x.selected == y.selected
+            && x.score == y.score
+            && x.features == y.features
+            && x.newly_traced == y.newly_traced
+            && x.leaf_count == y.leaf_count
+            && x.max_depth == y.max_depth
+    })
+}
+
 fn case_method_digest(
     case: &crate::e1_adaptive_sampling::report::E1CaseReport,
     method_needle: &str,
@@ -840,8 +1020,10 @@ fn case_method_digest(
         let mut v = serde_json::to_value(p)?;
         if let Some(o) = v.as_object_mut() {
             o.remove("wall_clock_seconds");
+            o.remove("tracing_and_schedule_wall_clock_seconds");
             o.remove("reconstruction_wall_clock_seconds");
             o.remove("metric_wall_clock_seconds");
+            o.remove("artifact_wall_clock_seconds");
         }
         points.push(v);
     }

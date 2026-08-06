@@ -48,6 +48,16 @@ pub enum WriteArtifacts {
     Minimal,
 }
 
+/// Determinism / smoke / repeat evidence bundle (written in both modes).
+pub const DETERMINISM_BUDGET_ARTIFACTS: &[&str] = &[
+    "scientific-error-summary.json",
+    "schedule-summary.json",
+    "sample-mask.pgm",
+    "leaf-depth.pgm",
+    "outcome-disagreement.pgm",
+    "reconstruction.digest",
+];
+
 #[derive(Debug, Clone, Default)]
 pub struct ExperimentFilters {
     pub case: Option<String>,
@@ -112,6 +122,7 @@ struct CorpusLock {
 struct LockedSource {
     definition: ManifestSourceCase,
     oracle_scientific_digest: String,
+    reference_image_digest: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -122,6 +133,7 @@ struct LockedCrop {
     #[allow(dead_code)]
     transition_score: u64,
     oracle_scientific_digest: String,
+    reference_image_digest: String,
 }
 
 #[derive(Clone)]
@@ -218,7 +230,7 @@ pub fn run(
         && !filters.skip_ablations;
 
     for case in &cases {
-        if filters.case.as_ref().is_some_and(|f| f != &case.id) {
+        if !case_filter_matches(filters.case.as_deref(), &case.id) {
             continue;
         }
         let leaf_sizes = if case.is_crop {
@@ -498,6 +510,7 @@ fn run_method_ladder(
     match ladder {
         LadderMode::Cold => {
             for (level, &leaf) in leaf_sizes.iter().enumerate() {
+                let t_budget = Instant::now();
                 let mut cache = SampleCache::new();
                 let mut schedule = Vec::new();
                 let leaves = if method == MethodId::UniformQuadtreeV1 {
@@ -529,6 +542,7 @@ fn run_method_ladder(
                         &mut schedule,
                     )?
                 };
+                let tracing_s = t_budget.elapsed().as_secs_f64();
                 points.push(snapshot_budget(
                     case,
                     method,
@@ -538,6 +552,8 @@ fn run_method_ladder(
                     &schedule,
                     write_artifacts,
                     out_root,
+                    t_budget,
+                    tracing_s,
                 )?);
             }
         }
@@ -545,8 +561,10 @@ fn run_method_ladder(
             let mut cache = SampleCache::new();
             let mut schedule = Vec::new();
             let mut leaves: Option<Vec<QuadCell>> = None;
+            // Progressive wall_clock is cumulative-to-budget from method start.
+            let t_method = Instant::now();
             for (level, &leaf) in leaf_sizes.iter().enumerate() {
-                let t_case = Instant::now();
+                let t_stage = Instant::now();
                 let leaves_now = if method == MethodId::UniformQuadtreeV1 {
                     let leaves = build_uniform_leaves(case.mapping.local_width(), leaf);
                     let newly =
@@ -595,7 +613,7 @@ fn run_method_ladder(
                     }
                     leaves.as_ref().unwrap().clone()
                 };
-                let _ = t_case;
+                let tracing_s = t_stage.elapsed().as_secs_f64();
                 points.push(snapshot_budget(
                     case,
                     method,
@@ -605,6 +623,8 @@ fn run_method_ladder(
                     &schedule,
                     write_artifacts,
                     out_root,
+                    t_method,
+                    tracing_s,
                 )?);
             }
         }
@@ -627,8 +647,9 @@ fn snapshot_budget(
     schedule: &[ScheduleEvent],
     write_artifacts: WriteArtifacts,
     out_root: &Path,
+    wall_origin: Instant,
+    tracing_and_schedule_s: f64,
 ) -> Result<CurvePoint, Box<dyn Error>> {
-    let t_case = Instant::now();
     let t_recon = Instant::now();
     let mut recon = reconstruct(
         case.mapping.local_width(),
@@ -688,10 +709,10 @@ fn snapshot_budget(
         }
     }
 
+    let t_art = Instant::now();
     let budget_id = format!("leaf-{leaf}");
     let dir = out_root.join(&budget_id);
     std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join("reconstruction.ppm"), &ppm)?;
     let traced_locals: Vec<_> = cache
         .samples()
         .values()
@@ -713,12 +734,19 @@ fn snapshot_budget(
         dir.join("scientific-error-summary.json"),
         serde_json::to_vec_pretty(&sci)?,
     )?;
-    // Minimal still writes schedule for repeat determinism byte-compare.
-    let _ = write_artifacts;
     std::fs::write(
         dir.join("schedule-summary.json"),
         serde_json::to_vec_pretty(&schedule)?,
     )?;
+    let recon_digest = hex_sha(&ppm);
+    std::fs::write(
+        dir.join("reconstruction.digest"),
+        format!("{recon_digest}\n"),
+    )?;
+    if write_artifacts == WriteArtifacts::Full {
+        std::fs::write(dir.join("reconstruction.ppm"), &ppm)?;
+    }
+    let artifact_s = t_art.elapsed().as_secs_f64();
 
     let domain_rays = u64::from(recon.width) * u64::from(recon.height);
     Ok(CurvePoint {
@@ -738,9 +766,11 @@ fn snapshot_budget(
         sample_parity: parity,
         schedule: schedule.to_vec(),
         worst_pixels,
-        wall_clock_seconds: t_case.elapsed().as_secs_f64(),
+        wall_clock_seconds: wall_origin.elapsed().as_secs_f64(),
+        tracing_and_schedule_wall_clock_seconds: tracing_and_schedule_s,
         reconstruction_wall_clock_seconds: recon_s,
         metric_wall_clock_seconds: metric_s,
+        artifact_wall_clock_seconds: artifact_s,
     })
 }
 
@@ -902,6 +932,14 @@ fn load_cases(
             return Err(format!("digest mismatch for {}", def.id).into());
         }
         let ppm = std::fs::read(dir.join("reference.ppm"))?;
+        let ppm_digest = hex_sha(&ppm);
+        if ppm_digest != src.reference_image_digest {
+            return Err(format!(
+                "reference_image_digest mismatch for {}: {ppm_digest} != {}",
+                def.id, src.reference_image_digest
+            )
+            .into());
+        }
         out.push(CaseSpec {
             id: def.id.clone(),
             source_id: def.id.clone(),
@@ -935,6 +973,14 @@ fn load_cases(
             return Err(format!("crop digest mismatch {}", crop.id).into());
         }
         let ppm = std::fs::read(dir.join("reference.ppm"))?;
+        let ppm_digest = hex_sha(&ppm);
+        if ppm_digest != crop.reference_image_digest {
+            return Err(format!(
+                "crop reference_image_digest mismatch for {}: {ppm_digest} != {}",
+                crop.id, crop.reference_image_digest
+            )
+            .into());
+        }
         crop.crop.validate_against_source()?;
         out.push(CaseSpec {
             id: crop.id.clone(),
@@ -980,6 +1026,16 @@ impl CropValidate for PixelCrop {
             height: self.height,
         };
         r.validate_domain(128, 128).map_err(|e| e.into())
+    }
+}
+
+fn case_filter_matches(filter: Option<&str>, case_id: &str) -> bool {
+    match filter {
+        None => true,
+        Some(f) => f
+            .split(',')
+            .map(str::trim)
+            .any(|c| !c.is_empty() && c == case_id),
     }
 }
 
@@ -1042,8 +1098,10 @@ fn strip_timings(cases: &mut [serde_json::Value]) {
                     for p in points {
                         if let Some(o) = p.as_object_mut() {
                             o.remove("wall_clock_seconds");
+                            o.remove("tracing_and_schedule_wall_clock_seconds");
                             o.remove("reconstruction_wall_clock_seconds");
                             o.remove("metric_wall_clock_seconds");
+                            o.remove("artifact_wall_clock_seconds");
                         }
                     }
                 }

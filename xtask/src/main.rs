@@ -240,6 +240,7 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         require_release: bool,
         #[arg(long)]
+        /// Comma-separated case ids to run (default: all).
         case: Option<String>,
         #[arg(long)]
         method: Option<String>,
@@ -253,7 +254,7 @@ enum Commands {
         /// progressive (default) or cold budget-from-zero ladders.
         #[arg(long, default_value = "progressive")]
         ladder: String,
-        /// full (default) or minimal artifact writes.
+        /// full (writes reconstruction.ppm) or minimal (determinism evidence bundle only).
         #[arg(long, default_value = "full")]
         write_artifacts: String,
     },

@@ -453,4 +453,58 @@ mod tests {
         assert_eq!(uniform_unique_ray_count(&crop, 2), 4096);
         assert_eq!(uniform_unique_ray_count(&crop, 1), 4096);
     }
+
+    fn uniform_index_set(mapping: &DomainMapping, leaf: u32) -> BTreeSet<u64> {
+        let leaves = build_uniform_leaves(mapping.local_width(), leaf);
+        let mut set = BTreeSet::new();
+        for leaf_cell in leaves {
+            for idx in stencil_source_indices(mapping, &leaf_cell.rect) {
+                set.insert(idx);
+            }
+        }
+        set
+    }
+
+    #[test]
+    fn progressive_uniform_stencil_sets_are_nested() {
+        let source = DomainMapping {
+            source_width: 128,
+            source_height: 128,
+            domain: PixelRect {
+                left: 0,
+                top: 0,
+                width: 128,
+                height: 128,
+            },
+        };
+        let mut prev = BTreeSet::new();
+        for &leaf in &[32u32, 16, 8, 4, 2] {
+            let set = uniform_index_set(&source, leaf);
+            assert!(
+                prev.is_subset(&set),
+                "leaf={leaf}: coarser stencil set must be subset of finer"
+            );
+            prev = set;
+        }
+
+        let crop = DomainMapping {
+            source_width: 128,
+            source_height: 128,
+            domain: PixelRect {
+                left: 24,
+                top: 56,
+                width: 64,
+                height: 64,
+            },
+        };
+        let mut prev = BTreeSet::new();
+        for &leaf in &[16u32, 8, 4, 2, 1] {
+            let set = uniform_index_set(&crop, leaf);
+            assert!(
+                prev.is_subset(&set),
+                "crop leaf={leaf}: coarser stencil set must be subset of finer"
+            );
+            prev = set;
+        }
+    }
 }

@@ -10,5 +10,8 @@ pub mod report;
 pub mod sample;
 pub mod score;
 
-pub use experiment::{run, ExperimentFilters, ExperimentOptions, LadderMode, WriteArtifacts};
+pub use experiment::{
+    run, ExperimentFilters, ExperimentOptions, LadderMode, WriteArtifacts,
+    DETERMINISM_BUDGET_ARTIFACTS,
+};
 pub use score::MethodId;
