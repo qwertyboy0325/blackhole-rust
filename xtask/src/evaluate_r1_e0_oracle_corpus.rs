@@ -217,7 +217,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
 
     regenerate_corpus_in_process(out_a, CliExecution::Parallel, Some(authoritative_threads))?;
     regenerate_corpus_in_process(out_b, CliExecution::Parallel, Some(authoritative_threads))?;
-    regenerate_corpus_in_process(out_serial, CliExecution::Serial, Some(1))?;
+    regenerate_corpus_in_process(out_serial, CliExecution::Serial, None)?;
     regenerate_corpus_via_cli(&root, out_cli, authoritative_threads)?;
 
     let lock_a_bytes = std::fs::read(root.join(out_a).join("corpus-lock-v1.json"))?;
