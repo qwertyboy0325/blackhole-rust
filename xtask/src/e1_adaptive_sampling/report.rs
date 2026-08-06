@@ -1,10 +1,14 @@
 //! E1 experiment reports, Pareto, hypothesis classification.
 
 use crate::e1_adaptive_sampling::metrics::SampleParityReport;
-use crate::e1_adaptive_sampling::quadtree::PixelRect;
+use crate::e1_adaptive_sampling::quadtree::{PixelRect, QuadCell};
+use crate::e1_adaptive_sampling::reconstruct::{
+    find_leaf, AdaptiveReconstructedPixel, AdaptiveReconstruction,
+};
 use crate::e1_adaptive_sampling::score::FeatureVector;
 use crate::oracle_benchmark::RgbComparisonMetrics;
-use relativity_oracle::OracleComparisonMetrics;
+use relativity_oracle::{OracleComparisonMetrics, OracleFrame, OraclePixel};
+use relativity_trace::OutcomeClass;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::path::Path;
@@ -24,6 +28,25 @@ pub struct ScheduleEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorstPixelRecord {
+    pub metric: String,
+    pub error: f64,
+    pub target_local_col: u32,
+    pub target_local_row: u32,
+    pub target_source_col: u32,
+    pub target_source_row: u32,
+    pub provenance_source_index: u64,
+    pub provenance_source_col: u32,
+    pub provenance_source_row: u32,
+    pub oracle_outcome: OutcomeClass,
+    pub candidate_outcome: OutcomeClass,
+    pub leaf_rectangle: PixelRect,
+    pub leaf_depth: u32,
+    pub last_split_rectangle: Option<PixelRect>,
+    pub feature_vector_at_last_split: Option<FeatureVector>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurvePoint {
     pub budget_id: String,
     pub leaf_size: u32,
@@ -36,6 +59,7 @@ pub struct CurvePoint {
     pub rgb: RgbComparisonMetrics,
     pub sample_parity: SampleParityReport,
     pub schedule: Vec<ScheduleEvent>,
+    pub worst_pixels: Vec<WorstPixelRecord>,
     pub wall_clock_seconds: f64,
     pub reconstruction_wall_clock_seconds: f64,
     pub metric_wall_clock_seconds: f64,
@@ -50,6 +74,8 @@ pub struct MatchedComparison {
     pub ray_count_difference: i64,
     pub outcome_rate_dominance: String,
     pub rgb_mse_dominance: String,
+    pub angular_rmse_dominance: String,
+    pub log2_iobs_rmse_dominance: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,6 +194,62 @@ pub fn write_experiment_reports(
     Ok(())
 }
 
+/// Primary objective vector for Pareto:
+/// (rays, outcome_rate, rgb_mse, angular_rmse?, log2_iobs_rmse?).
+#[derive(Debug, Clone, Copy)]
+struct PrimaryErrors {
+    rays: u64,
+    outcome_rate: f64,
+    rgb_mse: f64,
+    angular_rmse: Option<f64>,
+    log2_iobs_rmse: Option<f64>,
+}
+
+fn primary_errors(p: &CurvePoint) -> PrimaryErrors {
+    PrimaryErrors {
+        rays: p.unique_traced_rays,
+        outcome_rate: p.scientific.outcome_disagreement_rate,
+        rgb_mse: p.rgb.channel_mse,
+        angular_rmse: p
+            .scientific
+            .celestial_angular_error_radians
+            .as_ref()
+            .map(|m| m.rmse),
+        log2_iobs_rmse: p.scientific.log2_observed_error.as_ref().map(|m| m.rmse),
+    }
+}
+
+/// `b` dominates `a` when b uses no more rays, is no worse on every applicable
+/// primary error, and strictly better on at least one.
+pub fn dominates(b: &CurvePoint, a: &CurvePoint) -> bool {
+    let bb = primary_errors(b);
+    let aa = primary_errors(a);
+    if bb.rays > aa.rays {
+        return false;
+    }
+    let mut le_all = bb.outcome_rate <= aa.outcome_rate && bb.rgb_mse <= aa.rgb_mse;
+    let mut strict =
+        bb.rays < aa.rays || bb.outcome_rate < aa.outcome_rate || bb.rgb_mse < aa.rgb_mse;
+    match (bb.angular_rmse, aa.angular_rmse) {
+        (Some(bv), Some(av)) => {
+            le_all &= bv <= av;
+            strict |= bv < av;
+        }
+        (None, None) => {}
+        // Dimension not jointly applicable.
+        _ => {}
+    }
+    match (bb.log2_iobs_rmse, aa.log2_iobs_rmse) {
+        (Some(bv), Some(av)) => {
+            le_all &= bv <= av;
+            strict |= bv < av;
+        }
+        (None, None) => {}
+        _ => {}
+    }
+    le_all && strict
+}
+
 fn compute_pareto(cases: &[E1CaseReport]) -> serde_json::Value {
     let mut out = Vec::new();
     for case in cases {
@@ -176,6 +258,13 @@ fn compute_pareto(cases: &[E1CaseReport]) -> serde_json::Value {
             out.push(serde_json::json!({
                 "case": case.case_id,
                 "method": method.method_id,
+                "dimensions": [
+                    "unique_traced_rays",
+                    "outcome_disagreement_rate",
+                    "rgb_mse",
+                    "celestial_angular_rmse",
+                    "log2_iobs_rmse"
+                ],
                 "frontier_budgets": frontier,
             }));
         }
@@ -186,19 +275,10 @@ fn compute_pareto(cases: &[E1CaseReport]) -> serde_json::Value {
 fn pareto_frontier(points: &[CurvePoint]) -> Vec<String> {
     let mut keep = Vec::new();
     for (i, a) in points.iter().enumerate() {
-        let dominated = points.iter().enumerate().any(|(j, b)| {
-            if i == j {
-                return false;
-            }
-            let le_rays = b.unique_traced_rays <= a.unique_traced_rays;
-            let le_out =
-                b.scientific.outcome_disagreement_rate <= a.scientific.outcome_disagreement_rate;
-            let le_mse = b.rgb.channel_mse <= a.rgb.channel_mse;
-            let strict = b.unique_traced_rays < a.unique_traced_rays
-                || b.scientific.outcome_disagreement_rate < a.scientific.outcome_disagreement_rate
-                || b.rgb.channel_mse < a.rgb.channel_mse;
-            le_rays && le_out && le_mse && strict
-        });
+        let dominated = points
+            .iter()
+            .enumerate()
+            .any(|(j, b)| i != j && dominates(b, a));
         if !dominated {
             keep.push(a.budget_id.clone());
         }
@@ -208,44 +288,54 @@ fn pareto_frontier(points: &[CurvePoint]) -> Vec<String> {
 
 fn failure_analysis(report: &E1ExperimentReport) -> serde_json::Value {
     let mut worst = Vec::new();
+    let mut categories = serde_json::Map::new();
     for case in &report.cases {
         for method in &case.methods {
             for p in &method.points {
-                if p.budget_id.ends_with("-1") || p.rgb.exact_match {
+                if p.rgb.exact_match {
                     continue;
                 }
-                if let Some(ang) = &p.scientific.celestial_angular_error_radians {
-                    if ang.maximum_absolute_error > 0.0 {
-                        worst.push(serde_json::json!({
-                            "case": case.case_id,
-                            "method": method.method_id,
-                            "budget": p.budget_id,
-                            "metric": "celestial_angular",
-                            "max_error": ang.maximum_absolute_error,
-                            "max_index": ang.maximum_error_index,
-                            "rays": p.unique_traced_rays,
-                        }));
-                    }
-                }
-                if p.scientific.outcome_disagreement_count > 0 {
+                for w in &p.worst_pixels {
                     worst.push(serde_json::json!({
                         "case": case.case_id,
                         "method": method.method_id,
                         "budget": p.budget_id,
-                        "metric": "outcome_disagreement",
-                        "count": p.scientific.outcome_disagreement_count,
                         "rays": p.unique_traced_rays,
+                        "metric": w.metric,
+                        "error": w.error,
+                        "target_local": [w.target_local_col, w.target_local_row],
+                        "target_source": [w.target_source_col, w.target_source_row],
+                        "provenance_source_index": w.provenance_source_index,
+                        "provenance_source": [w.provenance_source_col, w.provenance_source_row],
+                        "oracle_outcome": format!("{:?}", w.oracle_outcome),
+                        "candidate_outcome": format!("{:?}", w.candidate_outcome),
+                        "leaf_rectangle": w.leaf_rectangle,
+                        "leaf_depth": w.leaf_depth,
+                        "last_split_rectangle": w.last_split_rectangle,
+                        "feature_vector_at_last_split": w.feature_vector_at_last_split,
                     }));
+                    let key = w.metric.clone();
+                    let n = categories.get(&key).and_then(|v| v.as_u64()).unwrap_or(0);
+                    categories.insert(key, serde_json::json!(n + 1));
                 }
             }
         }
     }
     if worst.is_empty() {
         worst.push(serde_json::json!({
-            "note": "no non-exact intermediate failures recorded (or only exact finals)"
+            "note": "no non-exact intermediate worst-pixel records"
         }));
     }
-    serde_json::json!({ "worst_points": worst })
+    serde_json::json!({
+        "worst_points": worst,
+        "metric_counts": categories,
+        "known_blind_spots": [
+            "corners+forced interior probes can miss thin oracle structure",
+            "intensity-only may beat physics-aware on some budgets",
+            "trace-cost can over-focus expensive low-visual-impact rays",
+            "leaf-local nearest reconstruction is intentionally crude"
+        ]
+    })
 }
 
 /// Corpus-bounded hypothesis classification (does not affect PASS).
@@ -309,11 +399,11 @@ fn case_physics_pareto_beats_baselines(
     let mut wins = 0;
     for p in &physics.points {
         if p.rgb.exact_match {
-            continue; // skip full-ray
+            continue;
         }
         let u = matched_point(&uniform.points, p.unique_traced_rays);
         let i = matched_point(&intensity.points, p.unique_traced_rays);
-        if beats(p, u) && beats(p, i) {
+        if pareto_improves_matched(p, u) && pareto_improves_matched(p, i) {
             wins += 1;
         }
     }
@@ -327,12 +417,280 @@ fn matched_point(points: &[CurvePoint], rays: u64) -> Option<&CurvePoint> {
         .max_by_key(|p| p.unique_traced_rays)
 }
 
-fn beats(cand: &CurvePoint, base: Option<&CurvePoint>) -> bool {
+/// Physics point improves on matched baseline without worsening outcome rate,
+/// using the full applicable primary-error set (Pareto sense vs that single point).
+fn pareto_improves_matched(cand: &CurvePoint, base: Option<&CurvePoint>) -> bool {
     let Some(base) = base else {
         return false;
     };
-    let out_ok =
-        cand.scientific.outcome_disagreement_rate <= base.scientific.outcome_disagreement_rate;
-    let mse_better = cand.rgb.channel_mse < base.rgb.channel_mse;
-    out_ok && mse_better
+    if cand.scientific.outcome_disagreement_rate > base.scientific.outcome_disagreement_rate {
+        return false;
+    }
+    dominates(cand, base)
+}
+
+pub fn build_worst_pixel_records(
+    oracle: &OracleFrame,
+    recon: &AdaptiveReconstruction,
+    leaves: &[QuadCell],
+    schedule: &[ScheduleEvent],
+    sci: &OracleComparisonMetrics,
+    reference_ppm: &[u8],
+) -> Vec<WorstPixelRecord> {
+    let mut out = Vec::new();
+    if let Some(m) = &sci.celestial_angular_error_radians {
+        if m.maximum_absolute_error > 0.0 {
+            if let Some(r) = record_at(
+                oracle,
+                recon,
+                leaves,
+                schedule,
+                "celestial_angular",
+                m.maximum_absolute_error,
+                m.maximum_error_index,
+            ) {
+                out.push(r);
+            }
+        }
+    }
+    if let Some(m) = &sci.log2_observed_error {
+        if m.maximum_absolute_error > 0.0 {
+            if let Some(r) = record_at(
+                oracle,
+                recon,
+                leaves,
+                schedule,
+                "log2_iobs",
+                m.maximum_absolute_error,
+                m.maximum_error_index,
+            ) {
+                out.push(r);
+            }
+        }
+    }
+    if sci.outcome_disagreement_count > 0 {
+        if let Some(idx) = first_outcome_disagreement(oracle, recon) {
+            if let Some(r) = record_at(
+                oracle,
+                recon,
+                leaves,
+                schedule,
+                "outcome_disagreement",
+                1.0,
+                idx,
+            ) {
+                out.push(r);
+            }
+        }
+    }
+    if let Some(r) = worst_rgb_record(oracle, recon, leaves, schedule, reference_ppm) {
+        out.push(r);
+    }
+    out
+}
+
+fn first_outcome_disagreement(oracle: &OracleFrame, recon: &AdaptiveReconstruction) -> Option<u64> {
+    for (i, (o, c)) in oracle.pixels.iter().zip(&recon.pixels).enumerate() {
+        if o.outcome_class != c.outcome_class {
+            return Some(i as u64);
+        }
+    }
+    None
+}
+
+fn record_at(
+    oracle: &OracleFrame,
+    recon: &AdaptiveReconstruction,
+    leaves: &[QuadCell],
+    schedule: &[ScheduleEvent],
+    metric: &str,
+    error: f64,
+    index: u64,
+) -> Option<WorstPixelRecord> {
+    let i = index as usize;
+    let o: &OraclePixel = oracle.pixels.get(i)?;
+    let c: &AdaptiveReconstructedPixel = recon.pixels.get(i)?;
+    let leaf = find_leaf(leaves, c.local_col, c.local_row)?;
+    let (last_split, features) = last_split_for(schedule, c.local_col, c.local_row);
+    let (prov_col, prov_row) = source_index_to_col_row(
+        c.provenance_source_index,
+        /* width from oracle source? */ infer_source_width(oracle),
+    );
+    Some(WorstPixelRecord {
+        metric: metric.into(),
+        error,
+        target_local_col: c.local_col,
+        target_local_row: c.local_row,
+        target_source_col: c.source_col,
+        target_source_row: c.source_row,
+        provenance_source_index: c.provenance_source_index,
+        provenance_source_col: prov_col,
+        provenance_source_row: prov_row,
+        oracle_outcome: o.outcome_class,
+        candidate_outcome: c.outcome_class,
+        leaf_rectangle: leaf.rect,
+        leaf_depth: leaf.depth,
+        last_split_rectangle: last_split,
+        feature_vector_at_last_split: features,
+    })
+}
+
+fn infer_source_width(_oracle: &OracleFrame) -> u32 {
+    // E0 corpus sources are always 128×128; crops retain source indices into that grid.
+    128
+}
+
+fn source_index_to_col_row(source_index: u64, source_width: u32) -> (u32, u32) {
+    let w = u64::from(source_width);
+    ((source_index % w) as u32, (source_index / w) as u32)
+}
+
+fn last_split_for(
+    schedule: &[ScheduleEvent],
+    local_col: u32,
+    local_row: u32,
+) -> (Option<PixelRect>, Option<FeatureVector>) {
+    for ev in schedule.iter().rev() {
+        if let Some(sel) = &ev.selected {
+            if sel.contains_local(local_col, local_row) {
+                return (Some(*sel), ev.features.clone());
+            }
+        }
+    }
+    (None, None)
+}
+
+/// Build RGB worst-pixel record using reference PPM channel errors.
+pub fn worst_rgb_record(
+    oracle: &OracleFrame,
+    recon: &AdaptiveReconstruction,
+    leaves: &[QuadCell],
+    schedule: &[ScheduleEvent],
+    reference_ppm: &[u8],
+) -> Option<WorstPixelRecord> {
+    let payload = ppm_payload_offset(reference_ppm)?;
+    let mut best: Option<(u64, u8)> = None;
+    for (i, c) in recon.pixels.iter().enumerate() {
+        let off = payload + ((c.local_row * recon.width + c.local_col) * 3) as usize;
+        if off + 2 >= reference_ppm.len() {
+            continue;
+        }
+        let r = [
+            reference_ppm[off],
+            reference_ppm[off + 1],
+            reference_ppm[off + 2],
+        ];
+        let d = r[0]
+            .abs_diff(c.rgb[0])
+            .max(r[1].abs_diff(c.rgb[1]))
+            .max(r[2].abs_diff(c.rgb[2]));
+        if d == 0 {
+            continue;
+        }
+        let idx = i as u64;
+        if best.is_none_or(|(bi, bd)| d > bd || (d == bd && idx < bi)) {
+            best = Some((idx, d));
+        }
+    }
+    let (idx, err) = best?;
+    record_at(
+        oracle,
+        recon,
+        leaves,
+        schedule,
+        "rgb_channel_abs",
+        f64::from(err),
+        idx,
+    )
+}
+
+fn ppm_payload_offset(ppm: &[u8]) -> Option<usize> {
+    let mut n = 0;
+    for (i, b) in ppm.iter().enumerate() {
+        if *b == b'\n' {
+            n += 1;
+            if n == 3 {
+                return Some(i + 1);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::e1_adaptive_sampling::metrics::SampleParityReport;
+
+    fn point(rays: u64, outcome: f64, mse: f64, ang: Option<f64>, iobs: Option<f64>) -> CurvePoint {
+        use relativity_oracle::{IntegerErrorMetrics, ScalarErrorMetrics};
+        CurvePoint {
+            budget_id: format!("r{rays}"),
+            leaf_size: 8,
+            unique_traced_rays: rays,
+            ray_fraction: 0.0,
+            total_rhs_evaluations: 0,
+            mean_rhs_per_ray: 0.0,
+            maximum_rhs: 0,
+            scientific: OracleComparisonMetrics {
+                compared_pixels: 1,
+                outcome_disagreement_count: if outcome > 0.0 { 1 } else { 0 },
+                outcome_disagreement_rate: outcome,
+                rhs_absolute_error: IntegerErrorMetrics {
+                    mae: 0.0,
+                    rmse: 0.0,
+                    maximum_absolute_error: 0,
+                    maximum_error_index: 0,
+                },
+                celestial_pair_count: u64::from(ang.is_some()),
+                celestial_presence_mismatch_count: 0,
+                celestial_angular_error_radians: ang.map(|rmse| ScalarErrorMetrics {
+                    mae: rmse,
+                    rmse,
+                    maximum_absolute_error: rmse,
+                    maximum_error_index: 0,
+                }),
+                celestial_wrap_u_error: None,
+                celestial_v_error: None,
+                disk_pair_count: u64::from(iobs.is_some()),
+                disk_presence_mismatch_count: 0,
+                log2_g_error: None,
+                log2_emitted_error: None,
+                log2_observed_error: iobs.map(|rmse| ScalarErrorMetrics {
+                    mae: rmse,
+                    rmse,
+                    maximum_absolute_error: rmse,
+                    maximum_error_index: 0,
+                }),
+            },
+            rgb: RgbComparisonMetrics {
+                pixel_count: 1,
+                channel_mse: mse,
+                maximum_absolute_channel_error: 0,
+                exact_match: mse == 0.0,
+                psnr_db: None,
+            },
+            sample_parity: SampleParityReport {
+                selected_sample_count: 0,
+                selected_sample_exact_count: 0,
+                selected_sample_mismatch_count: 0,
+            },
+            schedule: vec![],
+            worst_pixels: vec![],
+            wall_clock_seconds: 0.0,
+            reconstruction_wall_clock_seconds: 0.0,
+            metric_wall_clock_seconds: 0.0,
+        }
+    }
+
+    #[test]
+    fn pareto_uses_angular_and_iobs_dimensions() {
+        let a = point(100, 0.0, 10.0, Some(0.5), Some(0.5));
+        let b = point(100, 0.0, 10.0, Some(0.1), Some(0.5)); // better angular, same else
+        assert!(dominates(&b, &a));
+        let c = point(100, 0.0, 10.0, Some(0.5), Some(0.1));
+        assert!(dominates(&c, &a));
+        let d = point(90, 0.0, 10.0, Some(0.9), Some(0.5)); // fewer rays but worse angular
+        assert!(!dominates(&d, &a));
+    }
 }

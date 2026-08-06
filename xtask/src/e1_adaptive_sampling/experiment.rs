@@ -16,9 +16,9 @@ use crate::e1_adaptive_sampling::reconstruct::{
     encode_leaf_depth_pgm, encode_reconstruction_ppm, encode_sample_mask_pgm, reconstruct,
 };
 use crate::e1_adaptive_sampling::report::{
-    classify_hypothesis, write_experiment_reports, CurvePoint, E1CaseReport, E1ExperimentReport,
-    MatchedComparison, MethodCurve, ScheduleEvent,
-}; // MatchedComparison used by fill_matched_comparisons
+    build_worst_pixel_records, classify_hypothesis, write_experiment_reports, CurvePoint,
+    E1CaseReport, E1ExperimentReport, MatchedComparison, MethodCurve, ScheduleEvent,
+};
 use crate::e1_adaptive_sampling::sample::{SampleCache, TraceContext};
 use crate::e1_adaptive_sampling::score::{
     priority_cmp, score_cell, FeatureVector, MethodId, PriorityKey,
@@ -365,6 +365,13 @@ fn dominance_row(
             "equal".into()
         }
     }
+    fn opt_dom(c: Option<f64>, b: Option<f64>) -> String {
+        match (c, b) {
+            (Some(cv), Some(bv)) => dom(cv, bv),
+            (None, None) => "n/a".into(),
+            _ => "n/a".into(),
+        }
+    }
     MatchedComparison {
         candidate_method: candidate_method.into(),
         baseline_method: baseline_method.into(),
@@ -376,6 +383,20 @@ fn dominance_row(
             base.scientific.outcome_disagreement_rate,
         ),
         rgb_mse_dominance: dom(cand.rgb.channel_mse, base.rgb.channel_mse),
+        angular_rmse_dominance: opt_dom(
+            cand.scientific
+                .celestial_angular_error_radians
+                .as_ref()
+                .map(|m| m.rmse),
+            base.scientific
+                .celestial_angular_error_radians
+                .as_ref()
+                .map(|m| m.rmse),
+        ),
+        log2_iobs_rmse_dominance: opt_dom(
+            cand.scientific.log2_observed_error.as_ref().map(|m| m.rmse),
+            base.scientific.log2_observed_error.as_ref().map(|m| m.rmse),
+        ),
     }
 }
 
@@ -504,6 +525,14 @@ fn run_method_ladder(
         let sci = compare_reconstruction_to_oracle(&case.oracle, &recon)?;
         let ppm = encode_reconstruction_ppm(&recon);
         let rgb = compare_reconstruction_rgb(&case.reference_ppm, &ppm)?;
+        let worst_pixels = build_worst_pixel_records(
+            &case.oracle,
+            &recon,
+            &leaves,
+            &schedule,
+            &sci,
+            &case.reference_ppm,
+        );
         let metric_s = t_metric.elapsed().as_secs_f64();
 
         // Full-domain coverage finals: source leaf=2 stencils cover every pixel;
@@ -567,19 +596,17 @@ fn run_method_ladder(
             rgb,
             sample_parity: parity,
             schedule,
+            worst_pixels,
             wall_clock_seconds: t_case.elapsed().as_secs_f64(),
             reconstruction_wall_clock_seconds: recon_s,
             metric_wall_clock_seconds: metric_s,
         });
     }
 
-    // Matched comparisons vs uniform / intensity
-    let matched = Vec::new(); // filled in report aggregation
-
     Ok(MethodCurve {
         method_id: method.as_str().into(),
         points,
-        matched,
+        matched: Vec::new(),
     })
 }
 

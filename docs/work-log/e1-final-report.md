@@ -2,20 +2,16 @@
 
 ## Result
 
-Authoritative `PASS` at commit `2a1def70767714f2476d5a73910c464f9b4e3435`.
+Owner closure `5201409295` in progress: repeat determinism, evaluator semantic
+closure, and full Pareto/failure semantics.
 
 | Item | Value |
 | --- | --- |
 | Approved base | `86dd63dc537d5e4f41f5e798f5f30a4e3694558e` |
-| Implementation commit | `a7b5c73` |
-| Final report commit | `2a1def7` |
-| Tracking | GitHub Issue #12 |
+| Tracking | GitHub Issue #12 / Draft PR #15 |
 | E0 lock digest | `647cb722b8ca5bc83b7ec77bfa612c97429ead61e36f10d47db75ade269941fb` |
 | Baseline oracle digest | `ee3c2c92f94ec291c172696fb9a4e75bccdea1bd019d20a74a9a4b3439eeb383` |
-| Config digest | `4b29b3837a756b74b8923f6a1182c0252396370bd5217b2a060468e1e4a2f666` |
-| Evaluator digest | `68bbe6eaf2d029ab735422345a2daf883f50060f0634cf6371c58d285b213329` |
-| Hypothesis classification | `MIXED_ON_E0_CORPUS` |
-| Recommendation | `ITERATE_E1_ESTIMATOR` |
+| Hypothesis classification | provisional pending re-evaluate after Pareto closure |
 
 ## Matrix
 

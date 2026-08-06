@@ -6,11 +6,38 @@ use crate::build_meta::{
 use crate::e1_adaptive_sampling::config::{
     E1Config, APPROVED_BASE, REQUIRED_BASELINE_ORACLE_DIGEST, REQUIRED_LOCK_DIGEST,
 };
+use crate::e1_adaptive_sampling::report::E1ExperimentReport;
 use relativity_trace::hex_sha;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+const SOURCE_CASES: [&str; 6] = [
+    "kerr0999-edge-opaque",
+    "kerr0999-edge-sky",
+    "kerr0999-midinc-opaque",
+    "kerr0999-midinc-sky",
+    "kerr050-edge-sky",
+    "schwarzschild-edge-sky",
+];
+const CROP_CASES: [&str; 2] = [
+    "kerr0999-edge-opaque-boundary-crop",
+    "kerr0999-edge-sky-boundary-crop",
+];
+const PRIMARY_METHOD_DIRS: [&str; 3] = ["uniform", "intensity-only", "physics-aware"];
+const ABLATION_IDS: [&str; 5] = [
+    "physics-no-outcome",
+    "physics-no-lens-map",
+    "physics-no-g",
+    "physics-no-radiance",
+    "physics-no-trace-cost",
+];
+const ABLATION_CASES: [&str; 3] = [
+    "kerr0999-edge-opaque",
+    "kerr0999-edge-opaque-boundary-crop",
+    "kerr0999-edge-sky-boundary-crop",
+];
 
 #[derive(Serialize, Clone)]
 struct Check {
@@ -57,12 +84,6 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     );
     require_release_execution(&build)?;
 
-    let ancestor = git_stdout(
-        &root,
-        &["merge-base", "--is-ancestor", APPROVED_BASE, "HEAD"],
-    )
-    .is_ok();
-    // merge-base --is-ancestor exits 0 if true; Command success means ok
     let ancestor_ok = Command::new("git")
         .current_dir(&root)
         .args(["merge-base", "--is-ancestor", APPROVED_BASE, "HEAD"])
@@ -74,7 +95,6 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         ancestor_ok,
         APPROVED_BASE.into(),
     );
-    let _ = ancestor;
 
     let cfg = E1Config::load(&root.join("experiments/e1-adaptive-sampling/config-v1.toml"))?;
     push(
@@ -126,7 +146,6 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "ok".into(),
     );
 
-    // R1/E0 compatibility (subprocess).
     let r1 = Command::new(env!("CARGO"))
         .current_dir(&root)
         .args([
@@ -152,7 +171,6 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(1);
     let smoke_threads = threads.min(2);
 
-    // Determinism smoke: crop, 3 methods, first 3 budgets, threads=1 and threads=min(2,N)
     let smoke_a = root.join("artifacts/e1-adaptive-sampling/determinism-smoke-t1");
     let smoke_b = root.join("artifacts/e1-adaptive-sampling/determinism-smoke-tN");
     run_experiment(
@@ -179,69 +197,150 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             "--skip-ablations",
         ],
     )?;
+    let smoke_cmp = compare_case_method_tree(
+        &smoke_a.join("cases/kerr0999-edge-sky-boundary-crop"),
+        &smoke_b.join("cases/kerr0999-edge-sky-boundary-crop"),
+        &PRIMARY_METHOD_DIRS,
+    )?;
     let dig_a = read_digest(&smoke_a)?;
     let dig_b = read_digest(&smoke_b)?;
     push(
         &mut checks,
         "serial_parallel_determinism_smoke",
-        dig_a == dig_b,
-        format!("{dig_a} vs {dig_b}"),
+        dig_a == dig_b && smoke_cmp.is_empty(),
+        if dig_a == dig_b && smoke_cmp.is_empty() {
+            format!("digest={dig_a}")
+        } else {
+            format!("digest {dig_a} vs {dig_b}; artifact diffs={smoke_cmp:?}")
+        },
     );
 
     // Full canonical experiment
     let full = root.join("artifacts/e1-adaptive-sampling");
-    run_experiment(&root, &full, threads, &[])?;
-    let summary: serde_json::Value =
+    // Preserve smoke dirs under full by writing canonical into a staging then merging?
+    // run_experiment wipes output dir — smokes live as siblings under e1-adaptive-sampling/
+    // so wipe would delete them. Use dedicated canonical dir then copy summaries up? Spec
+    // uses artifacts/e1-adaptive-sampling/. Keep smokes outside wipe by using subdir:
+    let canonical = root.join("artifacts/e1-adaptive-sampling/canonical");
+    run_experiment(&root, &canonical, threads, &[])?;
+    // Publish canonical tree as the main artifact root contents (without deleting smokes).
+    publish_canonical(&canonical, &full)?;
+
+    let summary: E1ExperimentReport =
         serde_json::from_slice(&std::fs::read(full.join("experiment-summary.json"))?)?;
-    let hyp = summary["hypothesis_classification"].as_str().unwrap_or("");
+    let matrix = validate_matrix(&summary, &full)?;
     push(
         &mut checks,
-        "full_experiment_complete",
-        summary.get("cases").and_then(|c| c.as_array()).is_some(),
-        format!("hypothesis={hyp}"),
+        "full_matrix_8x3x5",
+        matrix.ok,
+        matrix.detail.clone(),
+    );
+    push(
+        &mut checks,
+        "sample_parity_zero_mismatches",
+        matrix.parity_ok,
+        matrix.parity_detail.clone(),
+    );
+    push(
+        &mut checks,
+        "metrics_finite",
+        matrix.finite_ok,
+        matrix.finite_detail.clone(),
+    );
+    push(
+        &mut checks,
+        "final_full_ray_exact",
+        matrix.final_exact_ok,
+        matrix.final_exact_detail.clone(),
+    );
+    push(
+        &mut checks,
+        "ablations_complete",
+        matrix.ablations_ok,
+        matrix.ablations_detail.clone(),
+    );
+    push(
+        &mut checks,
+        "failure_analysis_semantic",
+        matrix.failure_ok,
+        matrix.failure_detail.clone(),
+    );
+    push(
+        &mut checks,
+        "pareto_includes_scientific_dimensions",
+        matrix.pareto_ok,
+        matrix.pareto_detail.clone(),
     );
     push(
         &mut checks,
         "baseline_oracle_digest",
-        summary["oracle_baseline_digest"].as_str() == Some(REQUIRED_BASELINE_ORACLE_DIGEST),
-        summary["oracle_baseline_digest"]
-            .as_str()
-            .unwrap_or("")
-            .into(),
+        summary.oracle_baseline_digest == REQUIRED_BASELINE_ORACLE_DIGEST,
+        summary.oracle_baseline_digest.clone(),
     );
     push(
         &mut checks,
-        "failure_analysis_nonempty",
-        full.join("failure-analysis.json").is_file(),
-        "present".into(),
-    );
-    push(
-        &mut checks,
-        "ablations_present",
-        full.join("ablations.json").is_file(),
-        "present".into(),
+        "hypothesis_classification_recorded",
+        matches!(
+            summary.hypothesis_classification.as_str(),
+            "SUPPORTED_ON_E0_CORPUS" | "MIXED_ON_E0_CORPUS" | "NOT_SUPPORTED_ON_E0_CORPUS"
+        ),
+        summary.hypothesis_classification.clone(),
     );
 
-    // Repeat crop physics-aware
-    let rep = root.join("artifacts/e1-adaptive-sampling/repeat-crops");
-    run_experiment(
-        &root,
-        &rep,
-        threads,
-        &[
-            "--case",
-            "kerr0999-edge-opaque-boundary-crop",
-            "--method",
-            "physics-aware",
-            "--skip-ablations",
-        ],
-    )?;
-    // Compare reconstruction digests for first budget against full run if present
+    // Repeat both boundary crops, physics-aware full ladder, compare to canonical.
+    let mut repeat_ok = true;
+    let mut repeat_detail = Vec::new();
+    for crop in CROP_CASES {
+        let rep = full.join(format!("repeat-{crop}"));
+        run_experiment(
+            &root,
+            &rep,
+            threads,
+            &[
+                "--case",
+                crop,
+                "--method",
+                "physics-aware",
+                "--skip-ablations",
+            ],
+        )?;
+        let diffs = compare_case_method_tree(
+            &full.join("cases").join(crop),
+            &rep.join("cases").join(crop),
+            &["physics-aware"],
+        )?;
+        if diffs.is_empty() {
+            repeat_detail.push(format!("{crop}: identical"));
+        } else {
+            repeat_ok = false;
+            repeat_detail.push(format!("{crop}: {diffs:?}"));
+        }
+        // Also compare deterministic digest of the single-case summary method curves
+        // against the canonical case slice after stripping timings.
+        let canon_case = summary
+            .cases
+            .iter()
+            .find(|c| c.case_id == crop)
+            .ok_or("missing crop in canonical summary")?;
+        let rep_summary: E1ExperimentReport =
+            serde_json::from_slice(&std::fs::read(rep.join("experiment-summary.json"))?)?;
+        let rep_case = rep_summary
+            .cases
+            .iter()
+            .find(|c| c.case_id == crop)
+            .ok_or("missing crop in repeat summary")?;
+        let d1 = case_method_digest(canon_case, "physics-aware")?;
+        let d2 = case_method_digest(rep_case, "physics-aware")?;
+        if d1 != d2 {
+            repeat_ok = false;
+            repeat_detail.push(format!("{crop}: curve digest mismatch"));
+        }
+    }
     push(
         &mut checks,
-        "repeat_crop_ran",
-        rep.join("experiment-summary.json").is_file(),
-        "ok".into(),
+        "repeat_crop_determinism",
+        repeat_ok,
+        repeat_detail.join("; "),
     );
 
     let manifest_after = std::fs::read(root.join(&cfg.oracle_manifest))?;
@@ -253,11 +352,12 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "unchanged".into(),
     );
 
+    let exclusions = scope_exclusion_scan(&root)?;
     push(
         &mut checks,
         "scope_exclusions",
-        true,
-        "no E2/E3/GPU/spectra/GUI in this package".into(),
+        exclusions.ok,
+        exclusions.detail,
     );
 
     let failed = checks.iter().any(|c| c.status != "PASS");
@@ -281,27 +381,454 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     };
     eval.content_digest_excluding_digest_field = digest.clone();
 
-    let out = root.join("artifacts/e1-adaptive-sampling");
-    std::fs::create_dir_all(&out)?;
+    std::fs::create_dir_all(&full)?;
     std::fs::write(
-        out.join("evaluation.json"),
+        full.join("evaluation.json"),
         serde_json::to_vec_pretty(&eval)?,
     )?;
     std::fs::write(
-        out.join("evaluation.content_digest.sha256"),
+        full.join("evaluation.content_digest.sha256"),
         format!("{digest}\n"),
     )?;
     let md = format!(
-        "# E1 evaluation\n\nresult: {}\nauthoritative: {}\ndigest: {}\n\n",
-        eval.result, eval.authoritative, digest
+        "# E1 evaluation\n\nresult: {}\nauthoritative: {}\nhypothesis: {}\ndigest: {}\n\n",
+        eval.result, eval.authoritative, summary.hypothesis_classification, digest
     );
-    std::fs::write(out.join("evaluation.md"), md)?;
+    std::fs::write(full.join("evaluation.md"), md)?;
     println!("E1 evaluate {} digest={digest}", eval.result);
     if failed {
         Err("E1 evaluation failed".into())
     } else {
         Ok(())
     }
+}
+
+struct MatrixValidation {
+    ok: bool,
+    detail: String,
+    parity_ok: bool,
+    parity_detail: String,
+    finite_ok: bool,
+    finite_detail: String,
+    final_exact_ok: bool,
+    final_exact_detail: String,
+    ablations_ok: bool,
+    ablations_detail: String,
+    failure_ok: bool,
+    failure_detail: String,
+    pareto_ok: bool,
+    pareto_detail: String,
+}
+
+fn validate_matrix(
+    summary: &E1ExperimentReport,
+    full: &Path,
+) -> Result<MatrixValidation, Box<dyn std::error::Error>> {
+    let mut missing = Vec::new();
+    for id in SOURCE_CASES.iter().chain(CROP_CASES.iter()) {
+        let case = summary.cases.iter().find(|c| c.case_id == *id);
+        if case.is_none() {
+            missing.push(format!("case:{id}"));
+            continue;
+        }
+        let case = case.unwrap();
+        if case.methods.len() != 3 {
+            missing.push(format!("{id}:methods={}", case.methods.len()));
+        }
+        for m in &PRIMARY_METHOD_DIRS {
+            let method = case.methods.iter().find(|x| {
+                x.method_id.contains(m)
+                    || x.method_id.ends_with(m)
+                    || method_dir_match(&x.method_id, m)
+            });
+            let Some(method) = method else {
+                missing.push(format!("{id}:{m}"));
+                continue;
+            };
+            if method.points.len() != 5 {
+                missing.push(format!("{id}:{m}:points={}", method.points.len()));
+            }
+            for p in &method.points {
+                let dir = full
+                    .join("cases")
+                    .join(id)
+                    .join(artifact_method_dir(&method.method_id))
+                    .join(&p.budget_id);
+                for name in [
+                    "reconstruction.ppm",
+                    "sample-mask.pgm",
+                    "leaf-depth.pgm",
+                    "outcome-disagreement.pgm",
+                    "scientific-error-summary.json",
+                    "schedule-summary.json",
+                ] {
+                    if !dir.join(name).is_file() {
+                        missing.push(format!("{id}/{m}/{}/{name}", p.budget_id));
+                    }
+                }
+            }
+        }
+    }
+    let ok = missing.is_empty();
+    let detail = if ok {
+        "8 cases × 3 methods × 5 budgets".into()
+    } else {
+        format!("missing={}", missing.join(","))
+    };
+
+    let mut parity_bad = Vec::new();
+    let mut finite_bad = Vec::new();
+    let mut final_bad = Vec::new();
+    for case in &summary.cases {
+        for method in &case.methods {
+            for p in &method.points {
+                if p.sample_parity.selected_sample_mismatch_count != 0 {
+                    parity_bad.push(format!(
+                        "{}/{}/{}",
+                        case.case_id, method.method_id, p.budget_id
+                    ));
+                }
+                if !metrics_finite(p) {
+                    finite_bad.push(format!(
+                        "{}/{}/{}",
+                        case.case_id, method.method_id, p.budget_id
+                    ));
+                }
+                let is_final = p.leaf_size == 1 || (!case.is_crop && p.leaf_size == 2);
+                if is_final
+                    && (!p.rgb.exact_match
+                        || p.scientific.outcome_disagreement_count != 0
+                        || p.sample_parity.selected_sample_mismatch_count != 0)
+                {
+                    final_bad.push(format!(
+                        "{}/{}/{}",
+                        case.case_id, method.method_id, p.budget_id
+                    ));
+                }
+            }
+        }
+    }
+
+    let mut abl_missing = Vec::new();
+    for case in ABLATION_CASES {
+        for abl in ABLATION_IDS {
+            let found = summary.ablations.iter().any(|a| {
+                a.case_id == case
+                    && a.methods
+                        .iter()
+                        .any(|m| m.method_id == abl && m.points.len() == 5)
+            });
+            if !found {
+                // also accept filesystem under ablations/
+                let dir = full.join("ablations").join(case).join(abl);
+                let n = std::fs::read_dir(&dir)
+                    .map(|rd| rd.filter_map(|e| e.ok()).count())
+                    .unwrap_or(0);
+                if n < 5 {
+                    abl_missing.push(format!("{case}/{abl}"));
+                }
+            }
+        }
+    }
+
+    let failure_raw = std::fs::read(full.join("failure-analysis.json"))?;
+    let failure: serde_json::Value = serde_json::from_slice(&failure_raw)?;
+    let worst = failure
+        .get("worst_points")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let failure_ok = !worst.is_empty()
+        && worst.iter().any(|w| {
+            w.get("leaf_rectangle").is_some()
+                || w.get("note").and_then(|n| n.as_str())
+                    == Some("no non-exact intermediate worst-pixel records")
+        })
+        && (worst.iter().all(|w| w.get("note").is_some())
+            || worst.iter().any(|w| {
+                w.get("target_local").is_some()
+                    && w.get("provenance_source_index").is_some()
+                    && w.get("leaf_depth").is_some()
+            }));
+
+    let pareto_raw = std::fs::read(full.join("pareto.json"))?;
+    let pareto: serde_json::Value = serde_json::from_slice(&pareto_raw)?;
+    let pareto_ok = pareto.as_array().is_some_and(|arr| {
+        !arr.is_empty()
+            && arr.iter().all(|e| {
+                e.get("dimensions")
+                    .and_then(|d| d.as_array())
+                    .is_some_and(|dims| {
+                        dims.iter()
+                            .any(|x| x.as_str() == Some("celestial_angular_rmse"))
+                            && dims.iter().any(|x| x.as_str() == Some("log2_iobs_rmse"))
+                    })
+            })
+    });
+
+    Ok(MatrixValidation {
+        ok,
+        detail,
+        parity_ok: parity_bad.is_empty(),
+        parity_detail: if parity_bad.is_empty() {
+            "all zero".into()
+        } else {
+            parity_bad.join(",")
+        },
+        finite_ok: finite_bad.is_empty(),
+        finite_detail: if finite_bad.is_empty() {
+            "all finite".into()
+        } else {
+            finite_bad.join(",")
+        },
+        final_exact_ok: final_bad.is_empty(),
+        final_exact_detail: if final_bad.is_empty() {
+            "all finals exact".into()
+        } else {
+            final_bad.join(",")
+        },
+        ablations_ok: abl_missing.is_empty(),
+        ablations_detail: if abl_missing.is_empty() {
+            "3 cases × 5 ablations × 5 budgets".into()
+        } else {
+            abl_missing.join(",")
+        },
+        failure_ok,
+        failure_detail: if failure_ok {
+            format!("worst_points={}", worst.len())
+        } else {
+            "missing coordinates/leaf/feature semantics".into()
+        },
+        pareto_ok,
+        pareto_detail: if pareto_ok {
+            "angular+iobs dimensions present".into()
+        } else {
+            "scientific dimensions missing".into()
+        },
+    })
+}
+
+fn method_dir_match(method_id: &str, dir: &str) -> bool {
+    match dir {
+        "uniform" => method_id.contains("uniform"),
+        "intensity-only" => method_id.contains("intensity"),
+        "physics-aware" => method_id.contains("physics-aware"),
+        _ => method_id == dir,
+    }
+}
+
+fn artifact_method_dir(method_id: &str) -> &'static str {
+    if method_id.contains("uniform") {
+        "uniform"
+    } else if method_id.contains("intensity") {
+        "intensity-only"
+    } else {
+        // physics-aware primary + ablation method IDs
+        "physics-aware"
+    }
+}
+
+fn metrics_finite(p: &crate::e1_adaptive_sampling::report::CurvePoint) -> bool {
+    let sci = &p.scientific;
+    let mut vals = vec![
+        sci.outcome_disagreement_rate,
+        sci.rhs_absolute_error.mae,
+        sci.rhs_absolute_error.rmse,
+        p.rgb.channel_mse,
+        p.ray_fraction,
+        p.mean_rhs_per_ray,
+    ];
+    for m in [
+        &sci.celestial_angular_error_radians,
+        &sci.celestial_wrap_u_error,
+        &sci.celestial_v_error,
+        &sci.log2_g_error,
+        &sci.log2_emitted_error,
+        &sci.log2_observed_error,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        vals.extend([m.mae, m.rmse, m.maximum_absolute_error]);
+    }
+    vals.into_iter().all(|v| v.is_finite()) && p.rgb.psnr_db.as_ref().is_none_or(|v| v.is_finite())
+}
+
+fn compare_case_method_tree(
+    a_case: &Path,
+    b_case: &Path,
+    methods: &[&str],
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut diffs = Vec::new();
+    for method in methods {
+        let a_root = a_case.join(method);
+        let b_root = b_case.join(method);
+        if !a_root.is_dir() || !b_root.is_dir() {
+            diffs.push(format!("missing method dir {method}"));
+            continue;
+        }
+        let mut budgets = std::fs::read_dir(&a_root)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        budgets.sort();
+        for budget in budgets {
+            for name in [
+                "reconstruction.ppm",
+                "sample-mask.pgm",
+                "leaf-depth.pgm",
+                "scientific-error-summary.json",
+                "schedule-summary.json",
+            ] {
+                let pa = a_root.join(&budget).join(name);
+                let pb = b_root.join(&budget).join(name);
+                if !pa.is_file() || !pb.is_file() {
+                    diffs.push(format!("{method}/{budget}/{name}: missing"));
+                    continue;
+                }
+                let ba = std::fs::read(&pa)?;
+                let bb = std::fs::read(&pb)?;
+                if ba != bb {
+                    diffs.push(format!(
+                        "{method}/{budget}/{name}: digest {} vs {}",
+                        hex_sha(&ba),
+                        hex_sha(&bb)
+                    ));
+                }
+            }
+        }
+    }
+    Ok(diffs)
+}
+
+fn case_method_digest(
+    case: &crate::e1_adaptive_sampling::report::E1CaseReport,
+    method_needle: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let method = case
+        .methods
+        .iter()
+        .find(|m| m.method_id.contains(method_needle))
+        .ok_or("method missing")?;
+    let mut v = serde_json::to_value(method)?;
+    if let Some(points) = v.get_mut("points").and_then(|p| p.as_array_mut()) {
+        for p in points {
+            if let Some(o) = p.as_object_mut() {
+                o.remove("wall_clock_seconds");
+                o.remove("reconstruction_wall_clock_seconds");
+                o.remove("metric_wall_clock_seconds");
+            }
+        }
+    }
+    Ok(hex_sha(&Sha256::digest(serde_json::to_vec(&v)?)))
+}
+
+fn publish_canonical(canonical: &Path, full: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(full)?;
+    for name in [
+        "experiment-summary.json",
+        "experiment-summary.md",
+        "curves.json",
+        "curves.csv",
+        "pareto.json",
+        "ablations.json",
+        "failure-analysis.json",
+    ] {
+        let src = canonical.join(name);
+        if src.is_file() {
+            std::fs::copy(&src, full.join(name))?;
+        }
+    }
+    for dir in ["cases", "ablations", "reference"] {
+        let src = canonical.join(dir);
+        let dst = full.join(dir);
+        if src.is_dir() {
+            let _ = std::fs::remove_dir_all(&dst);
+            copy_dir_recursive(&src, &dst)?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let to = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_recursive(&entry.path(), &to)?;
+        } else {
+            std::fs::copy(entry.path(), to)?;
+        }
+    }
+    Ok(())
+}
+
+struct ExclusionScan {
+    ok: bool,
+    detail: String,
+}
+
+fn scope_exclusion_scan(root: &Path) -> Result<ExclusionScan, Box<dyn std::error::Error>> {
+    // Forbidden implementation signals in code (not docs).
+    let patterns = [
+        "geodesic_deviation",
+        "jacobi_field",
+        "ray_differential",
+        "wgpu::",
+        "egui::",
+        "openexr",
+        "OpenEXR",
+        "g_cubed",
+        "g³",
+    ];
+    let mut hits = Vec::new();
+    for dir in ["crates", "xtask/src"] {
+        let base = root.join(dir);
+        for entry in walkdir_rs(&base)? {
+            let path = entry;
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            for pat in patterns {
+                if text.contains(pat) {
+                    hits.push(format!("{}:{pat}", path.strip_prefix(root)?.display()));
+                }
+            }
+        }
+    }
+    Ok(ExclusionScan {
+        ok: hits.is_empty(),
+        detail: if hits.is_empty() {
+            "no E2/E3/GPU/spectra/GUI implementation markers".into()
+        } else {
+            hits.join(",")
+        },
+    })
+}
+
+fn walkdir_rs(root: &Path) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    let mut out = Vec::new();
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+        if !dir.is_dir() {
+            return Ok(());
+        }
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out)?;
+            } else {
+                out.push(path);
+            }
+        }
+        Ok(())
+    }
+    walk(root, &mut out)?;
+    Ok(out)
 }
 
 fn run_experiment(
