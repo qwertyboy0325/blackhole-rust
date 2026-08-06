@@ -15,6 +15,7 @@ mod evaluate_gate2a0_preview_tiers;
 mod evaluate_gate2a0_trace_shade;
 mod evaluate_gate2a1_celestial;
 mod evaluate_gate2a2_lensed_celestial;
+mod evaluate_gate2b0_frequency_shift;
 mod inspect;
 mod integrate_ray;
 mod preset;
@@ -190,6 +191,10 @@ enum Commands {
         threads: Option<usize>,
         #[arg(long, default_value_t = false)]
         require_release: bool,
+        /// Emit disk-hit frequency-shift kinematics artifacts (Gate 2B0).
+        /// Requires opaque-disk-horizon-escape + opaque-disk-mask.
+        #[arg(long, default_value_t = false)]
+        emit_disk_frequency_shift: bool,
     },
     /// Emit canonical Gate 1B1 corpus JSON (numerical records; for determinism).
     CorpusReport {
@@ -234,6 +239,8 @@ fn main() {
                 evaluate_gate2a1_celestial::evaluate()
             } else if scope == "gate-2a2-lensed-celestial" {
                 evaluate_gate2a2_lensed_celestial::evaluate()
+            } else if scope == "gate-2b0-frequency-shift" {
+                evaluate_gate2b0_frequency_shift::evaluate()
             } else {
                 match preset {
                     Some(p) => evaluate::evaluate(&p, &scope),
@@ -322,6 +329,7 @@ fn main() {
             execution,
             threads,
             require_release,
+            emit_disk_frequency_shift,
         } => {
             let exec = match execution {
                 ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
@@ -358,6 +366,7 @@ fn main() {
                 require_release,
                 exec,
                 threads,
+                emit_disk_frequency_shift,
             )
         }
         Commands::CorpusReport { scope } => {

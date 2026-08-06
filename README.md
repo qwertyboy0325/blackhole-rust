@@ -6,16 +6,14 @@ Gargantua in *Interstellar*, not an exact reconstruction of Double Negative's
 proprietary assets, renderer, grading, camera, or undocumented production
 parameters.
 
-## Status: Gate 2A2 in progress (first lensed celestial diagnostic)
+## Status: Gate 2B0 in progress (frequency-shift kinematics)
 
-Gate 0–1B2, Gate 2A0-1…2A0-4, and Gate 2A1 are complete. Gate 2A2 samples a
-deterministic procedural celestial field through Gate 2A1 finite-boundary
-coordinates to produce the first lensed diagnostic RGB image. It does **not**
-claim physical radiometry, redshift, disk emission, or asymptotic-infinity
-directions. Disk omission is a separate surface-set diagnostic, not a
-transparent physical disk.
+Gate 0–1B2, Gate 2A0–2A2 are complete. Gate 2B0 establishes measured-frequency
+kinematics for opaque thin-disk hits (`g = ν_obs/ν_em`) with circular equatorial
+emitter velocity. It does **not** implement emission, intensity transport,
+spectra, physical RGB, or OpenEXR.
 
-See [procedural celestial texture V1](docs/procedural-celestial-texture-v1.md).
+See [frequency-shift convention V1](docs/frequency-shift-convention-v1.md).
 
 Selected path remains:
 
@@ -33,10 +31,10 @@ Start with [the vision](docs/vision.md), [physical assumptions](docs/physics-ass
 ## Workspace
 
 ```text
-crates/relativity-core      # metric, coords, tetrads, ray init (no I/O)
+crates/relativity-core      # metric, coords, tetrads, ray init, frequency kinematics
 crates/relativity-integrate # DOP853 geodesic integration + events
 crates/relativity-trace     # outcomes, shading, celestial UV mapping
-crates/relativity-render    # procedural celestial + lensed diagnostic RGB
+crates/relativity-render    # procedural celestial + lensed RGB + disk g-factor
 xtask                       # presets, tiers, evaluate scopes
 ```
 
@@ -45,21 +43,22 @@ License: `MIT OR Apache-2.0`.
 ## Commands
 
 ```bash
-cargo run --release -p xtask -- evaluate --scope gate-2a2-lensed-celestial
+cargo run --release -p xtask -- evaluate --scope gate-2b0-frequency-shift
 cargo run --release -p xtask -- \
   render-lensed-celestial \
   --preset presets/gargantua-baseline.toml \
   --tier gate \
-  --surface-set horizon-escape-only \
-  --mode disk-omitted-diagnostic \
+  --surface-set opaque-disk-horizon-escape \
+  --mode opaque-disk-mask \
   --texture procedural-coordinate-grid-v1 \
-  --output-dir artifacts/manual-lensed-sky \
+  --emit-disk-frequency-shift \
+  --output-dir artifacts/manual-frequency-shift \
   --execution parallel --threads 16 \
   --require-release
 ```
 
 ## Scope boundary
 
-Physical output and presentation output are separate products. Gate 2A2 produces
-a diagnostic lensed celestial image from finite-boundary coordinates and a
-procedural texture. It does not claim radiometry or asymptotic infinity.
+Physical output and presentation output are separate products. Gate 2B0 produces
+frequency-ratio kinematics for opaque disk hits. It does not claim disk
+brightness, spectral transport, or physical radiometry.

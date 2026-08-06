@@ -36,6 +36,12 @@ pub enum CoreError {
 
     #[error("ray initialization failed: {context}")]
     RayInit { context: &'static str },
+
+    #[error("invalid measured frequency: {context}")]
+    InvalidFrequency { context: &'static str },
+
+    #[error("circular equatorial orbit unavailable: {context}")]
+    CircularOrbitUnavailable { context: &'static str },
 }
 
 /// Chart/domain classification for Cartesian Kerr–Schild evaluation.

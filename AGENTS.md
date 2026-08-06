@@ -2,11 +2,10 @@
 
 ## Current gate
 
-Gate 0, 1A, 1B0, 1B1, 1B2 and Gate 2A0-1 through 2A0-4 are complete.
-Gate 2A1 is complete.
-Gate 2A2 deterministic procedural celestial lensing is in progress.
-Do not begin radiometry, redshift, Doppler, disk emission, OpenEXR, GPU,
-wgpu, egui or GUI work in this gate.
+Gate 0, 1A, 1B0, 1B1, 1B2 and Gate 2A0-1 through 2A2 are complete.
+Gate 2B0 frequency-shift kinematics is in progress.
+Do not begin emission profiles, spectral transport, physical RGB, OpenEXR,
+GPU, wgpu, egui or GUI work in this gate.
 
 ## Authority and scope
 
