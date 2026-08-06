@@ -3,14 +3,21 @@
 ## Current gate
 
 Gate 0, 1A, 1B0–1B2, Gate 2A0–2A2, Gate 2B0, and Gate 2B1 are complete.
-R1 reference-oracle freeze and E0 benchmark-corpus foundation are in progress.
+R1/E0 is complete.
+E1 physics-aware adaptive quadtree sampling is in progress.
 
-Reference-track oracle changes require strict inherited regression.
-Experimental benchmark statistics require reproducible configuration,
-error/cost evidence, and failure analysis, but not permanent schema governance.
+E1 is experimental:
+- preserve the CPU f64 oracle;
+- prevent oracle-data leakage into scheduling;
+- report ray/error curves and failures;
+- do not require permanent schema governance for prototype internals.
 
-Do not begin E1 adaptive sampling, spectral transport, physical RGB, OpenEXR,
-GPU, wgpu, egui or GUI work in this package.
+Do not begin E2 ray differentials, E3 ray bundles, Gate 2B2 spectral
+transport, physical RGB, OpenEXR, GPU, wgpu, egui or GUI work.
+
+When a gate or research package produces new reviewable image artifacts,
+regenerate `docs/media/blackhole-rust-evolution.gif` and keep it embedded in
+`README.md` on the delivery commits.
 
 ## Authority and scope
 

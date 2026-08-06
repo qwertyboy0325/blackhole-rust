@@ -6,13 +6,18 @@ Gargantua in *Interstellar*, not an exact reconstruction of Double Negative's
 proprietary assets, renderer, grading, camera, or undocumented production
 parameters.
 
-## Status: R1/E0 in progress (reference oracle and benchmark corpus)
+## Status: E1 in progress (physics-aware adaptive sampling)
 
-Gate 0–1B2, Gate 2A0–2A2, Gate 2B0, and Gate 2B1 are complete. Dual-track
-development is active: R1 freezes the CPU `f64` OracleFrame V1 export boundary,
-and E0 establishes the first reproducible oracle benchmark corpus. Gate 2B2 is
+Gate 0–2B1 and R1/E0 are complete. E1 evaluates corpus-bounded adaptive
+quadtree sampling against the frozen CPU `f64` oracle. Gate 2B2 remains
 deferred. This work does **not** implement spectra, temperature, physical RGB,
-OpenEXR, adaptive sampling, GPU, or GUI functionality.
+OpenEXR, GPU, wgpu, egui, or GUI functionality.
+
+![Gate evolution (diagnostic channels)](docs/media/blackhole-rust-evolution.gif)
+
+Diagnostic scientific channels only — not a beauty render. Regenerate with
+`python3 scripts/build_evolution_gif.py` after new gate artifacts land; keep
+this GIF linked from the README on subsequent commits.
 
 See [diagnostic bolometric emission V1](docs/diagnostic-bolometric-emission-v1.md).
 
@@ -68,7 +73,6 @@ cargo run --release -p xtask -- \
 
 ## Scope boundary
 
-Physical output and presentation output are separate products. R1/E0 exports
-accepted scientific channels and experimental benchmark evidence. It does not
-claim spectra, temperature, physical RGB, formal error guarantees, or adaptive
-sampling improvements.
+Physical output and presentation output are separate products. E1 is an
+experimental sampler study on the E0 corpus; it does not claim spectra,
+temperature, physical RGB, formal error guarantees, or production speedup.

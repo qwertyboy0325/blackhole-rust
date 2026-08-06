@@ -846,6 +846,7 @@ dependencies = [
  "gate-1b0-ivp",
  "gate-1b0-ode-solvers",
  "hex",
+ "rayon",
  "relativity-core",
  "relativity-integrate",
  "relativity-oracle",

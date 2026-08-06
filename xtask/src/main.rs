@@ -5,7 +5,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 mod build_meta;
 mod corpus_report;
 mod diagnostic_scene;
+mod e1_adaptive_sampling;
 mod evaluate;
+mod evaluate_e1_adaptive_sampling;
 mod evaluate_gate1b0;
 mod evaluate_gate1b1;
 mod evaluate_gate1b2;
@@ -225,6 +227,27 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         skip_committed_lock_update: bool,
     },
+    /// E1 physics-aware adaptive quadtree sampling experiment.
+    AdaptiveSamplingExperiment {
+        #[arg(long)]
+        config: String,
+        #[arg(long)]
+        output_dir: String,
+        #[arg(long, value_enum)]
+        execution: ExecutionArg,
+        #[arg(long)]
+        threads: Option<usize>,
+        #[arg(long, default_value_t = false)]
+        require_release: bool,
+        #[arg(long)]
+        case: Option<String>,
+        #[arg(long)]
+        method: Option<String>,
+        #[arg(long)]
+        maximum_budget_level: Option<usize>,
+        #[arg(long, default_value_t = false)]
+        skip_ablations: bool,
+    },
 }
 
 fn main() {
@@ -269,6 +292,8 @@ fn main() {
                 evaluate_gate2b1_bolometric_radiance::evaluate()
             } else if scope == "r1-e0-oracle-corpus" {
                 evaluate_r1_e0_oracle_corpus::evaluate()
+            } else if scope == "e1-adaptive-sampling" {
+                evaluate_e1_adaptive_sampling::evaluate()
             } else {
                 match preset {
                     Some(p) => evaluate::evaluate(&p, &scope),
@@ -424,6 +449,42 @@ fn main() {
             require_release,
             !skip_committed_lock_update,
         ),
+        Commands::AdaptiveSamplingExperiment {
+            config,
+            output_dir,
+            execution,
+            threads,
+            require_release,
+            case,
+            method,
+            maximum_budget_level,
+            skip_ablations,
+        } => match method
+            .as_deref()
+            .map(|m| {
+                e1_adaptive_sampling::MethodId::parse(m)
+                    .ok_or_else(|| format!("unknown method {m}").into())
+            })
+            .transpose()
+        {
+            Ok(method) => e1_adaptive_sampling::run(
+                &config,
+                &output_dir,
+                match execution {
+                    ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
+                    ExecutionArg::Parallel => trace_outcome_map::CliExecution::Parallel,
+                },
+                threads,
+                require_release,
+                e1_adaptive_sampling::ExperimentFilters {
+                    case,
+                    method,
+                    maximum_budget_level,
+                    skip_ablations,
+                },
+            ),
+            Err(e) => Err(e),
+        },
         Commands::SpikeDop853 { candidate } => {
             let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .parent()
