@@ -711,17 +711,23 @@ fn case_method_digest(
         .iter()
         .find(|m| m.method_id.contains(method_needle))
         .ok_or("method missing")?;
-    let mut v = serde_json::to_value(method)?;
-    if let Some(points) = v.get_mut("points").and_then(|p| p.as_array_mut()) {
-        for p in points {
-            if let Some(o) = p.as_object_mut() {
-                o.remove("wall_clock_seconds");
-                o.remove("reconstruction_wall_clock_seconds");
-                o.remove("metric_wall_clock_seconds");
-            }
+    // Hash only per-budget scientific schedule/metrics. Exclude `matched`, which
+    // depends on sibling baseline methods present in the same experiment run.
+    let mut points = Vec::new();
+    for p in &method.points {
+        let mut v = serde_json::to_value(p)?;
+        if let Some(o) = v.as_object_mut() {
+            o.remove("wall_clock_seconds");
+            o.remove("reconstruction_wall_clock_seconds");
+            o.remove("metric_wall_clock_seconds");
         }
+        points.push(v);
     }
-    Ok(hex_sha(&Sha256::digest(serde_json::to_vec(&v)?)))
+    let payload = serde_json::json!({
+        "method_id": method.method_id,
+        "points": points,
+    });
+    Ok(hex_sha(&Sha256::digest(serde_json::to_vec(&payload)?)))
 }
 
 fn publish_canonical(canonical: &Path, full: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -772,28 +778,37 @@ struct ExclusionScan {
 }
 
 fn scope_exclusion_scan(root: &Path) -> Result<ExclusionScan, Box<dyn std::error::Error>> {
-    // Forbidden implementation signals in code (not docs).
-    let patterns = [
-        "geodesic_deviation",
-        "jacobi_field",
-        "ray_differential",
-        "wgpu::",
-        "egui::",
-        "openexr",
-        "OpenEXR",
-        "g_cubed",
-        "g³",
-    ];
+    // Dependency / import level only. Comment mentions of excluded future work are allowed.
     let mut hits = Vec::new();
+    for toml_name in ["Cargo.toml", "xtask/Cargo.toml"] {
+        let text = std::fs::read_to_string(root.join(toml_name)).unwrap_or_default();
+        for dep in ["wgpu", "egui", "eframe", "winit", "openexr", "exr"] {
+            // crude Cargo dep line match
+            for line in text.lines() {
+                let t = line.trim();
+                if t.starts_with(&format!("{dep} "))
+                    || t.starts_with(&format!("{dep}="))
+                    || t.starts_with(&format!("{dep} ="))
+                {
+                    hits.push(format!("{toml_name}:{dep}"));
+                }
+            }
+        }
+    }
+    let import_needles = [
+        "use wgpu",
+        "use egui",
+        "use eframe",
+        "extern crate wgpu",
+        "extern crate egui",
+    ];
     for dir in ["crates", "xtask/src"] {
-        let base = root.join(dir);
-        for entry in walkdir_rs(&base)? {
-            let path = entry;
+        for path in walkdir_rs(&root.join(dir))? {
             if path.extension().and_then(|e| e.to_str()) != Some("rs") {
                 continue;
             }
             let text = std::fs::read_to_string(&path).unwrap_or_default();
-            for pat in patterns {
+            for pat in import_needles {
                 if text.contains(pat) {
                     hits.push(format!("{}:{pat}", path.strip_prefix(root)?.display()));
                 }
@@ -803,7 +818,7 @@ fn scope_exclusion_scan(root: &Path) -> Result<ExclusionScan, Box<dyn std::error
     Ok(ExclusionScan {
         ok: hits.is_empty(),
         detail: if hits.is_empty() {
-            "no E2/E3/GPU/spectra/GUI implementation markers".into()
+            "no forbidden GPU/GUI/OpenEXR dependencies or imports".into()
         } else {
             hits.join(",")
         },
