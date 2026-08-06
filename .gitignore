@@ -44,10 +44,12 @@
 /artifacts/gate-2a2-lensed-celestial/**/*.ppm
 /artifacts/gate-2a2-lensed-celestial/**/*.pgm
 /artifacts/gate-2b0-frequency-shift/
+/artifacts/gate-2b1-bolometric-radiance/
 /artifacts/manual-lensed-opaque/
 /artifacts/manual-lensed-sky/
 /artifacts/manual-frequency-shift/
 /artifacts/manual-frequency-shift-smoke/
+/artifacts/manual-bolometric-disk/
 .DS_Store
 *.swp
 *.swo
@@ -55,3 +57,4 @@
 .vscode/
 *.exr
 *.png
+/artifacts/manual-bolometric-disk-smoke/

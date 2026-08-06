@@ -4,15 +4,32 @@
 //! finite-boundary coordinates. Not physical radiometry, not asymptotic infinity.
 //!
 //! Gate 2B0: disk-hit frequency-shift kinematics (`g = ν_obs/ν_em`). Not emission.
+//! Gate 2B1: diagnostic bolometric emission and `g⁴` transport. Not spectra/RGB.
 
 #![forbid(unsafe_code)]
 
+pub mod bolometric;
 pub mod error;
 pub mod frequency_shift;
 pub mod lensed;
 pub mod texture;
 
-pub use error::{CelestialRenderError, FrequencyShiftError};
+pub use bolometric::{
+    bolometric_debug_display_spec_digest, bolometric_debug_display_v1,
+    bolometric_display_range_counts, bolometric_intensity_debug_rgb, build_disk_bolometric_frame,
+    build_disk_bolometric_map_artifact, canonical_g_fourth,
+    diagnostic_bolometric_emission_spec_digest, diagnostic_bolometric_emission_v1,
+    disk_bolometric_digest, render_bolometric_celestial_composite,
+    sample_diagnostic_bolometric_emission, shade_emitted_bolometric_debug,
+    shade_observed_bolometric_debug, transport_bolometric_specific_intensity,
+    verify_disk_bolometric_frame, BolometricDebugDisplaySpec, BolometricRegressionSample,
+    BolometricSpecificIntensity, BolometricTransportFactor, DiagnosticAngularEmissionModel,
+    DiagnosticBolometricEmissionSpec, DiskBolometricConvention, DiskBolometricFrame,
+    DiskBolometricMapArtifact, DiskBolometricPixel, DiskBolometricSample,
+    EmissionNormalizationRadiusSource, RankedBolometricPixel, ResolvedDiskBounds,
+    BOLOMETRIC_CONVENTION_ID, DISK_BOUNDS_SOURCE_V1, DISPLAY_ID_V1, EMISSION_PROFILE_ID_V1,
+};
+pub use error::{BolometricRenderError, CelestialRenderError, FrequencyShiftError};
 pub use frequency_shift::{
     build_disk_frequency_shift_frame, build_disk_frequency_shift_map_artifact,
     disk_frequency_shift_digest, g_factor_debug_rgb, g_visualization_range_counts,

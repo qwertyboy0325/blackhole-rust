@@ -16,6 +16,7 @@ mod evaluate_gate2a0_trace_shade;
 mod evaluate_gate2a1_celestial;
 mod evaluate_gate2a2_lensed_celestial;
 mod evaluate_gate2b0_frequency_shift;
+mod evaluate_gate2b1_bolometric_radiance;
 mod inspect;
 mod integrate_ray;
 mod preset;
@@ -195,6 +196,10 @@ enum Commands {
         /// Requires opaque-disk-horizon-escape + opaque-disk-mask.
         #[arg(long, default_value_t = false)]
         emit_disk_frequency_shift: bool,
+        /// Emit diagnostic bolometric disk radiance + g⁴ transport (Gate 2B1).
+        /// Requires --emit-disk-frequency-shift and opaque-disk mode/surface.
+        #[arg(long, default_value_t = false)]
+        emit_disk_bolometric_radiance: bool,
     },
     /// Emit canonical Gate 1B1 corpus JSON (numerical records; for determinism).
     CorpusReport {
@@ -241,6 +246,8 @@ fn main() {
                 evaluate_gate2a2_lensed_celestial::evaluate()
             } else if scope == "gate-2b0-frequency-shift" {
                 evaluate_gate2b0_frequency_shift::evaluate()
+            } else if scope == "gate-2b1-bolometric-radiance" {
+                evaluate_gate2b1_bolometric_radiance::evaluate()
             } else {
                 match preset {
                     Some(p) => evaluate::evaluate(&p, &scope),
@@ -330,6 +337,7 @@ fn main() {
             threads,
             require_release,
             emit_disk_frequency_shift,
+            emit_disk_bolometric_radiance,
         } => {
             let exec = match execution {
                 ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
@@ -367,6 +375,7 @@ fn main() {
                 exec,
                 threads,
                 emit_disk_frequency_shift,
+                emit_disk_bolometric_radiance,
             )
         }
         Commands::CorpusReport { scope } => {

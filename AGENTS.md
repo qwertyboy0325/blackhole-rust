@@ -2,9 +2,9 @@
 
 ## Current gate
 
-Gate 0, 1A, 1B0, 1B1, 1B2 and Gate 2A0-1 through 2A2 are complete.
-Gate 2B0 frequency-shift kinematics is in progress.
-Do not begin emission profiles, spectral transport, physical RGB, OpenEXR,
+Gate 0, 1A, 1B0–1B2, Gate 2A0–2A2, and Gate 2B0 are complete.
+Gate 2B1 diagnostic bolometric emission and g⁴ transport is in progress.
+Do not begin spectral sampling, blackbody temperature, physical RGB, OpenEXR,
 GPU, wgpu, egui or GUI work in this gate.
 
 ## Authority and scope
