@@ -1,0 +1,18 @@
+schema_version = 1
+experiment_id = "e1-physics-aware-adaptive-quadtree-v1"
+
+oracle_manifest = "experiments/oracle-benchmark/corpus-v1.toml"
+oracle_lock = "experiments/oracle-benchmark/corpus-lock-v1.json"
+
+source_leaf_sizes = [32, 16, 8, 4, 2]
+crop_leaf_sizes = [16, 8, 4, 2, 1]
+
+luma_stop_scale = 0.5
+outcome_priority = 8.0
+g_stop_scale = 0.125
+radiance_stop_scale = 0.5
+cost_stop_scale = 0.5
+component_cap = 8.0
+
+reconstruction = "leaf-local-nearest-v1"
+probe_stencil = "corners-center-child-centers-v1"
