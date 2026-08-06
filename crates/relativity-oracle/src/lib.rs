@@ -1374,10 +1374,21 @@ pub fn compare_oracle_frames(
             (Some(a), Some(b)) => {
                 if outcomes_compatible {
                     celestial_pair_count += 1;
-                    let dot = a.unit_coordinate_direction[0] * b.unit_coordinate_direction[0]
-                        + a.unit_coordinate_direction[1] * b.unit_coordinate_direction[1]
-                        + a.unit_coordinate_direction[2] * b.unit_coordinate_direction[2];
-                    celestial_angle.push(idx, dot.clamp(-1.0, 1.0).acos());
+                    let angle = if a.unit_coordinate_direction[0].to_bits()
+                        == b.unit_coordinate_direction[0].to_bits()
+                        && a.unit_coordinate_direction[1].to_bits()
+                            == b.unit_coordinate_direction[1].to_bits()
+                        && a.unit_coordinate_direction[2].to_bits()
+                            == b.unit_coordinate_direction[2].to_bits()
+                    {
+                        0.0
+                    } else {
+                        let dot = a.unit_coordinate_direction[0] * b.unit_coordinate_direction[0]
+                            + a.unit_coordinate_direction[1] * b.unit_coordinate_direction[1]
+                            + a.unit_coordinate_direction[2] * b.unit_coordinate_direction[2];
+                        dot.clamp(-1.0, 1.0).acos()
+                    };
+                    celestial_angle.push(idx, angle);
                     let du_raw = (a.u - b.u).abs();
                     celestial_u.push(idx, du_raw.min(1.0 - du_raw));
                     celestial_v.push(idx, (a.v - b.v).abs());
