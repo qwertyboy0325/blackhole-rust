@@ -6,14 +6,14 @@ Gargantua in *Interstellar*, not an exact reconstruction of Double Negative's
 proprietary assets, renderer, grading, camera, or undocumented production
 parameters.
 
-## Status: Gate 2B0 in progress (frequency-shift kinematics)
+## Status: Gate 2B1 in progress (diagnostic bolometric radiance)
 
-Gate 0–1B2, Gate 2A0–2A2 are complete. Gate 2B0 establishes measured-frequency
-kinematics for opaque thin-disk hits (`g = ν_obs/ν_em`) with circular equatorial
-emitter velocity. It does **not** implement emission, intensity transport,
-spectra, physical RGB, or OpenEXR.
+Gate 0–1B2, Gate 2A0–2A2, and Gate 2B0 are complete. Gate 2B1 adds a frozen
+diagnostic radial bolometric emission profile and invariant `I_obs = g⁴ I_em`
+transport for opaque disk hits. It does **not** implement spectra, temperature,
+physical RGB, or OpenEXR.
 
-See [frequency-shift convention V1](docs/frequency-shift-convention-v1.md).
+See [diagnostic bolometric emission V1](docs/diagnostic-bolometric-emission-v1.md).
 
 Selected path remains:
 
@@ -34,7 +34,7 @@ Start with [the vision](docs/vision.md), [physical assumptions](docs/physics-ass
 crates/relativity-core      # metric, coords, tetrads, ray init, frequency kinematics
 crates/relativity-integrate # DOP853 geodesic integration + events
 crates/relativity-trace     # outcomes, shading, celestial UV mapping
-crates/relativity-render    # procedural celestial + lensed RGB + disk g-factor
+crates/relativity-render    # procedural celestial + lensed RGB + g-factor + bolometric
 xtask                       # presets, tiers, evaluate scopes
 ```
 
@@ -43,7 +43,7 @@ License: `MIT OR Apache-2.0`.
 ## Commands
 
 ```bash
-cargo run --release -p xtask -- evaluate --scope gate-2b0-frequency-shift
+cargo run --release -p xtask -- evaluate --scope gate-2b1-bolometric-radiance
 cargo run --release -p xtask -- \
   render-lensed-celestial \
   --preset presets/gargantua-baseline.toml \
@@ -52,13 +52,14 @@ cargo run --release -p xtask -- \
   --mode opaque-disk-mask \
   --texture procedural-coordinate-grid-v1 \
   --emit-disk-frequency-shift \
-  --output-dir artifacts/manual-frequency-shift \
+  --emit-disk-bolometric-radiance \
+  --output-dir artifacts/manual-bolometric-disk \
   --execution parallel --threads 16 \
   --require-release
 ```
 
 ## Scope boundary
 
-Physical output and presentation output are separate products. Gate 2B0 produces
-frequency-ratio kinematics for opaque disk hits. It does not claim disk
-brightness, spectral transport, or physical radiometry.
+Physical output and presentation output are separate products. Gate 2B1 produces
+normalized bolometric specific intensity with `g⁴` transport. It does not claim
+spectra, temperature, or physical RGB.

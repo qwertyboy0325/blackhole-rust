@@ -13,12 +13,21 @@ use crate::trace_outcome_map::{
 };
 use relativity_core::EquatorialAngularDirection;
 use relativity_render::{
-    build_disk_frequency_shift_frame, build_disk_frequency_shift_map_artifact,
-    g_visualization_range_counts, procedural_coordinate_grid_v1, procedural_texture_spec_digest,
-    render_lensed_celestial, shade_g_factor_debug, validate_mode_surface_set,
-    verify_lensed_celestial_frame, verify_observer_unit_frequency, DiskFrequencyShiftConvention,
-    DiskVelocityModel, FrequencyShiftError, FrequencyShiftRegressionSample, LensedCelestialMode,
-    ProceduralCelestialTextureSpec, RankedFrequencyShiftPixel, TEXTURE_ID_V1,
+    bolometric_debug_display_spec_digest, bolometric_debug_display_v1,
+    bolometric_display_range_counts, build_disk_bolometric_frame,
+    build_disk_bolometric_map_artifact, build_disk_frequency_shift_frame,
+    build_disk_frequency_shift_map_artifact, diagnostic_bolometric_emission_spec_digest,
+    diagnostic_bolometric_emission_v1, g_visualization_range_counts, procedural_coordinate_grid_v1,
+    procedural_texture_spec_digest, render_bolometric_celestial_composite, render_lensed_celestial,
+    shade_emitted_bolometric_debug, shade_g_factor_debug, shade_observed_bolometric_debug,
+    validate_disk_emission_provenance, validate_mode_surface_set, verify_disk_bolometric_frame,
+    verify_lensed_celestial_frame, verify_observer_unit_frequency, BolometricDebugDisplaySpec,
+    BolometricRegressionSample, BolometricRenderError, DiagnosticBolometricEmissionSpec,
+    DiskBolometricConvention, DiskFrequencyShiftConvention, DiskVelocityModel, FrequencyShiftError,
+    FrequencyShiftRegressionSample, LensedCelestialMode, ProceduralCelestialTextureSpec,
+    RankedBolometricPixel, RankedFrequencyShiftPixel, ResolvedDiskBounds,
+    CANONICAL_DISK_EMISSION_CLAIM, CANONICAL_DISK_EMISSION_MODEL, DISK_BOUNDS_SOURCE_V1,
+    TEXTURE_ID_V1,
 };
 use relativity_trace::{
     build_celestial_coordinate_frame, build_celestial_coordinate_map_artifact, encode_ppm, hex_sha,
@@ -69,6 +78,8 @@ pub struct LensedCelestialReport {
     pub mapping_failure_count: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disk_frequency_shift: Option<DiskFrequencyShiftOutputReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_bolometric_radiance: Option<DiskBolometricOutputReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_wall_clock_seconds: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -76,6 +87,52 @@ pub struct LensedCelestialReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub render_wall_clock_seconds: Option<f64>,
     pub content_digest_excluding_digest_field: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DiskBolometricOutputReport {
+    pub bolometric_emission_passes: u32,
+    pub bolometric_transport_passes: u32,
+    pub bolometric_visualization_passes: u32,
+    pub convention: DiskBolometricConvention,
+    pub emission_spec: DiagnosticBolometricEmissionSpec,
+    pub emission_spec_digest: String,
+    pub accepted_emission_model: String,
+    pub accepted_emission_claim: String,
+    pub display_spec: BolometricDebugDisplaySpec,
+    pub display_spec_digest: String,
+    pub resolved_disk_bounds: ResolvedDiskBounds,
+    pub disk_bounds_source: String,
+    pub source_frequency_shift_digest: String,
+    pub disk_hit_count: u64,
+    pub mapped_count: u64,
+    pub mapping_failure_count: u64,
+    pub attenuated_count: u64,
+    pub boosted_count: u64,
+    pub unchanged_count: u64,
+    pub minimum_emitted: Option<RankedBolometricPixel>,
+    pub maximum_emitted: Option<RankedBolometricPixel>,
+    pub minimum_observed: Option<RankedBolometricPixel>,
+    pub maximum_observed: Option<RankedBolometricPixel>,
+    pub minimum_transport_factor: Option<RankedBolometricPixel>,
+    pub maximum_transport_factor: Option<RankedBolometricPixel>,
+    pub maximum_abs_transport_residual: f64,
+    pub bolometric_digest: String,
+    pub bolometric_json_digest: String,
+    pub emitted_debug_ppm_digest: String,
+    pub observed_debug_ppm_digest: String,
+    pub composite_ppm_digest: String,
+    pub emitted_below_range_count: u64,
+    pub emitted_above_range_count: u64,
+    pub observed_below_range_count: u64,
+    pub observed_above_range_count: u64,
+    pub regression_corpus: Vec<BolometricRegressionSample>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub emission_wall_clock_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transport_wall_clock_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visualization_wall_clock_seconds: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -122,6 +179,7 @@ pub fn run(
     execution: CliExecution,
     threads: Option<usize>,
     emit_disk_frequency_shift: bool,
+    emit_disk_bolometric_radiance: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let build = BuildExecutionMetadata::current();
     if require_release {
@@ -131,10 +189,20 @@ pub fn run(
     validate_mode_surface_set(mode, surface_set)
         .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
 
-    if emit_disk_frequency_shift
+    if emit_disk_bolometric_radiance && !emit_disk_frequency_shift {
+        return Err(BolometricRenderError::FlagRequiresFrequencyShift
+            .to_string()
+            .into());
+    }
+    if (emit_disk_frequency_shift || emit_disk_bolometric_radiance)
         && !(surface_set == TraceSurfaceSet::OpaqueDiskHorizonEscape
             && mode == LensedCelestialMode::OpaqueDiskMask)
     {
+        if emit_disk_bolometric_radiance {
+            return Err(BolometricRenderError::FlagSurfaceModeMismatch
+                .to_string()
+                .into());
+        }
         return Err(FrequencyShiftError::FlagSurfaceModeMismatch
             .to_string()
             .into());
@@ -161,7 +229,6 @@ pub fn run(
     } else {
         root.join(output_dir)
     };
-    std::fs::create_dir_all(&out_dir)?;
 
     let preset_full = if Path::new(preset_path).is_absolute() {
         PathBuf::from(preset_path)
@@ -170,6 +237,11 @@ pub fn run(
     };
     let _preset_digest = hex::encode(Sha256::digest(std::fs::read(&preset_full)?));
     let preset = load_preset(&preset_full)?;
+
+    if emit_disk_bolometric_radiance {
+        validate_disk_emission_provenance(&preset.disk.emission_model, &preset.disk.emission_claim)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+    }
 
     if preset.celestial_sphere.texture != "procedural_coordinate_grid" {
         return Err(format!(
@@ -180,6 +252,8 @@ pub fn run(
     }
     validate_celestial_seam(&preset.celestial_sphere.seam)?;
 
+    std::fs::create_dir_all(&out_dir)?;
+
     let (scene, numerical_profile) = build_diagnostic_trace_scene(
         &preset,
         TraceGrid {
@@ -187,6 +261,8 @@ pub fn run(
             height: plan.height,
         },
     )?;
+    let resolved_disk_bounds = ResolvedDiskBounds::new(scene.disk.r_inner, scene.disk.r_outer)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
 
     // ---- Phase 1: trace exactly once with selected surface set ----
     let t_trace = Instant::now();
@@ -276,7 +352,7 @@ pub fn run(
     std::fs::write(out_dir.join(&lensed_ppm_filename), &lensed_ppm)?;
 
     // ---- Phase 4 (optional): observer ν verification + disk frequency-shift ----
-    let disk_frequency_shift = if emit_disk_frequency_shift {
+    let (disk_frequency_shift, fs_frame_for_bolo) = if emit_disk_frequency_shift {
         let t_ver = Instant::now();
         let verification = verify_observer_unit_frequency(&scene.kerr, &scene)
             .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
@@ -324,7 +400,7 @@ pub fn run(
             })
             .unwrap_or_else(|| relativity_core::prograde_equatorial_direction(&scene.kerr));
 
-        Some(DiskFrequencyShiftOutputReport {
+        let report = DiskFrequencyShiftOutputReport {
             observer_frequency_verification_passes: 1,
             frequency_shift_passes: 1,
             convention: fs_convention,
@@ -349,6 +425,144 @@ pub fn run(
             regression_corpus: fs_art.regression_corpus.clone(),
             verification_wall_clock_seconds: Some(verification_wall),
             mapping_wall_clock_seconds: Some(mapping_fs_wall),
+        };
+        (Some(report), Some(fs_frame))
+    } else {
+        (None, None)
+    };
+
+    // ---- Phase 5 (optional): diagnostic bolometric emission + g⁴ transport ----
+    let disk_bolometric_radiance = if emit_disk_bolometric_radiance {
+        let fs_frame = fs_frame_for_bolo
+            .as_ref()
+            .ok_or("bolometric requires frequency-shift frame")?;
+        let source_frequency_shift_digest = disk_frequency_shift
+            .as_ref()
+            .map(|f| f.frequency_shift_digest.clone())
+            .ok_or("bolometric requires frequency-shift digest")?;
+
+        let emission_spec = diagnostic_bolometric_emission_v1();
+        emission_spec
+            .validate()
+            .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+        let display_spec = bolometric_debug_display_v1();
+        display_spec
+            .validate()
+            .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+
+        let t_em = Instant::now();
+        let bolo_frame =
+            build_disk_bolometric_frame(fs_frame, &emission_spec, resolved_disk_bounds)
+                .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+        let emission_wall = t_em.elapsed().as_secs_f64();
+
+        let t_tr = Instant::now();
+        verify_disk_bolometric_frame(fs_frame, &bolo_frame, &emission_spec, resolved_disk_bounds)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+        let bolo_convention = DiskBolometricConvention::v1();
+        let bolo_art = build_disk_bolometric_map_artifact(
+            &bolo_frame,
+            &bolo_convention,
+            &emission_spec,
+            resolved_disk_bounds,
+            &source_frequency_shift_digest,
+            CANONICAL_DISK_EMISSION_MODEL,
+            CANONICAL_DISK_EMISSION_CLAIM,
+        )
+        .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+        if bolo_art.mapping_failure_count != 0 {
+            return Err("bolometric mapping_failure_count != 0".into());
+        }
+        if bolo_art.mapped_count != bolo_art.disk_hit_count {
+            return Err("bolometric mapped_count != disk_hit_count".into());
+        }
+        if bolo_art.disk_hit_count != counts.disk_hit {
+            return Err("bolometric disk_hit_count disagrees with outcome_counts".into());
+        }
+        let transport_wall = t_tr.elapsed().as_secs_f64();
+
+        let bolo_json = serde_json::to_vec_pretty(&bolo_art)?;
+        let bolometric_json_digest = hex_sha(&bolo_json);
+        std::fs::write(
+            out_dir.join("disk-bolometric-radiance-map.json"),
+            &bolo_json,
+        )?;
+
+        let t_viz = Instant::now();
+        let emitted_frame = shade_emitted_bolometric_debug(&bolo_frame, &display_spec)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+        let emitted_ppm = encode_ppm(&emitted_frame);
+        let emitted_debug_ppm_digest = hex_sha(&emitted_ppm);
+        std::fs::write(out_dir.join("emitted-bolometric-debug.ppm"), &emitted_ppm)?;
+
+        let observed_frame = shade_observed_bolometric_debug(&bolo_frame, &display_spec)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+        let observed_ppm = encode_ppm(&observed_frame);
+        let observed_debug_ppm_digest = hex_sha(&observed_ppm);
+        std::fs::write(out_dir.join("observed-bolometric-debug.ppm"), &observed_ppm)?;
+
+        let composite = render_bolometric_celestial_composite(
+            &frame,
+            &bolo_frame,
+            &texture_spec,
+            &display_spec,
+        )
+        .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+        let composite_ppm = encode_ppm(&composite);
+        let composite_ppm_digest = hex_sha(&composite_ppm);
+        std::fs::write(
+            out_dir.join("bolometric-disk-celestial-composite.ppm"),
+            &composite_ppm,
+        )?;
+        let visualization_wall = t_viz.elapsed().as_secs_f64();
+
+        let (emitted_below, emitted_above) =
+            bolometric_display_range_counts(&bolo_frame, &display_spec, false)
+                .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+        let (observed_below, observed_above) =
+            bolometric_display_range_counts(&bolo_frame, &display_spec, true)
+                .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+
+        Some(DiskBolometricOutputReport {
+            bolometric_emission_passes: 1,
+            bolometric_transport_passes: 1,
+            bolometric_visualization_passes: 3,
+            convention: bolo_convention,
+            emission_spec_digest: diagnostic_bolometric_emission_spec_digest(&emission_spec),
+            emission_spec,
+            accepted_emission_model: CANONICAL_DISK_EMISSION_MODEL.into(),
+            accepted_emission_claim: CANONICAL_DISK_EMISSION_CLAIM.into(),
+            display_spec_digest: bolometric_debug_display_spec_digest(&display_spec),
+            display_spec,
+            resolved_disk_bounds,
+            disk_bounds_source: DISK_BOUNDS_SOURCE_V1.into(),
+            source_frequency_shift_digest,
+            disk_hit_count: bolo_art.disk_hit_count,
+            mapped_count: bolo_art.mapped_count,
+            mapping_failure_count: bolo_art.mapping_failure_count,
+            attenuated_count: bolo_art.attenuated_count,
+            boosted_count: bolo_art.boosted_count,
+            unchanged_count: bolo_art.unchanged_count,
+            minimum_emitted: bolo_art.minimum_emitted.clone(),
+            maximum_emitted: bolo_art.maximum_emitted.clone(),
+            minimum_observed: bolo_art.minimum_observed.clone(),
+            maximum_observed: bolo_art.maximum_observed.clone(),
+            minimum_transport_factor: bolo_art.minimum_transport_factor.clone(),
+            maximum_transport_factor: bolo_art.maximum_transport_factor.clone(),
+            maximum_abs_transport_residual: bolo_art.maximum_abs_transport_residual,
+            bolometric_digest: bolo_art.bolometric_digest.clone(),
+            bolometric_json_digest,
+            emitted_debug_ppm_digest,
+            observed_debug_ppm_digest,
+            composite_ppm_digest,
+            emitted_below_range_count: emitted_below,
+            emitted_above_range_count: emitted_above,
+            observed_below_range_count: observed_below,
+            observed_above_range_count: observed_above,
+            regression_corpus: bolo_art.regression_corpus.clone(),
+            emission_wall_clock_seconds: Some(emission_wall),
+            transport_wall_clock_seconds: Some(transport_wall),
+            visualization_wall_clock_seconds: Some(visualization_wall),
         })
     } else {
         None
@@ -392,6 +606,7 @@ pub fn run(
         radius_policy: RADIUS_POLICY_GATE_1B2_CAP.into(),
         mapping_failure_count: art.mapping_failure_count,
         disk_frequency_shift,
+        disk_bolometric_radiance,
         trace_wall_clock_seconds: Some(trace_wall),
         mapping_wall_clock_seconds: Some(mapping_wall),
         render_wall_clock_seconds: Some(render_wall),
@@ -520,7 +735,49 @@ pub fn content_digest(report: &LensedCelestialReport) -> String {
         mapping_failure_count: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         disk_frequency_shift: Option<FreqProj<'a>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        disk_bolometric_radiance: Option<BoloProj<'a>>,
         content_digest_excluding_digest_field: &'a str,
+    }
+    #[derive(Serialize)]
+    struct BoloProj<'a> {
+        bolometric_emission_passes: u32,
+        bolometric_transport_passes: u32,
+        bolometric_visualization_passes: u32,
+        convention: &'a DiskBolometricConvention,
+        emission_spec: &'a DiagnosticBolometricEmissionSpec,
+        emission_spec_digest: &'a str,
+        accepted_emission_model: &'a str,
+        accepted_emission_claim: &'a str,
+        display_spec: &'a BolometricDebugDisplaySpec,
+        display_spec_digest: &'a str,
+        resolved_disk_bounds_inner_bits: u64,
+        resolved_disk_bounds_outer_bits: u64,
+        disk_bounds_source: &'a str,
+        source_frequency_shift_digest: &'a str,
+        disk_hit_count: u64,
+        mapped_count: u64,
+        mapping_failure_count: u64,
+        attenuated_count: u64,
+        boosted_count: u64,
+        unchanged_count: u64,
+        minimum_emitted: &'a Option<RankedBolometricPixel>,
+        maximum_emitted: &'a Option<RankedBolometricPixel>,
+        minimum_observed: &'a Option<RankedBolometricPixel>,
+        maximum_observed: &'a Option<RankedBolometricPixel>,
+        minimum_transport_factor: &'a Option<RankedBolometricPixel>,
+        maximum_transport_factor: &'a Option<RankedBolometricPixel>,
+        maximum_abs_transport_residual_bits: u64,
+        bolometric_digest: &'a str,
+        bolometric_json_digest: &'a str,
+        emitted_debug_ppm_digest: &'a str,
+        observed_debug_ppm_digest: &'a str,
+        composite_ppm_digest: &'a str,
+        emitted_below_range_count: u64,
+        emitted_above_range_count: u64,
+        observed_below_range_count: u64,
+        observed_above_range_count: u64,
+        regression_corpus: &'a [BolometricRegressionSample],
     }
     let freq = report.disk_frequency_shift.as_ref().map(|f| FreqProj {
         observer_frequency_verification_passes: f.observer_frequency_verification_passes,
@@ -547,6 +804,45 @@ pub fn content_digest(report: &LensedCelestialReport) -> String {
         below_visualization_range_count: f.below_visualization_range_count,
         above_visualization_range_count: f.above_visualization_range_count,
         regression_corpus: &f.regression_corpus,
+    });
+    let bolo = report.disk_bolometric_radiance.as_ref().map(|b| BoloProj {
+        bolometric_emission_passes: b.bolometric_emission_passes,
+        bolometric_transport_passes: b.bolometric_transport_passes,
+        bolometric_visualization_passes: b.bolometric_visualization_passes,
+        convention: &b.convention,
+        emission_spec: &b.emission_spec,
+        emission_spec_digest: &b.emission_spec_digest,
+        accepted_emission_model: &b.accepted_emission_model,
+        accepted_emission_claim: &b.accepted_emission_claim,
+        display_spec: &b.display_spec,
+        display_spec_digest: &b.display_spec_digest,
+        resolved_disk_bounds_inner_bits: b.resolved_disk_bounds.inner_radius().to_bits(),
+        resolved_disk_bounds_outer_bits: b.resolved_disk_bounds.outer_radius().to_bits(),
+        disk_bounds_source: &b.disk_bounds_source,
+        source_frequency_shift_digest: &b.source_frequency_shift_digest,
+        disk_hit_count: b.disk_hit_count,
+        mapped_count: b.mapped_count,
+        mapping_failure_count: b.mapping_failure_count,
+        attenuated_count: b.attenuated_count,
+        boosted_count: b.boosted_count,
+        unchanged_count: b.unchanged_count,
+        minimum_emitted: &b.minimum_emitted,
+        maximum_emitted: &b.maximum_emitted,
+        minimum_observed: &b.minimum_observed,
+        maximum_observed: &b.maximum_observed,
+        minimum_transport_factor: &b.minimum_transport_factor,
+        maximum_transport_factor: &b.maximum_transport_factor,
+        maximum_abs_transport_residual_bits: b.maximum_abs_transport_residual.to_bits(),
+        bolometric_digest: &b.bolometric_digest,
+        bolometric_json_digest: &b.bolometric_json_digest,
+        emitted_debug_ppm_digest: &b.emitted_debug_ppm_digest,
+        observed_debug_ppm_digest: &b.observed_debug_ppm_digest,
+        composite_ppm_digest: &b.composite_ppm_digest,
+        emitted_below_range_count: b.emitted_below_range_count,
+        emitted_above_range_count: b.emitted_above_range_count,
+        observed_below_range_count: b.observed_below_range_count,
+        observed_above_range_count: b.observed_above_range_count,
+        regression_corpus: &b.regression_corpus,
     });
     let proj = Proj {
         schema_version: report.schema_version,
@@ -582,6 +878,7 @@ pub fn content_digest(report: &LensedCelestialReport) -> String {
         radius_policy: &report.radius_policy,
         mapping_failure_count: report.mapping_failure_count,
         disk_frequency_shift: freq,
+        disk_bolometric_radiance: bolo,
         content_digest_excluding_digest_field: "",
     };
     hex_sha(&serde_json::to_vec(&proj).expect("serialize"))
@@ -658,6 +955,7 @@ mod tests {
             radius_policy: RADIUS_POLICY_GATE_1B2_CAP.into(),
             mapping_failure_count: 0,
             disk_frequency_shift: None,
+            disk_bolometric_radiance: None,
             trace_wall_clock_seconds: Some(1.0),
             mapping_wall_clock_seconds: Some(0.1),
             render_wall_clock_seconds: Some(0.01),
