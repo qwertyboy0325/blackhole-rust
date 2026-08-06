@@ -8,7 +8,6 @@ use crate::trace_outcome_map::CliExecution;
 use relativity_oracle::{OracleChannelSet, OracleFrame, ORACLE_ID_V1, ORACLE_SCHEMA_VERSION};
 use relativity_trace::{hex_sha, OutcomeCounts};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -181,7 +180,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     let authoritative_threads = available;
 
     let committed_lock_bytes = std::fs::read(root.join(COMMITTED_LOCK_PATH))?;
-    let committed_lock_digest = hex_sha(&Sha256::digest(&committed_lock_bytes));
+    let committed_lock_digest = hex_sha(&committed_lock_bytes);
     let committed: CorpusLock = serde_json::from_slice(&committed_lock_bytes)?;
     push(
         &mut checks,
@@ -224,7 +223,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     let lock_b_bytes = std::fs::read(root.join(out_b).join("corpus-lock-v1.json"))?;
     let lock_serial_bytes = std::fs::read(root.join(out_serial).join("corpus-lock-v1.json"))?;
     let lock_cli_bytes = std::fs::read(root.join(out_cli).join("corpus-lock-v1.json"))?;
-    let regenerated_lock_digest = hex_sha(&Sha256::digest(&lock_a_bytes));
+    let regenerated_lock_digest = hex_sha(&lock_a_bytes);
 
     push(
         &mut checks,
@@ -236,11 +235,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         &mut checks,
         "repeated_generation_determinism",
         lock_a_bytes == lock_b_bytes,
-        format!(
-            "a={} b={}",
-            hex_sha(&Sha256::digest(&lock_a_bytes)),
-            hex_sha(&Sha256::digest(&lock_b_bytes))
-        ),
+        format!("a={} b={}", hex_sha(&lock_a_bytes), hex_sha(&lock_b_bytes)),
     );
     push(
         &mut checks,
@@ -248,8 +243,8 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         lock_a_bytes == lock_serial_bytes,
         format!(
             "parallel={} serial={}",
-            hex_sha(&Sha256::digest(&lock_a_bytes)),
-            hex_sha(&Sha256::digest(&lock_serial_bytes))
+            hex_sha(&lock_a_bytes),
+            hex_sha(&lock_serial_bytes)
         ),
     );
     push(
@@ -258,8 +253,8 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         lock_a_bytes == lock_cli_bytes,
         format!(
             "in_process={} cli={}",
-            hex_sha(&Sha256::digest(&lock_a_bytes)),
-            hex_sha(&Sha256::digest(&lock_cli_bytes))
+            hex_sha(&lock_a_bytes),
+            hex_sha(&lock_cli_bytes)
         ),
     );
 
@@ -570,7 +565,7 @@ fn eval_digest(report: &R1E0Eval) -> String {
             })
             .collect(),
     };
-    hex_sha(&Sha256::digest(serde_json::to_vec(&proj).unwrap()))
+    hex_sha(&serde_json::to_vec(&proj).unwrap())
 }
 
 fn porcelain_dirty(root: &Path) -> Result<(bool, String), Box<dyn std::error::Error>> {
