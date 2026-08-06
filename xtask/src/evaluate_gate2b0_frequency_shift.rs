@@ -161,19 +161,21 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // CLI negatives: reject before artifacts.
+    // Use mode/surface pairs that are otherwise valid so the frequency flag is
+    // the rejecting gate (not validate_mode_surface_set).
     check_cli_negative(
         &root,
         &mut checks,
         "cli_reject_horizon_escape_only",
         TraceSurfaceSet::HorizonEscapeOnly,
-        LensedCelestialMode::OpaqueDiskMask,
+        LensedCelestialMode::DiskOmittedDiagnostic,
         "artifacts/gate-2b0-frequency-shift/cli-neg-horizon-escape",
     )?;
     check_cli_negative(
         &root,
         &mut checks,
         "cli_reject_disk_omitted",
-        TraceSurfaceSet::OpaqueDiskHorizonEscape,
+        TraceSurfaceSet::HorizonEscapeOnly,
         LensedCelestialMode::DiskOmittedDiagnostic,
         "artifacts/gate-2b0-frequency-shift/cli-neg-disk-omitted",
     )?;
