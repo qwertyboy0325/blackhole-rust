@@ -2,17 +2,17 @@
 
 ## Result
 
-Authoritative `PASS` evaluated at commit `6e1b2acec8afcf175a5f1ad8c930e78cb50010de`
-(owner closures for evaluator authority, OracleFrame invariant, presence metrics).
+Authoritative `PASS` evaluated at commit `2653fde5d6174c1004e107afc81e6320ff6a94cc`
+(owner closures for subprocesses, source coordinates, and complete self-comparison).
 
 | Item | Value |
 | --- | --- |
 | Base | `dcceef661574d21ce4c0aa8817fcf9d9fa1039a1` |
 | Branch | `r1-e0-oracle-benchmark-corpus` |
 | Draft PR | #14 |
-| Owner closure comment | `5200642850` |
-| Reviewed head before closures | `9f8681e9a22283a97caca28c04b685fbaea47272` |
-| Evaluator digest | `9f158ba0f8c95228817fc80be9ed63ade69c4f6b7e1d43788760ea1f6115680b` |
+| Owner closure comments | `5200642850`, `5200818255` |
+| Reviewed head before first closures | `9f8681e9a22283a97caca28c04b685fbaea47272` |
+| Evaluator digest | `709ce2e85c79f6ef68e3d903f8f472679ced03fcc29ac892492a10f976a13a7f` |
 | Corpus lock digest | `647cb722b8ca5bc83b7ec77bfa612c97429ead61e36f10d47db75ade269941fb` |
 
 ## Closures
