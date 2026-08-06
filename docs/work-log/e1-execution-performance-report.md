@@ -55,6 +55,14 @@ E2 / Gate 2B2                     NOT STARTED
    Phase fields: `tracing_and_schedule_*`, `reconstruction_*`, `metric_*`,
    `artifact_*` (stripped from scientific digests).
 
+## CI follow-up (`5202853029`)
+
+Unit-test fixture no longer materializes the E0 corpus and does not read
+ignored `artifacts/`. Tamper tests use a hermetic 1-source + 1-crop synthetic
+session via `validate_session_tree`. Production `validate_existing` still
+requires the pinned lock digest and validates all eight reference cases in the
+authoritative evaluator.
+
 ## Execution profile (non-binding)
 
 Wall clock for authoritative evaluate process ≈ **383 s** (release).
