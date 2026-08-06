@@ -7,7 +7,7 @@ use crate::e1_adaptive_sampling::config::{
 };
 use crate::e1_adaptive_sampling::metrics::{
     compare_reconstruction_rgb, compare_reconstruction_to_oracle, encode_outcome_disagreement_pgm,
-    verify_selected_sample_parity,
+    final_scientific_exact, verify_selected_sample_parity,
 };
 use crate::e1_adaptive_sampling::quadtree::{
     stencil_source_indices, DomainMapping, PixelRect, QuadCell,
@@ -539,16 +539,21 @@ fn run_method_ladder(
         // crop leaf=1 traces every pixel. Intermediate filtered ladders must not
         // be held to exact reconstruction.
         let is_full_coverage_final = leaf == 1 || (!case.is_crop && leaf == 2);
-        if is_full_coverage_final && (!rgb.exact_match || sci.outcome_disagreement_count != 0) {
-            return Err(format!(
-                "final full-ray entry not exact for {}/{} leaf={leaf} rays={} mse={} outcome_dis={}",
-                case.id,
-                method.as_str(),
+        if is_full_coverage_final {
+            if let Err(detail) = final_scientific_exact(
+                case.is_crop,
                 cache.unique_traced_rays(),
-                rgb.channel_mse,
-                sci.outcome_disagreement_count
-            )
-            .into());
+                &sci,
+                &rgb,
+                &parity,
+            ) {
+                return Err(format!(
+                    "final full-coverage entry not exact for {}/{} leaf={leaf}: {detail}",
+                    case.id,
+                    method.as_str()
+                )
+                .into());
+            }
         }
 
         let budget_id = format!("leaf-{leaf}");

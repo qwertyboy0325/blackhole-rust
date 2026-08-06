@@ -6,7 +6,10 @@ use crate::build_meta::{
 use crate::e1_adaptive_sampling::config::{
     E1Config, APPROVED_BASE, REQUIRED_BASELINE_ORACLE_DIGEST, REQUIRED_LOCK_DIGEST,
 };
-use crate::e1_adaptive_sampling::report::E1ExperimentReport;
+use crate::e1_adaptive_sampling::metrics::final_scientific_exact;
+use crate::e1_adaptive_sampling::report::{
+    case_optional_metric_consistency, classify_hypothesis, E1ExperimentReport,
+};
 use relativity_trace::hex_sha;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -277,14 +280,30 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         summary.oracle_baseline_digest == REQUIRED_BASELINE_ORACLE_DIGEST,
         summary.oracle_baseline_digest.clone(),
     );
+    let recomputed = classify_hypothesis(&summary.cases);
+    let hypothesis_ok = summary.hypothesis_classification == recomputed
+        && matches!(
+            recomputed.as_str(),
+            "SUPPORTED_ON_E0_CORPUS" | "MIXED_ON_E0_CORPUS" | "NOT_SUPPORTED_ON_E0_CORPUS"
+        );
     push(
         &mut checks,
         "hypothesis_classification_recorded",
-        matches!(
-            summary.hypothesis_classification.as_str(),
-            "SUPPORTED_ON_E0_CORPUS" | "MIXED_ON_E0_CORPUS" | "NOT_SUPPORTED_ON_E0_CORPUS"
-        ),
-        summary.hypothesis_classification.clone(),
+        hypothesis_ok,
+        if hypothesis_ok {
+            recomputed
+        } else {
+            format!(
+                "summary={} recomputed={}",
+                summary.hypothesis_classification, recomputed
+            )
+        },
+    );
+    push(
+        &mut checks,
+        "optional_metric_consistency",
+        matrix.optional_ok,
+        matrix.optional_detail.clone(),
     );
 
     // Repeat both boundary crops, physics-aware full ladder, compare to canonical.
@@ -418,6 +437,8 @@ struct MatrixValidation {
     failure_detail: String,
     pareto_ok: bool,
     pareto_detail: String,
+    optional_ok: bool,
+    optional_detail: String,
 }
 
 fn validate_matrix(
@@ -479,7 +500,11 @@ fn validate_matrix(
     let mut parity_bad = Vec::new();
     let mut finite_bad = Vec::new();
     let mut final_bad = Vec::new();
+    let mut optional_bad = Vec::new();
     for case in &summary.cases {
+        if let Err(e) = case_optional_metric_consistency(case) {
+            optional_bad.push(e);
+        }
         for method in &case.methods {
             for p in &method.points {
                 if p.sample_parity.selected_sample_mismatch_count != 0 {
@@ -495,15 +520,19 @@ fn validate_matrix(
                     ));
                 }
                 let is_final = p.leaf_size == 1 || (!case.is_crop && p.leaf_size == 2);
-                if is_final
-                    && (!p.rgb.exact_match
-                        || p.scientific.outcome_disagreement_count != 0
-                        || p.sample_parity.selected_sample_mismatch_count != 0)
-                {
-                    final_bad.push(format!(
-                        "{}/{}/{}",
-                        case.case_id, method.method_id, p.budget_id
-                    ));
+                if is_final {
+                    if let Err(detail) = final_scientific_exact(
+                        case.is_crop,
+                        p.unique_traced_rays,
+                        &p.scientific,
+                        &p.rgb,
+                        &p.sample_parity,
+                    ) {
+                        final_bad.push(format!(
+                            "{}/{}/{}: {detail}",
+                            case.case_id, method.method_id, p.budget_id
+                        ));
+                    }
                 }
             }
         }
@@ -538,7 +567,28 @@ fn validate_matrix(
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
+    let required_categories = [
+        "unresolved_outcome_islands",
+        "thin_celestial_features",
+        "high_angular_error_regions",
+        "radiance_failures",
+        "intensity_only_beats_physics_aware",
+        "trace_cost_over_focus",
+        "ablation_regressions",
+    ];
+    let categories = failure.get("categories").and_then(|c| c.as_object());
+    let categories_ok = categories.is_some_and(|cats| {
+        required_categories.iter().all(|name| {
+            cats.get(*name).is_some_and(|entry| {
+                matches!(
+                    entry.get("status").and_then(|s| s.as_str()),
+                    Some("observed") | Some("not-observed")
+                ) && entry.get("evidence").and_then(|e| e.as_array()).is_some()
+            })
+        })
+    });
     let failure_ok = !worst.is_empty()
+        && categories_ok
         && worst.iter().any(|w| {
             w.get("leaf_rectangle").is_some()
                 || w.get("note").and_then(|n| n.as_str())
@@ -595,15 +645,24 @@ fn validate_matrix(
         },
         failure_ok,
         failure_detail: if failure_ok {
-            format!("worst_points={}", worst.len())
+            format!(
+                "worst_points={} categories=observed/not-observed",
+                worst.len()
+            )
         } else {
-            "missing coordinates/leaf/feature semantics".into()
+            "missing coordinates/leaf/feature/category semantics".into()
         },
         pareto_ok,
         pareto_detail: if pareto_ok {
             "angular+iobs dimensions present".into()
         } else {
             "scientific dimensions missing".into()
+        },
+        optional_ok: optional_bad.is_empty(),
+        optional_detail: if optional_bad.is_empty() {
+            "case-level optional metrics consistent".into()
+        } else {
+            optional_bad.join(",")
         },
     })
 }
@@ -678,6 +737,7 @@ fn compare_case_method_tree(
                 "reconstruction.ppm",
                 "sample-mask.pgm",
                 "leaf-depth.pgm",
+                "outcome-disagreement.pgm",
                 "scientific-error-summary.json",
                 "schedule-summary.json",
             ] {

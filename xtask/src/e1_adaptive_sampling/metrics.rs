@@ -267,6 +267,128 @@ pub fn compare_reconstruction_rgb(
     compare_rgb(reference_ppm, candidate_ppm)
 }
 
+/// Expected unique ray count for a full-coverage final ladder point.
+pub fn final_coverage_ray_count(is_crop: bool) -> u64 {
+    if is_crop {
+        4096
+    } else {
+        16384
+    }
+}
+
+fn scalar_error_exact_zero(m: &ScalarErrorMetrics) -> bool {
+    m.mae == 0.0 && m.rmse == 0.0 && m.maximum_absolute_error == 0.0
+}
+
+fn optional_scalar_final_ok(
+    metric: &OptionalScalarErrorMetrics,
+    pair_count: u64,
+    name: &str,
+    bad: &mut Vec<String>,
+) {
+    match (metric, pair_count) {
+        (None, 0) => {}
+        (Some(s), n) if n > 0 && scalar_error_exact_zero(s) => {}
+        (None, n) if n > 0 => bad.push(format!("{name}: missing while pair_count={n}")),
+        (Some(s), 0) => bad.push(format!(
+            "{name}: present while pair_count=0 (mae={})",
+            s.mae
+        )),
+        (Some(s), _) => bad.push(format!(
+            "{name}: nonzero mae={} rmse={} max={}",
+            s.mae, s.rmse, s.maximum_absolute_error
+        )),
+        (None, _) => {}
+    }
+}
+
+/// Full scientific + RGB + ray-count exactness for final full-coverage budgets.
+pub fn final_scientific_exact(
+    is_crop: bool,
+    unique_traced_rays: u64,
+    sci: &OracleComparisonMetrics,
+    rgb: &RgbComparisonMetrics,
+    parity: &SampleParityReport,
+) -> Result<(), String> {
+    let mut bad = Vec::new();
+    let expected_rays = final_coverage_ray_count(is_crop);
+    if unique_traced_rays != expected_rays {
+        bad.push(format!(
+            "unique_traced_rays={unique_traced_rays} expected={expected_rays}"
+        ));
+    }
+    if !rgb.exact_match {
+        bad.push(format!("rgb not exact mse={}", rgb.channel_mse));
+    }
+    if parity.selected_sample_mismatch_count != 0 {
+        bad.push(format!(
+            "sample_parity mismatches={}",
+            parity.selected_sample_mismatch_count
+        ));
+    }
+    if sci.outcome_disagreement_count != 0 || sci.outcome_disagreement_rate != 0.0 {
+        bad.push(format!(
+            "outcome_disagreement count={} rate={}",
+            sci.outcome_disagreement_count, sci.outcome_disagreement_rate
+        ));
+    }
+    let rhs = &sci.rhs_absolute_error;
+    if rhs.mae != 0.0 || rhs.rmse != 0.0 || rhs.maximum_absolute_error != 0 {
+        bad.push(format!(
+            "rhs_absolute_error mae={} rmse={} max={}",
+            rhs.mae, rhs.rmse, rhs.maximum_absolute_error
+        ));
+    }
+    if sci.celestial_presence_mismatch_count != 0 {
+        bad.push(format!(
+            "celestial_presence_mismatch={}",
+            sci.celestial_presence_mismatch_count
+        ));
+    }
+    if sci.disk_presence_mismatch_count != 0 {
+        bad.push(format!(
+            "disk_presence_mismatch={}",
+            sci.disk_presence_mismatch_count
+        ));
+    }
+    optional_scalar_final_ok(
+        &sci.celestial_angular_error_radians,
+        sci.celestial_pair_count,
+        "celestial_angular",
+        &mut bad,
+    );
+    optional_scalar_final_ok(
+        &sci.celestial_wrap_u_error,
+        sci.celestial_pair_count,
+        "celestial_wrap_u",
+        &mut bad,
+    );
+    optional_scalar_final_ok(
+        &sci.celestial_v_error,
+        sci.celestial_pair_count,
+        "celestial_v",
+        &mut bad,
+    );
+    optional_scalar_final_ok(&sci.log2_g_error, sci.disk_pair_count, "log2_g", &mut bad);
+    optional_scalar_final_ok(
+        &sci.log2_emitted_error,
+        sci.disk_pair_count,
+        "log2_emitted",
+        &mut bad,
+    );
+    optional_scalar_final_ok(
+        &sci.log2_observed_error,
+        sci.disk_pair_count,
+        "log2_observed",
+        &mut bad,
+    );
+    if bad.is_empty() {
+        Ok(())
+    } else {
+        Err(bad.join("; "))
+    }
+}
+
 pub fn encode_outcome_disagreement_pgm(
     oracle: &OracleFrame,
     recon: &AdaptiveReconstruction,
@@ -287,7 +409,32 @@ pub fn encode_outcome_disagreement_pgm(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use relativity_oracle::{IntegerErrorMetrics, ScalarErrorMetrics};
     use relativity_trace::OutcomeClass;
+
+    fn zero_sci() -> OracleComparisonMetrics {
+        OracleComparisonMetrics {
+            compared_pixels: 1,
+            outcome_disagreement_count: 0,
+            outcome_disagreement_rate: 0.0,
+            rhs_absolute_error: IntegerErrorMetrics {
+                mae: 0.0,
+                rmse: 0.0,
+                maximum_absolute_error: 0,
+                maximum_error_index: 0,
+            },
+            celestial_pair_count: 0,
+            celestial_presence_mismatch_count: 0,
+            celestial_angular_error_radians: None,
+            celestial_wrap_u_error: None,
+            celestial_v_error: None,
+            disk_pair_count: 0,
+            disk_presence_mismatch_count: 0,
+            log2_g_error: None,
+            log2_emitted_error: None,
+            log2_observed_error: None,
+        }
+    }
 
     #[test]
     fn rgb_exact_match_uses_psnr_sentinel() {
@@ -329,5 +476,88 @@ mod tests {
         assert!(!sample_matches_oracle(&s, &o));
         o.rhs_evaluations = 1;
         assert!(sample_matches_oracle(&s, &o));
+    }
+
+    #[test]
+    fn final_scientific_exact_accepts_crop_full_coverage() {
+        let sci = zero_sci();
+        let rgb = RgbComparisonMetrics {
+            pixel_count: 1,
+            channel_mse: 0.0,
+            maximum_absolute_channel_error: 0,
+            exact_match: true,
+            psnr_db: None,
+        };
+        let parity = SampleParityReport {
+            selected_sample_count: 1,
+            selected_sample_exact_count: 1,
+            selected_sample_mismatch_count: 0,
+        };
+        assert!(final_scientific_exact(true, 4096, &sci, &rgb, &parity).is_ok());
+        assert!(final_scientific_exact(false, 16384, &sci, &rgb, &parity).is_ok());
+    }
+
+    #[test]
+    fn final_scientific_exact_rejects_wrong_ray_count_and_nonzero_rhs() {
+        let mut sci = zero_sci();
+        let rgb = RgbComparisonMetrics {
+            pixel_count: 1,
+            channel_mse: 0.0,
+            maximum_absolute_channel_error: 0,
+            exact_match: true,
+            psnr_db: None,
+        };
+        let parity = SampleParityReport {
+            selected_sample_count: 1,
+            selected_sample_exact_count: 1,
+            selected_sample_mismatch_count: 0,
+        };
+        assert!(final_scientific_exact(true, 4095, &sci, &rgb, &parity).is_err());
+        sci.rhs_absolute_error.mae = 1.0;
+        assert!(final_scientific_exact(true, 4096, &sci, &rgb, &parity).is_err());
+    }
+
+    #[test]
+    fn final_scientific_exact_requires_zero_scalars_when_pairs_present() {
+        let mut sci = zero_sci();
+        sci.celestial_pair_count = 1;
+        sci.celestial_angular_error_radians = Some(ScalarErrorMetrics {
+            mae: 0.1,
+            rmse: 0.1,
+            maximum_absolute_error: 0.1,
+            maximum_error_index: 0,
+        });
+        let rgb = RgbComparisonMetrics {
+            pixel_count: 1,
+            channel_mse: 0.0,
+            maximum_absolute_channel_error: 0,
+            exact_match: true,
+            psnr_db: None,
+        };
+        let parity = SampleParityReport {
+            selected_sample_count: 0,
+            selected_sample_exact_count: 0,
+            selected_sample_mismatch_count: 0,
+        };
+        assert!(final_scientific_exact(false, 16384, &sci, &rgb, &parity).is_err());
+        sci.celestial_angular_error_radians = Some(ScalarErrorMetrics {
+            mae: 0.0,
+            rmse: 0.0,
+            maximum_absolute_error: 0.0,
+            maximum_error_index: 0,
+        });
+        sci.celestial_wrap_u_error = Some(ScalarErrorMetrics {
+            mae: 0.0,
+            rmse: 0.0,
+            maximum_absolute_error: 0.0,
+            maximum_error_index: 0,
+        });
+        sci.celestial_v_error = Some(ScalarErrorMetrics {
+            mae: 0.0,
+            rmse: 0.0,
+            maximum_absolute_error: 0.0,
+            maximum_error_index: 0,
+        });
+        assert!(final_scientific_exact(false, 16384, &sci, &rgb, &parity).is_ok());
     }
 }

@@ -194,6 +194,75 @@ pub fn write_experiment_reports(
     Ok(())
 }
 
+/// Case-level applicability of optional scientific Pareto dimensions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApplicableScientificDims {
+    pub celestial_angular: bool,
+    pub log2_iobs: bool,
+}
+
+/// Infer applicable scientific dims from observed metrics on a case (all methods).
+pub fn applicable_dims_for_case(case: &E1CaseReport) -> ApplicableScientificDims {
+    let mut celestial_angular = false;
+    let mut log2_iobs = false;
+    for method in &case.methods {
+        for p in &method.points {
+            if p.scientific.celestial_angular_error_radians.is_some()
+                || p.scientific.celestial_pair_count > 0
+            {
+                celestial_angular = true;
+            }
+            if p.scientific.log2_observed_error.is_some() || p.scientific.disk_pair_count > 0 {
+                log2_iobs = true;
+            }
+        }
+    }
+    ApplicableScientificDims {
+        celestial_angular,
+        log2_iobs,
+    }
+}
+
+/// Validate optional-metric presence at full-coverage finals against case applicability.
+pub fn case_optional_metric_consistency(case: &E1CaseReport) -> Result<(), String> {
+    let dims = applicable_dims_for_case(case);
+    for method in &case.methods {
+        for p in &method.points {
+            let is_final = p.leaf_size == 1 || (!case.is_crop && p.leaf_size == 2);
+            if !is_final {
+                continue;
+            }
+            let has_ang = p.scientific.celestial_angular_error_radians.is_some();
+            let has_iobs = p.scientific.log2_observed_error.is_some();
+            if dims.celestial_angular && !has_ang && p.scientific.celestial_pair_count > 0 {
+                return Err(format!(
+                    "{}/{}/{}: angular applicable with pairs but metric None",
+                    case.case_id, method.method_id, p.budget_id
+                ));
+            }
+            if dims.log2_iobs && !has_iobs && p.scientific.disk_pair_count > 0 {
+                return Err(format!(
+                    "{}/{}/{}: log2_iobs applicable with pairs but metric None",
+                    case.case_id, method.method_id, p.budget_id
+                ));
+            }
+            if !dims.celestial_angular && has_ang {
+                return Err(format!(
+                    "{}/{}/{}: angular not applicable but metric Some",
+                    case.case_id, method.method_id, p.budget_id
+                ));
+            }
+            if !dims.log2_iobs && has_iobs {
+                return Err(format!(
+                    "{}/{}/{}: log2_iobs not applicable but metric Some",
+                    case.case_id, method.method_id, p.budget_id
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Primary objective vector for Pareto:
 /// (rays, outcome_rate, rgb_mse, angular_rmse?, log2_iobs_rmse?).
 #[derive(Debug, Clone, Copy)]
@@ -219,9 +288,24 @@ fn primary_errors(p: &CurvePoint) -> PrimaryErrors {
     }
 }
 
-/// `b` dominates `a` when b uses no more rays, is no worse on every applicable
-/// primary error, and strictly better on at least one.
-pub fn dominates(b: &CurvePoint, a: &CurvePoint) -> bool {
+/// Compare optional error dims under case-level applicability.
+/// Returns `None` when mixed Some/None would silently favor incomplete data.
+fn optional_le_strict(bv: Option<f64>, av: Option<f64>, applicable: bool) -> Option<(bool, bool)> {
+    if !applicable {
+        return match (bv, av) {
+            (None, None) => Some((true, false)),
+            _ => None, // data bug: metric present when not applicable
+        };
+    }
+    match (bv, av) {
+        (Some(b), Some(a)) => Some((b <= a, b < a)),
+        (None, None) => Some((true, false)), // jointly absent at this budget
+        _ => None,                           // mixed: incomplete, not "not worse"
+    }
+}
+
+/// Same-method frontier dominance: fewer-or-equal rays plus no-worse applicable errors.
+pub fn dominates(b: &CurvePoint, a: &CurvePoint, dims: ApplicableScientificDims) -> bool {
     let bb = primary_errors(b);
     let aa = primary_errors(a);
     if bb.rays > aa.rays {
@@ -230,34 +314,36 @@ pub fn dominates(b: &CurvePoint, a: &CurvePoint) -> bool {
     let mut le_all = bb.outcome_rate <= aa.outcome_rate && bb.rgb_mse <= aa.rgb_mse;
     let mut strict =
         bb.rays < aa.rays || bb.outcome_rate < aa.outcome_rate || bb.rgb_mse < aa.rgb_mse;
-    match (bb.angular_rmse, aa.angular_rmse) {
-        (Some(bv), Some(av)) => {
-            le_all &= bv <= av;
-            strict |= bv < av;
-        }
-        (None, None) => {}
-        // Dimension not jointly applicable.
-        _ => {}
-    }
-    match (bb.log2_iobs_rmse, aa.log2_iobs_rmse) {
-        (Some(bv), Some(av)) => {
-            le_all &= bv <= av;
-            strict |= bv < av;
-        }
-        (None, None) => {}
-        _ => {}
-    }
+    let Some((ang_le, ang_st)) =
+        optional_le_strict(bb.angular_rmse, aa.angular_rmse, dims.celestial_angular)
+    else {
+        return false;
+    };
+    le_all &= ang_le;
+    strict |= ang_st;
+    let Some((iobs_le, iobs_st)) =
+        optional_le_strict(bb.log2_iobs_rmse, aa.log2_iobs_rmse, dims.log2_iobs)
+    else {
+        return false;
+    };
+    le_all &= iobs_le;
+    strict |= iobs_st;
     le_all && strict
 }
 
 fn compute_pareto(cases: &[E1CaseReport]) -> serde_json::Value {
     let mut out = Vec::new();
     for case in cases {
+        let dims = applicable_dims_for_case(case);
         for method in &case.methods {
-            let frontier = pareto_frontier(&method.points);
+            let frontier = pareto_frontier(&method.points, dims);
             out.push(serde_json::json!({
                 "case": case.case_id,
                 "method": method.method_id,
+                "applicable_dimensions": {
+                    "celestial_angular_rmse": dims.celestial_angular,
+                    "log2_iobs_rmse": dims.log2_iobs,
+                },
                 "dimensions": [
                     "unique_traced_rays",
                     "outcome_disagreement_rate",
@@ -272,18 +358,25 @@ fn compute_pareto(cases: &[E1CaseReport]) -> serde_json::Value {
     serde_json::json!(out)
 }
 
-fn pareto_frontier(points: &[CurvePoint]) -> Vec<String> {
+fn pareto_frontier(points: &[CurvePoint], dims: ApplicableScientificDims) -> Vec<String> {
     let mut keep = Vec::new();
     for (i, a) in points.iter().enumerate() {
         let dominated = points
             .iter()
             .enumerate()
-            .any(|(j, b)| i != j && dominates(b, a));
+            .any(|(j, b)| i != j && dominates(b, a, dims));
         if !dominated {
             keep.push(a.budget_id.clone());
         }
     }
     keep
+}
+
+fn category_entry(observed: bool, evidence: Vec<serde_json::Value>) -> serde_json::Value {
+    serde_json::json!({
+        "status": if observed { "observed" } else { "not-observed" },
+        "evidence": evidence,
+    })
 }
 
 fn failure_analysis(report: &E1ExperimentReport) -> serde_json::Value {
@@ -326,15 +419,175 @@ fn failure_analysis(report: &E1ExperimentReport) -> serde_json::Value {
             "note": "no non-exact intermediate worst-pixel records"
         }));
     }
+
+    let structured = build_failure_categories(report, &worst);
     serde_json::json!({
         "worst_points": worst,
         "metric_counts": categories,
+        "categories": structured,
         "known_blind_spots": [
             "corners+forced interior probes can miss thin oracle structure",
             "intensity-only may beat physics-aware on some budgets",
             "trace-cost can over-focus expensive low-visual-impact rays",
             "leaf-local nearest reconstruction is intentionally crude"
         ]
+    })
+}
+
+fn build_failure_categories(
+    report: &E1ExperimentReport,
+    worst: &[serde_json::Value],
+) -> serde_json::Value {
+    let outcome_ev: Vec<_> = worst
+        .iter()
+        .filter(|w| w.get("metric").and_then(|m| m.as_str()) == Some("outcome_disagreement"))
+        .cloned()
+        .collect();
+    let angular_ev: Vec<_> = worst
+        .iter()
+        .filter(|w| w.get("metric").and_then(|m| m.as_str()) == Some("celestial_angular"))
+        .cloned()
+        .collect();
+    let radiance_ev: Vec<_> = worst
+        .iter()
+        .filter(|w| w.get("metric").and_then(|m| m.as_str()) == Some("log2_iobs"))
+        .cloned()
+        .collect();
+
+    let mut thin_celestial = Vec::new();
+    for case in &report.cases {
+        for method in &case.methods {
+            for p in &method.points {
+                if p.rgb.exact_match {
+                    continue;
+                }
+                if p.scientific.celestial_presence_mismatch_count > 0 {
+                    thin_celestial.push(serde_json::json!({
+                        "case": case.case_id,
+                        "method": method.method_id,
+                        "budget": p.budget_id,
+                        "celestial_presence_mismatch_count":
+                            p.scientific.celestial_presence_mismatch_count,
+                    }));
+                }
+            }
+        }
+    }
+
+    let mut intensity_beats = Vec::new();
+    for case in &report.cases {
+        let dims = applicable_dims_for_case(case);
+        let physics = case
+            .methods
+            .iter()
+            .find(|m| m.method_id.contains("physics-aware"));
+        let intensity = case
+            .methods
+            .iter()
+            .find(|m| m.method_id.contains("intensity"));
+        if let (Some(physics), Some(intensity)) = (physics, intensity) {
+            for p in &physics.points {
+                if p.rgb.exact_match {
+                    continue;
+                }
+                if let Some(i) = matched_point(&intensity.points, p.unique_traced_rays) {
+                    if error_improves_at_matched_budget(i, p, dims) {
+                        intensity_beats.push(serde_json::json!({
+                            "case": case.case_id,
+                            "physics_budget": p.budget_id,
+                            "physics_rays": p.unique_traced_rays,
+                            "intensity_budget": i.budget_id,
+                            "intensity_rays": i.unique_traced_rays,
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    let mut trace_cost = Vec::new();
+    for case in &report.cases {
+        for method in &case.methods {
+            if !method.method_id.contains("physics-aware") {
+                continue;
+            }
+            for p in &method.points {
+                if p.rgb.exact_match {
+                    continue;
+                }
+                for w in &p.worst_pixels {
+                    if let Some(f) = &w.feature_vector_at_last_split {
+                        let cost = f.cost_component;
+                        let others = f
+                            .luma_component
+                            .max(f.outcome_component)
+                            .max(f.angular_component)
+                            .max(f.uv_component)
+                            .max(f.g_component)
+                            .max(f.radiance_component);
+                        if cost > others && cost > 0.0 {
+                            trace_cost.push(serde_json::json!({
+                                "case": case.case_id,
+                                "method": method.method_id,
+                                "budget": p.budget_id,
+                                "metric": w.metric,
+                                "trace_cost": cost,
+                                "max_other_feature": others,
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut ablation_regressions = Vec::new();
+    for abl_case in &report.ablations {
+        let Some(full) = report.cases.iter().find(|c| c.case_id == abl_case.case_id) else {
+            continue;
+        };
+        let dims = applicable_dims_for_case(full);
+        let Some(physics) = full
+            .methods
+            .iter()
+            .find(|m| m.method_id.contains("physics-aware"))
+        else {
+            continue;
+        };
+        for abl_method in &abl_case.methods {
+            for ap in &abl_method.points {
+                if ap.rgb.exact_match {
+                    continue;
+                }
+                if let Some(pp) = matched_point(&physics.points, ap.unique_traced_rays) {
+                    // Ablation regression: full physics improves on the ablation at matched budget.
+                    if error_improves_at_matched_budget(pp, ap, dims) {
+                        ablation_regressions.push(serde_json::json!({
+                            "case": abl_case.case_id,
+                            "ablation": abl_method.method_id,
+                            "ablation_budget": ap.budget_id,
+                            "physics_budget": pp.budget_id,
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    serde_json::json!({
+        "unresolved_outcome_islands": category_entry(!outcome_ev.is_empty(), outcome_ev),
+        "thin_celestial_features": category_entry(!thin_celestial.is_empty(), thin_celestial),
+        "high_angular_error_regions": category_entry(!angular_ev.is_empty(), angular_ev),
+        "radiance_failures": category_entry(!radiance_ev.is_empty(), radiance_ev),
+        "intensity_only_beats_physics_aware": category_entry(
+            !intensity_beats.is_empty(),
+            intensity_beats
+        ),
+        "trace_cost_over_focus": category_entry(!trace_cost.is_empty(), trace_cost),
+        "ablation_regressions": category_entry(
+            !ablation_regressions.is_empty(),
+            ablation_regressions
+        ),
     })
 }
 
@@ -381,6 +634,7 @@ fn case_physics_pareto_beats_baselines(
     let Some(case) = cases.iter().find(|c| c.case_id == case_id) else {
         return false;
     };
+    let dims = applicable_dims_for_case(case);
     let physics = case
         .methods
         .iter()
@@ -401,9 +655,15 @@ fn case_physics_pareto_beats_baselines(
         if p.rgb.exact_match {
             continue;
         }
-        let u = matched_point(&uniform.points, p.unique_traced_rays);
-        let i = matched_point(&intensity.points, p.unique_traced_rays);
-        if pareto_improves_matched(p, u) && pareto_improves_matched(p, i) {
+        let Some(u) = matched_point(&uniform.points, p.unique_traced_rays) else {
+            continue;
+        };
+        let Some(i) = matched_point(&intensity.points, p.unique_traced_rays) else {
+            continue;
+        };
+        if error_improves_at_matched_budget(p, u, dims)
+            && error_improves_at_matched_budget(p, i, dims)
+        {
             wins += 1;
         }
     }
@@ -417,16 +677,36 @@ fn matched_point(points: &[CurvePoint], rays: u64) -> Option<&CurvePoint> {
         .max_by_key(|p| p.unique_traced_rays)
 }
 
-/// Physics point improves on matched baseline without worsening outcome rate,
-/// using the full applicable primary-error set (Pareto sense vs that single point).
-fn pareto_improves_matched(cand: &CurvePoint, base: Option<&CurvePoint>) -> bool {
-    let Some(base) = base else {
-        return false;
-    };
-    if cand.scientific.outcome_disagreement_rate > base.scientific.outcome_disagreement_rate {
+/// Cross-method hypothesis compare: error improvement at matched budget.
+/// Ray accounting is encoded by the match (`base.rays <= cand.rays`); do not
+/// also require `cand.rays <= base.rays`.
+pub fn error_improves_at_matched_budget(
+    cand: &CurvePoint,
+    base: &CurvePoint,
+    dims: ApplicableScientificDims,
+) -> bool {
+    let bb = primary_errors(cand);
+    let aa = primary_errors(base);
+    if bb.outcome_rate > aa.outcome_rate {
         return false;
     }
-    dominates(cand, base)
+    let mut le_all = bb.rgb_mse <= aa.rgb_mse && bb.outcome_rate <= aa.outcome_rate;
+    let mut strict = bb.rgb_mse < aa.rgb_mse || bb.outcome_rate < aa.outcome_rate;
+    let Some((ang_le, ang_st)) =
+        optional_le_strict(bb.angular_rmse, aa.angular_rmse, dims.celestial_angular)
+    else {
+        return false;
+    };
+    le_all &= ang_le;
+    strict |= ang_st;
+    let Some((iobs_le, iobs_st)) =
+        optional_le_strict(bb.log2_iobs_rmse, aa.log2_iobs_rmse, dims.log2_iobs)
+    else {
+        return false;
+    };
+    le_all &= iobs_le;
+    strict |= iobs_st;
+    le_all && strict
 }
 
 pub fn build_worst_pixel_records(
@@ -685,12 +965,52 @@ mod tests {
 
     #[test]
     fn pareto_uses_angular_and_iobs_dimensions() {
+        let dims = ApplicableScientificDims {
+            celestial_angular: true,
+            log2_iobs: true,
+        };
         let a = point(100, 0.0, 10.0, Some(0.5), Some(0.5));
         let b = point(100, 0.0, 10.0, Some(0.1), Some(0.5)); // better angular, same else
-        assert!(dominates(&b, &a));
+        assert!(dominates(&b, &a, dims));
         let c = point(100, 0.0, 10.0, Some(0.5), Some(0.1));
-        assert!(dominates(&c, &a));
+        assert!(dominates(&c, &a, dims));
         let d = point(90, 0.0, 10.0, Some(0.9), Some(0.5)); // fewer rays but worse angular
-        assert!(!dominates(&d, &a));
+        assert!(!dominates(&d, &a, dims));
+    }
+
+    #[test]
+    fn matched_budget_allows_overshoot_ray_counts() {
+        let dims = ApplicableScientificDims {
+            celestial_angular: true,
+            log2_iobs: false,
+        };
+        let cand = point(148, 0.01, 5.0, Some(0.1), None);
+        let base = point(144, 0.02, 8.0, Some(0.2), None);
+        assert!(error_improves_at_matched_budget(&cand, &base, dims));
+        // Frontier dominates still requires cand.rays <= base.rays
+        assert!(!dominates(&cand, &base, dims));
+    }
+
+    #[test]
+    fn mixed_optional_metric_blocks_dominance_and_matched_win() {
+        let dims = ApplicableScientificDims {
+            celestial_angular: true,
+            log2_iobs: true,
+        };
+        let a = point(100, 0.0, 10.0, Some(0.5), Some(0.5));
+        let b = point(100, 0.0, 9.0, Some(0.4), None); // better rgb/ang but missing iobs
+        assert!(!dominates(&b, &a, dims));
+        assert!(!error_improves_at_matched_budget(&b, &a, dims));
+    }
+
+    #[test]
+    fn outcome_regression_blocks_matched_win() {
+        let dims = ApplicableScientificDims {
+            celestial_angular: false,
+            log2_iobs: false,
+        };
+        let cand = point(148, 0.05, 1.0, None, None);
+        let base = point(144, 0.02, 8.0, None, None);
+        assert!(!error_improves_at_matched_budget(&cand, &base, dims));
     }
 }
