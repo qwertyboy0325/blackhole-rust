@@ -15,6 +15,10 @@ E1 is experimental:
 Do not begin E2 ray differentials, E3 ray bundles, Gate 2B2 spectral
 transport, physical RGB, OpenEXR, GPU, wgpu, egui or GUI work.
 
+When a gate or research package produces new reviewable image artifacts,
+regenerate `docs/media/blackhole-rust-evolution.gif` and keep it embedded in
+`README.md` on the delivery commits.
+
 ## Authority and scope
 
 - Modify only this repository.

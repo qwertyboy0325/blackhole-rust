@@ -13,6 +13,12 @@ quadtree sampling against the frozen CPU `f64` oracle. Gate 2B2 remains
 deferred. This work does **not** implement spectra, temperature, physical RGB,
 OpenEXR, GPU, wgpu, egui, or GUI functionality.
 
+![Gate evolution (diagnostic channels)](docs/media/blackhole-rust-evolution.gif)
+
+Diagnostic scientific channels only — not a beauty render. Regenerate with
+`python3 scripts/build_evolution_gif.py` after new gate artifacts land; keep
+this GIF linked from the README on subsequent commits.
+
 See [diagnostic bolometric emission V1](docs/diagnostic-bolometric-emission-v1.md).
 
 Selected path remains:
