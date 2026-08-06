@@ -1,0 +1,266 @@
+{
+  "schema_version": 1,
+  "corpus_id": "e0-oracle-corpus-v1",
+  "reference_renderer_base_commit": "dcceef661574d21ce4c0aa8817fcf9d9fa1039a1",
+  "oracle_schema_id": "cpu-f64-relativistic-oracle-v1-schema-1",
+  "source_cases": [
+    {
+      "definition": {
+        "id": "kerr0999-edge-opaque",
+        "spin_a_over_m": 0.999,
+        "observer_r": 20.0,
+        "observer_theta_degrees": 85.0,
+        "observer_phi_degrees": 0.0,
+        "horizontal_fov_degrees": 50.0,
+        "surface_set": "opaque-disk-horizon-escape",
+        "channel_set": "full-bolometric-disk"
+      },
+      "oracle_scientific_digest": "ee3c2c92f94ec291c172696fb9a4e75bccdea1bd019d20a74a9a4b3439eeb383",
+      "reference_image_digest": "7982aaa9cdd9f176850f4f6def2d2364bcf3bc6734c054f261332c53beda2a69",
+      "trace_invocations": 1,
+      "celestial_coordinate_passes": 1,
+      "oracle_assembly_passes": 1,
+      "observer_frequency_verification_passes": 1,
+      "frequency_shift_passes": 1,
+      "bolometric_emission_passes": 1,
+      "bolometric_transport_passes": 1,
+      "ray_count": 16384,
+      "outcome_counts": {
+        "disk_hit": 12307,
+        "escaped": 2442,
+        "horizon_event": 1462,
+        "horizon_approach": 173,
+        "affine_limit": 0,
+        "failed": 0
+      },
+      "channel_coverage": {
+        "celestial_samples": 2442,
+        "disk_frequency_samples": 12307,
+        "disk_bolometric_samples": 12307
+      }
+    },
+    {
+      "definition": {
+        "id": "kerr0999-edge-sky",
+        "spin_a_over_m": 0.999,
+        "observer_r": 20.0,
+        "observer_theta_degrees": 85.0,
+        "observer_phi_degrees": 0.0,
+        "horizontal_fov_degrees": 50.0,
+        "surface_set": "horizon-escape-only",
+        "channel_set": "geometry-celestial"
+      },
+      "oracle_scientific_digest": "27baebb09d98c98a56b13d4462443ba96cc4bdaaf74cfb31fa1f1557b35dde54",
+      "reference_image_digest": "4c78e57082eea9dc7226944e9d055f15ce8ed3f58058d613daaaa0ec3c0577d5",
+      "trace_invocations": 1,
+      "celestial_coordinate_passes": 1,
+      "oracle_assembly_passes": 1,
+      "observer_frequency_verification_passes": 0,
+      "frequency_shift_passes": 0,
+      "bolometric_emission_passes": 0,
+      "bolometric_transport_passes": 0,
+      "ray_count": 16384,
+      "outcome_counts": {
+        "disk_hit": 0,
+        "escaped": 12864,
+        "horizon_event": 3160,
+        "horizon_approach": 352,
+        "affine_limit": 8,
+        "failed": 0
+      },
+      "channel_coverage": {
+        "celestial_samples": 12864,
+        "disk_frequency_samples": 0,
+        "disk_bolometric_samples": 0
+      }
+    },
+    {
+      "definition": {
+        "id": "kerr0999-midinc-opaque",
+        "spin_a_over_m": 0.999,
+        "observer_r": 20.0,
+        "observer_theta_degrees": 60.0,
+        "observer_phi_degrees": 0.0,
+        "horizontal_fov_degrees": 50.0,
+        "surface_set": "opaque-disk-horizon-escape",
+        "channel_set": "full-bolometric-disk"
+      },
+      "oracle_scientific_digest": "9ecbaa8e5d3401a65b92cfc766b0adc233c71f417ad2fab1b8f1ac7413ab9e74",
+      "reference_image_digest": "c1b2d9d63ac497733547de23988adcb1134d48d0b2b68f02b9eb91fb4d917039",
+      "trace_invocations": 1,
+      "celestial_coordinate_passes": 1,
+      "oracle_assembly_passes": 1,
+      "observer_frequency_verification_passes": 1,
+      "frequency_shift_passes": 1,
+      "bolometric_emission_passes": 1,
+      "bolometric_transport_passes": 1,
+      "ray_count": 16384,
+      "outcome_counts": {
+        "disk_hit": 14218,
+        "escaped": 294,
+        "horizon_event": 1671,
+        "horizon_approach": 201,
+        "affine_limit": 0,
+        "failed": 0
+      },
+      "channel_coverage": {
+        "celestial_samples": 294,
+        "disk_frequency_samples": 14218,
+        "disk_bolometric_samples": 14218
+      }
+    },
+    {
+      "definition": {
+        "id": "kerr0999-midinc-sky",
+        "spin_a_over_m": 0.999,
+        "observer_r": 20.0,
+        "observer_theta_degrees": 60.0,
+        "observer_phi_degrees": 0.0,
+        "horizontal_fov_degrees": 50.0,
+        "surface_set": "horizon-escape-only",
+        "channel_set": "geometry-celestial"
+      },
+      "oracle_scientific_digest": "4d0e8ebf0d9a0a1b548bb112a54674aecf245a237cba0b66043db4a1c4836f4d",
+      "reference_image_digest": "ec26f9d51183fce150c7b52f0670056ae5df76aa9ca54790e8ffb67a9ef95ff6",
+      "trace_invocations": 1,
+      "celestial_coordinate_passes": 1,
+      "oracle_assembly_passes": 1,
+      "observer_frequency_verification_passes": 0,
+      "frequency_shift_passes": 0,
+      "bolometric_emission_passes": 0,
+      "bolometric_transport_passes": 0,
+      "ray_count": 16384,
+      "outcome_counts": {
+        "disk_hit": 0,
+        "escaped": 12948,
+        "horizon_event": 3029,
+        "horizon_approach": 397,
+        "affine_limit": 10,
+        "failed": 0
+      },
+      "channel_coverage": {
+        "celestial_samples": 12948,
+        "disk_frequency_samples": 0,
+        "disk_bolometric_samples": 0
+      }
+    },
+    {
+      "definition": {
+        "id": "kerr050-edge-sky",
+        "spin_a_over_m": 0.5,
+        "observer_r": 20.0,
+        "observer_theta_degrees": 85.0,
+        "observer_phi_degrees": 0.0,
+        "horizontal_fov_degrees": 50.0,
+        "surface_set": "horizon-escape-only",
+        "channel_set": "geometry-celestial"
+      },
+      "oracle_scientific_digest": "11c2f00c42507338705caedc4402f92dc8cf97bc49d1491a4b5306d23c51f70f",
+      "reference_image_digest": "ca7e366d63c42935620675486d15c105fd0dbc6fcf78285dd4c791593f9efc74",
+      "trace_invocations": 1,
+      "celestial_coordinate_passes": 1,
+      "oracle_assembly_passes": 1,
+      "observer_frequency_verification_passes": 0,
+      "frequency_shift_passes": 0,
+      "bolometric_emission_passes": 0,
+      "bolometric_transport_passes": 0,
+      "ray_count": 16384,
+      "outcome_counts": {
+        "disk_hit": 0,
+        "escaped": 12594,
+        "horizon_event": 3789,
+        "horizon_approach": 1,
+        "affine_limit": 0,
+        "failed": 0
+      },
+      "channel_coverage": {
+        "celestial_samples": 12594,
+        "disk_frequency_samples": 0,
+        "disk_bolometric_samples": 0
+      }
+    },
+    {
+      "definition": {
+        "id": "schwarzschild-edge-sky",
+        "spin_a_over_m": 0.0,
+        "observer_r": 20.0,
+        "observer_theta_degrees": 85.0,
+        "observer_phi_degrees": 0.0,
+        "horizontal_fov_degrees": 50.0,
+        "surface_set": "horizon-escape-only",
+        "channel_set": "geometry-celestial"
+      },
+      "oracle_scientific_digest": "f304ad7fd74ba747819748bf8d674d590e5a64cd40a60e8215405c3f57018c3c",
+      "reference_image_digest": "a73253649659fa6d99be1868f235cf461a351af9fb35a47f6396f784f94d4d44",
+      "trace_invocations": 1,
+      "celestial_coordinate_passes": 1,
+      "oracle_assembly_passes": 1,
+      "observer_frequency_verification_passes": 0,
+      "frequency_shift_passes": 0,
+      "bolometric_emission_passes": 0,
+      "bolometric_transport_passes": 0,
+      "ray_count": 16384,
+      "outcome_counts": {
+        "disk_hit": 0,
+        "escaped": 12540,
+        "horizon_event": 0,
+        "horizon_approach": 3836,
+        "affine_limit": 8,
+        "failed": 0
+      },
+      "channel_coverage": {
+        "celestial_samples": 12540,
+        "disk_frequency_samples": 0,
+        "disk_bolometric_samples": 0
+      }
+    }
+  ],
+  "crop_cases": [
+    {
+      "id": "kerr0999-edge-opaque-boundary-crop",
+      "source": "kerr0999-edge-opaque",
+      "crop": {
+        "left": 24,
+        "top": 56,
+        "width": 64,
+        "height": 64
+      },
+      "transition_score": 499,
+      "oracle_scientific_digest": "4cb1876dba12a3b7aec83a1c86562b4c3b0d1a26870602170ea4c5bd288e7f06",
+      "reference_image_digest": "0d86e1257a304a72eb6cd3fba84368ae89ecb4a955c330a45fb63c0329aeb676",
+      "trace_invocations": 0,
+      "ray_count": 4096,
+      "outcome_counts": {
+        "disk_hit": 2235,
+        "escaped": 241,
+        "horizon_event": 1447,
+        "horizon_approach": 173,
+        "affine_limit": 0,
+        "failed": 0
+      }
+    },
+    {
+      "id": "kerr0999-edge-sky-boundary-crop",
+      "source": "kerr0999-edge-sky",
+      "crop": {
+        "left": 16,
+        "top": 32,
+        "width": 64,
+        "height": 64
+      },
+      "transition_score": 466,
+      "oracle_scientific_digest": "1e83e5709d1de1f2413a6d95cc6f8c95fd3d6c68d50ad89afdd864b7e9e2ad3d",
+      "reference_image_digest": "acc822e461b9cbf07c6bb1525cdd814d1fe163343c3cc6f74b536f2157088735",
+      "trace_invocations": 0,
+      "ray_count": 4096,
+      "outcome_counts": {
+        "disk_hit": 0,
+        "escaped": 690,
+        "horizon_event": 3068,
+        "horizon_approach": 330,
+        "affine_limit": 8,
+        "failed": 0
+      }
+    }
+  ]
+}

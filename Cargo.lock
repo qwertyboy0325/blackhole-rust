@@ -560,6 +560,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "relativity-oracle"
+version = "0.1.0"
+dependencies = [
+ "relativity-core",
+ "relativity-render",
+ "relativity-trace",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "relativity-render"
 version = "0.1.0"
 dependencies = [
@@ -835,6 +848,7 @@ dependencies = [
  "hex",
  "relativity-core",
  "relativity-integrate",
+ "relativity-oracle",
  "relativity-render",
  "relativity-trace",
  "serde",

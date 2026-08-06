@@ -45,6 +45,7 @@
 /artifacts/gate-2a2-lensed-celestial/**/*.pgm
 /artifacts/gate-2b0-frequency-shift/
 /artifacts/gate-2b1-bolometric-radiance/
+/artifacts/r1-e0-oracle-corpus/
 /artifacts/manual-lensed-opaque/
 /artifacts/manual-lensed-sky/
 /artifacts/manual-frequency-shift/

@@ -1,0 +1,20 @@
+[package]
+name = "relativity-oracle"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+description = "Pure CPU f64 oracle frame assembly, digesting, crops, and comparison metrics"
+
+[lints]
+workspace = true
+
+[dependencies]
+relativity-core = { path = "../relativity-core" }
+relativity-trace = { path = "../relativity-trace" }
+relativity-render = { path = "../relativity-render" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
