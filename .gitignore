@@ -46,6 +46,9 @@
 /artifacts/gate-2b0-frequency-shift/
 /artifacts/gate-2b1-bolometric-radiance/
 /artifacts/r1-e0-oracle-corpus/
+/artifacts/e1-adaptive-sampling/
+/artifacts/e1-adaptive-sampling-*/
+/artifacts/e1-adaptive-sampling-run.log
 /artifacts/manual-lensed-opaque/
 /artifacts/manual-lensed-sky/
 /artifacts/manual-frequency-shift/
