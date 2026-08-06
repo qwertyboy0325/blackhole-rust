@@ -15,8 +15,10 @@ E1 is experimental:
 - do not require permanent schema governance for prototype internals.
 - research recommendation remains `PAUSE_RESEARCH_WEDGE` until owner authorizes estimator iteration.
 
-Do not begin E2 ray differentials, E3 ray bundles, Gate 2B2 spectral
-transport, physical RGB, OpenEXR, GPU, wgpu, egui or GUI work.
+Gate 2B2 spectral transport is implemented on `gate-2b2-spectral-transport`
+(owner-authorized). Authoritative clean-worktree evaluate + merge pending owner
+acceptance. Do not begin E2 ray differentials, E3 ray bundles, physical RGB,
+OpenEXR, GPU, wgpu, egui or GUI work.
 
 When a gate or research package produces new reviewable image artifacts,
 regenerate `docs/media/blackhole-rust-evolution.gif` and keep it embedded in

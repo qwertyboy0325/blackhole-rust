@@ -55,8 +55,12 @@ a reuse license. Access checked 2026-08-03.
 - **[Younsi2012]** Z. Younsi, K. Wu, and S. V. Fuerst, “General relativistic
   radiative transfer: formulation and emission from structured tori around black
   holes,” *Astronomy & Astrophysics* 545, A13.
-  [arXiv](https://arxiv.org/abs/1207.4234). Invariant transfer quantities;
-  arXiv access only.
+  [arXiv](https://arxiv.org/abs/1207.4234). Invariant transfer quantities
+  (`I_ν/ν³`, `I_ν,obs = g³ I_ν,em(ν_obs/g)`, bolometric `g⁴`); arXiv access only.
+- **[Rybicki1979]** G. B. Rybicki and A. P. Lightman, *Radiative Processes in
+  Astrophysics*, Wiley, 1979. Standard radiometric identities including
+  `I_λ = I_ν |dν/dλ| = I_ν c/λ²` (wavelength Jacobian); book copyright, access
+  only — cited for conversion identities, not copied.
 - **[RAPTOR2018]** T. Bronzwaer et al., “RAPTOR I: Time-dependent radiative
   transfer in arbitrary spacetimes,” *Astronomy & Astrophysics* 613, A2.
   [DOI](https://doi.org/10.1051/0004-6361/201732149). Coordinate-independent

@@ -157,8 +157,17 @@ I_obs,bolometric = g^4 I_em,bolometric.
 ```
 
 This combines gravitational and kinematic Doppler shifts. Beaming is not an
-independent arbitrary multiplier. Absorption, scattering, polarization, plasma
-dispersion, and time-dependent transfer are deferred.
+independent arbitrary multiplier. Gate 2B2 realizes the spectral `g³` law on a
+diagnostic continuum scaled from Gate 2B1 bolometric intensity; see
+`docs/diagnostic-spectral-emission-v1.md`. Absorption, scattering, polarization,
+plasma dispersion, and time-dependent transfer remain deferred.
+
+Wavelength densities require the Jacobian [Rybicki1979]:
+
+```text
+I_lambda = I_nu * c / lambda^2,
+I_lambda,obs(lambda_obs) = g^5 I_lambda,em(g lambda_obs).
+```
 
 ## Photon regions, shadows, and critical curves
 

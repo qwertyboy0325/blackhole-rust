@@ -325,6 +325,9 @@ def main() -> int:
         ROOT
         / "artifacts/gate-2b1-bolometric-radiance/gate-run-0/bolometric-disk-celestial-composite.ppm"
     )
+    src_2b2 = require(
+        ROOT / "artifacts/gate-2b2-spectral-transport/gate-run-0/observed-integral.pgm"
+    )
     lock = require(ROOT / "experiments/oracle-benchmark/corpus-lock-v1.json")
     lock_digest = hashlib.sha256(lock.read_bytes()).hexdigest()
 
@@ -400,6 +403,10 @@ def main() -> int:
 
     p = next_frame()
     annotate(src_2b1, p, "Gate 2B1", "+ I_obs = g⁴ I_em composite", fnt)
+    frames.append(p)
+
+    p = next_frame()
+    annotate(src_2b2, p, "Gate 2B2", "+ ∫ I_ν,obs (g³ continuum)", fnt)
     frames.append(p)
 
     p = next_frame()

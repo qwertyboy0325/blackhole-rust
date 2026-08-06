@@ -6,12 +6,11 @@ Gargantua in *Interstellar*, not an exact reconstruction of Double Negative's
 proprietary assets, renderer, grading, camera, or undocumented production
 parameters.
 
-## Status: E1 in progress (physics-aware adaptive sampling)
+## Status: Gate 2B2 implemented (owner review)
 
-Gate 0–2B1 and R1/E0 are complete. E1 evaluates corpus-bounded adaptive
-quadtree sampling against the frozen CPU `f64` oracle. Gate 2B2 remains
-deferred. This work does **not** implement spectra, temperature, physical RGB,
-OpenEXR, GPU, wgpu, egui, or GUI functionality.
+Gate 0–2B1 and R1/E0 are complete. Gate 2B2 adds diagnostic spectral `I_ν`
+transport (`g³`) on `SpectralFrame V1` — not temperature, physical RGB, OpenEXR,
+GPU, wgpu, egui, or GUI. E1 research remains `PAUSE_RESEARCH_WEDGE`.
 
 ![Gate evolution (diagnostic channels)](docs/media/blackhole-rust-evolution.gif)
 
