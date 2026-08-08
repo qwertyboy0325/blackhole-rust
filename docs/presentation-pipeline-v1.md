@@ -61,6 +61,10 @@ ICC  = OMIT
 Authority for reproducibility: decoded RGB16 raster digest
 (`PRESENTATION_REPRODUCIBILITY_DIGEST`), not DEFLATE bytes.
 
+sRGB OETF tests use independent hard-coded numeric oracle vectors
+(`SRGB_OETF_NUMERIC_ORACLE_V1`); evaluator requires
+`hermetic_srgb_oetf_numeric_vectors`.
+
 ## Preset
 
 `presets/presentation/gargantua-cinematic-v1.toml` — separate from scientific

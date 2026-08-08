@@ -6,8 +6,8 @@
 
 | Field | Value |
 | --- | --- |
-| Evaluated tip | `e1272c52a81df5ac41383bac0698deb16a822c9a` |
-| Evaluation content digest | `be19fad27c8ff44fbd74a6ad7e673b92c20ca7865df61c061e98b62b4f31fdd6` |
+| Evaluated tip | `beb4efd0ffd419f8a81f98b6620e11ca867aa98e` |
+| Evaluation content digest | `d01dcc7bbcee731fdbacb40cf156aa1fd6be53cc7b4a3a0f7fa9a13ac9a7bc29` |
 | `result` | `PASS` |
 | `authoritative` | `true` |
 | `dirty` | `false` |
@@ -15,7 +15,7 @@
 | Scientific inheritance | `SCIENTIFIC_INHERITANCE_PASS` |
 | Presentation pipeline | `PRESENTATION_PIPELINE_PASS` |
 | Planning / merge base | `c964c746fe3819627455a170e5e46b74731c0412` (PR #19 Gate 2C1) |
-| PR | draft (pending owner merge) |
+| PR | draft (pending owner merge); D0-C1 closed @ `beb4efd` |
 
 ## Frozen scientific inheritance (exact)
 
@@ -70,6 +70,13 @@ Canonical `EV=0` retained (middle-gray intent; no aesthetic retune).
 Gate beauty PNG: dimensions 128×128, RGB, 16-bit, sRGB Perceptual, gAMA=45455,
 no cHRM, no ICC; decoded RGB16 raster exact to authored buffer; serial≡parallel
 presentation digests and rasters on smoke.
+
+## D0-C1 sRGB OETF numeric oracle
+
+Independent hard-coded IEC 61966-2-1 vectors (not derived from production at
+test time): `0`, `0.0031308`, `0.18`, `0.5`, `1.0`. Evaluator check
+`hermetic_srgb_oetf_numeric_vectors` is required for `PRESENTATION_PIPELINE_PASS`.
+Owner closure `5225838070`. Presentation digests unchanged vs pre-closure tip.
 
 ## Beauty review (128²)
 

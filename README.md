@@ -9,9 +9,10 @@ parameters.
 ## Status: Gate 2D0 authoritative PASS (pending merge)
 
 Gate 0–2C1 and R1/E0 are complete on `main` (Gate 2C1 merge `c964c74`, PR #19).
-Gate 2D0 cinematic presentation evaluated **PASS** @ `e1272c5` after A1–A4
-owner amendments (`presentation_frame_digest` `f8e10323…`; eval content
-`be19fad2…`). Inherited Gate 2C1 `physical_color_digest` `16663188…` exact.
+Gate 2D0 cinematic presentation evaluated **PASS** @ `beb4efd` after A1–A4
+owner amendments and D0-C1 independent sRGB OETF numeric oracle
+(`presentation_frame_digest` `f8e10323…`; eval content `d01dcc7b…`). Inherited
+Gate 2C1 `physical_color_digest` `16663188…` exact.
 GPU and GUI remain deferred. E1 research remains `PAUSE_RESEARCH_WEDGE`.
 
 ![Gate evolution (diagnostic + presentation)](docs/media/blackhole-rust-evolution.gif)

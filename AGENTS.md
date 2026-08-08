@@ -25,7 +25,8 @@ after owner closures `5225581548` (C1–C4) + `5225636038` (C2b); merged to
 `main` via PR #19 @ `c964c74`.
 
 **Gate 2D0** cinematic presentation: authoritative evaluate **PASS** @
-`e1272c5` (`presentation_frame_digest` `f8e10323…`); pending owner merge
+`beb4efd` after D0-C1 independent sRGB OETF oracle closure
+(`presentation_frame_digest` `f8e10323…` unchanged); pending owner merge
 review. Do not begin Gate 2D1/2D2/2D3, E2 ray differentials, E3 ray bundles,
 GPU, wgpu, egui or GUI work.
 
