@@ -18,8 +18,12 @@ E1 is experimental:
 
 **Gate 2C0** physical thin-disk emission: authoritative evaluate **PASS** on
 `gate-2c0-physical-emission` @ `7542144` after closures `5225301622` +
-`5225371466`. Gate 2C1 is **not** authorized. Do not begin E2 ray differentials,
-E3 ray bundles, GPU, wgpu, egui or GUI work.
+`5225371466` (merged via PR #18 @ `57659c62`).
+
+**Gate 2C1** physical colorimetry: authoritative evaluate **PASS** @ `9175600`
+after owner closures `5225581548` (C1–C4) + `5225636038` (C2b) on
+`gate-2c1-physical-colorimetry` (PR #19 draft; pending owner merge). Do not
+begin E2 ray differentials, E3 ray bundles, GPU, wgpu, egui or GUI work.
 
 When a gate or research package produces new reviewable image artifacts,
 regenerate `docs/media/blackhole-rust-evolution.gif` and keep it embedded in

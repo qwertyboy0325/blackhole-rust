@@ -101,3 +101,29 @@ pub enum SpectralRenderError {
     #[error("unsupported spectral grid id `{0}`")]
     UnsupportedGridId(String),
 }
+
+#[derive(Debug, Error, Clone, PartialEq)]
+pub enum ColorimetryError {
+    #[error("frame length mismatch")]
+    FrameLengthMismatch,
+    #[error("invalid CIE table: {0}")]
+    InvalidCieTable(String),
+    #[error("unsupported CIE observer `{0}`")]
+    UnsupportedCieObserver(String),
+    #[error("unsupported RGB space `{0}`")]
+    UnsupportedRgbSpace(String),
+    #[error("invalid colorimetric matrix: {0}")]
+    InvalidMatrix(String),
+    #[error("non-finite colorimetry value: {0}")]
+    NonFinite(String),
+    #[error("invalid colorimetry convention: {0}")]
+    InvalidConvention(String),
+    #[error("colorimetry mapping failed at ({col},{row}): {cause}")]
+    PixelMappingFailed { col: u32, row: u32, cause: String },
+    #[error("colorimetry provenance mismatch: {0}")]
+    ProvenanceMismatch(String),
+    #[error("physical emission error: {0}")]
+    Emission(String),
+    #[error("spectral error: {0}")]
+    Spectral(String),
+}

@@ -172,8 +172,10 @@ factor, outcome ID, affine length, step counts, and invariant drift even before
 full disk spectra exist.
 
 The archival render is a multi-channel OpenEXR with `FLOAT` scientific channels.
-RGB, when present, is scene-linear ACEScg with chromaticities in metadata;
-display-referred PNG is optional and non-authoritative. A canonical JSON sidecar
+**Gate 2C1 scientific RGB authority** is scene-linear Rec.709 / D65 (linear, no
+OETF); ACEScg / AP1 remains an aspirational presentation path for a later gate
+and is **not** used in V1 (avoids D60 CAT). Display-referred PNG is deferred and
+non-authoritative. A canonical JSON sidecar
 uses sorted keys, decimal finite numbers only, stable enum strings, schema
 version, preset SHA-256, executable/toolchain identity, target triple, backend,
 thread count, and per-file SHA-256. Non-finite values are encoded as typed status,

@@ -7,10 +7,13 @@
 //! Gate 2B1: diagnostic bolometric emission and `g⁴` transport. Not spectra/RGB.
 //! Gate 2B2: diagnostic spectral `I_ν` transport (`g³`). Not physical RGB/OpenEXR.
 //! Gate 2C0: physical Page–Thorne thin-disk emission, `T_eff`, Planck `B_ν`, SI Hz `g³`.
+//! Gate 2C1: absolute CIE XYZ + scene-linear Rec.709/D65 RGB from emission frame (Arch B).
 
 #![forbid(unsafe_code)]
 
 pub mod bolometric;
+pub mod color_space;
+pub mod colorimetry;
 pub mod error;
 pub mod frequency_shift;
 pub mod lensed;
@@ -37,8 +40,27 @@ pub use bolometric::{
     BOLOMETRIC_CONVENTION_ID, CANONICAL_DISK_EMISSION_CLAIM, CANONICAL_DISK_EMISSION_MODEL,
     DISK_BOUNDS_SOURCE_V1, DISPLAY_ID_V1, EMISSION_PROFILE_ID_V1,
 };
+pub use color_space::{
+    SceneLinearRgb, SceneLinearRgbSpace, XyzToRgbMatrix, RGB_MATRIX_REVISION,
+    SCENE_LINEAR_RGB_SPACE_ID,
+};
+pub use colorimetry::{
+    blackbody_planckian_direction_ok, build_physical_color_frame, compute_colorimetric_metrics,
+    decode_physical_color_pixels, diagnostic_a_vs_b, encode_physical_color_payload,
+    integrate_xyz_from_emission, integrate_xyz_from_spectral_cube_diagnostic, outcome_class_code,
+    outcome_class_from_code, payload_sha256, physical_color_digest, synthetic_cmf_for_tests,
+    verify_payload_matches_frame, BlackbodyChromaticitySample, Cie1931Table, CieObserverId,
+    CieSample, ColorDiskHit, ColorPixelProvenance, ColorimetricConvention, ColorimetricMetrics,
+    ColorimetricXyz, IntegrationMeasure, PhysicalColorFrame, PhysicalColorPixel,
+    CIE_OBSERVER_ID_V1, CIE_RELATIVE_ASSET_PATH, CIE_TABLE_MD5, CIE_TABLE_SHA256,
+    CIE_TABLE_SOURCE_DOI, COLORIMETRIC_CONVENTION_ID, KM_LM_PER_W, KM_REVISION,
+    PHYSICAL_COLOR_FRAME_SCHEMA, PRODUCTION_BAND_ID, PRODUCTION_LAMBDA_MAX_NM,
+    PRODUCTION_LAMBDA_MIN_NM, PRODUCTION_N_SAMPLES, RAW_COLOR_PAYLOAD_MAGIC,
+    RAW_COLOR_PAYLOAD_SCHEMA,
+};
 pub use error::{
-    BolometricRenderError, CelestialRenderError, FrequencyShiftError, SpectralRenderError,
+    BolometricRenderError, CelestialRenderError, ColorimetryError, FrequencyShiftError,
+    SpectralRenderError,
 };
 pub use frequency_shift::{
     build_disk_frequency_shift_frame, build_disk_frequency_shift_map_artifact,

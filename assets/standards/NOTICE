@@ -1,0 +1,42 @@
+CIE 1931 colour-matching functions, 2 degree observer
+=====================================================
+
+Dataset
+  Title:     Colour-matching functions of CIE 1931 standard colorimetric observer
+  DOI:       https://doi.org/10.25039/CIE.DS.xvudnb9b
+  Publisher: International Commission on Illumination (CIE), Vienna, AT
+  Citation:  CIE 2019, Colour-matching functions of CIE 1931 standard
+             colorimetric observer, International Commission on Illumination
+             (CIE), Vienna, AT, DOI: 10.25039/CIE.DS.xvudnb9b
+
+Files in this directory
+  cie1931-2deg-v1.csv              pinned project filename (content below)
+  CIE_xyz_1931_2deg.csv            official download filename (identical bytes)
+  cie1931-2deg-v1.metadata.json    CIE metadata JSON (CC BY-SA 4.0)
+  CIE_xyz_1931_2deg.csv_metadata.json  identical metadata under official name
+  cie1931-2deg-v1.sha256           SHA-256 of the CSV bytes
+  LICENSE-CIE-CC-BY-SA-4.0.txt     short license pointer
+  NOTICE                           this file
+
+License
+  Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+  https://creativecommons.org/licenses/by-sa/4.0/
+  rightsIdentifier (CIE metadata): CC BY-SA 4.0
+
+Integrity
+  md5:    17cca777db64b17170f06f67ce9d3ab7
+  sha256: fa663e3535a7e0763a745993a1f0a192eb0275ac46ad2d1befd7626841e713c1
+
+Modifications
+  NONE. The CSV bytes are unmodified relative to the official CIE download
+  `CIE_xyz_1931_2deg.csv` from https://files.cie.co.at/CIE_xyz_1931_2deg.csv
+  (access date 2026-08-08). The project filename `cie1931-2deg-v1.csv` is a
+  copy with identical content; no resampling, truncation, or value edits.
+
+Repository code license
+  Unrelated. Rust / documentation / other assets remain MIT OR Apache-2.0
+  (see repository root LICENSE-MIT and LICENSE-APACHE). This CIE table is NOT
+  re-licensed under MIT or Apache-2.0.
+
+Acquisition
+  Mode: VENDOR_CC_BY_SA_DATA (owner-authorized 2026-08-08)
