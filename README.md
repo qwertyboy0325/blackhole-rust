@@ -6,12 +6,12 @@ Gargantua in *Interstellar*, not an exact reconstruction of Double Negative's
 proprietary assets, renderer, grading, camera, or undocumented production
 parameters.
 
-## Status: Gate 2C1 physical colorimetry (in delivery)
+## Status: Gate 2C1 authoritative PASS (pending merge)
 
 Gate 0–2C0 and R1/E0 are complete on `main` (Gate 2C0 merge `57659c62`, PR #18).
-Gate 2C1: absolute CIE XYZ + scene-linear Rec.709/D65 + derived OpenEXR FLOAT
-from `PhysicalDiskEmissionFrame` (Architecture B). GPU and GUI remain deferred.
-E1 research remains `PAUSE_RESEARCH_WEDGE`.
+Gate 2C1 physical colorimetry evaluated **PASS** @ `7e9fe82`
+(`physical_color_digest` `2a4ae714…`; eval content `a09ae8a8…`). GPU and GUI
+remain deferred. E1 research remains `PAUSE_RESEARCH_WEDGE`.
 
 ![Gate evolution (diagnostic channels)](docs/media/blackhole-rust-evolution.gif)
 

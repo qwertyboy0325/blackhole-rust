@@ -20,9 +20,9 @@ E1 is experimental:
 `gate-2c0-physical-emission` @ `7542144` after closures `5225301622` +
 `5225371466` (merged via PR #18 @ `57659c62`).
 
-**Gate 2C1** physical colorimetry (CIE XYZ + scene-linear Rec.709 + derived
-OpenEXR): authorized and implemented on `gate-2c1-physical-colorimetry`.
-Do not begin E2 ray differentials, E3 ray bundles, GPU, wgpu, egui or GUI work.
+**Gate 2C1** physical colorimetry: authoritative evaluate **PASS** @ `7e9fe82`
+on `gate-2c1-physical-colorimetry` (pending owner merge). Do not begin E2 ray
+differentials, E3 ray bundles, GPU, wgpu, egui or GUI work.
 
 When a gate or research package produces new reviewable image artifacts,
 regenerate `docs/media/blackhole-rust-evolution.gif` and keep it embedded in
