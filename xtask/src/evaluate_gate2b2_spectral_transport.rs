@@ -22,9 +22,13 @@ const REF_BOLO: &str = "d3721de712ddafb660513b482f6c089cfc79be087f78ef1592e46cfd
 const REF_EMISSION_SPEC: &str = "95347496d2ade139a6002bb5d2ef70a4ba4b77085eac4a7b6232a49f9fd1c0db";
 const APPROVED_BASE: &str = "2f41bfecc2b04729c0205953585110b3274fabe9";
 
-/// Provisional envelope pending Phase-7 convergence freeze (owner may tighten).
-const CLOSURE_REL_TOL: f64 = 5e-3;
-const CLOSURE_ABS_TOL: f64 = 5e-3;
+/// Frozen Gate 2B2 error budget (owner closure `5203577417`).
+///
+/// Derived from clean PASS evidence at `07c5111`: gate 128² × 64-bin max rel
+/// closure ≈ `6.32e-4`. Envelope is ~3× that observed peak — not loosened for
+/// float noise.
+const CLOSURE_REL_TOL: f64 = 2e-3;
+const CLOSURE_ABS_TOL: f64 = 2e-3;
 
 #[derive(Serialize, Clone)]
 struct Check {
@@ -299,23 +303,99 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             spectral_digest: row_report.spectral_digest,
         });
     }
-    if convergence.len() >= 3 {
+    if convergence.len() >= 4 {
         let e32 = convergence[0].max_rel_observed_closure_error;
         let e64 = convergence[1].max_rel_observed_closure_error;
         let e128 = convergence[2].max_rel_observed_closure_error;
+        let e256 = convergence[3].max_rel_observed_closure_error;
+        let r32_64 = if e64 > 0.0 { e32 / e64 } else { f64::INFINITY };
+        let r64_128 = if e128 > 0.0 {
+            e64 / e128
+        } else {
+            f64::INFINITY
+        };
+        let r128_256 = if e256 > 0.0 {
+            e128 / e256
+        } else {
+            f64::INFINITY
+        };
         push(
             &mut checks,
-            "convergence_32_to_64_improves_or_stable",
-            e64 <= e32 * 1.05 + 1e-12,
-            format!("32={e32:.6e} 64={e64:.6e}"),
+            "convergence_32_to_64_at_least_2x",
+            e64 <= e32 / 2.0 + 1e-15,
+            format!("32={e32:.6e} 64={e64:.6e} ratio={r32_64:.3}"),
         );
         push(
             &mut checks,
-            "convergence_64_to_128_diminishing",
-            e128 <= e64 * 1.25 + 1e-12,
+            "convergence_64_to_128_improves",
+            e128 <= e64 + 1e-15,
             format!("64={e64:.6e} 128={e128:.6e}"),
         );
+        push(
+            &mut checks,
+            "convergence_64_to_128_not_accelerating",
+            r64_128 <= r32_64 * 1.25 + 1e-12,
+            format!("r32_64={r32_64:.3} r64_128={r64_128:.3}"),
+        );
+        push(
+            &mut checks,
+            "convergence_128_to_256_improves",
+            e256 <= e128 + 1e-15,
+            format!("128={e128:.6e} 256={e256:.6e}"),
+        );
+        push(
+            &mut checks,
+            "convergence_128_to_256_not_accelerating",
+            r128_256 <= r64_128 * 1.25 + 1e-12,
+            format!("r64_128={r64_128:.3} r128_256={r128_256:.3}"),
+        );
+        // Grid selection / error-budget freeze: coarsest grid meeting budget with
+        // required 32→64 improvement is spectral-grid-v1 (64 bins).
+        push(
+            &mut checks,
+            "grid_selection_64_meets_error_budget",
+            e64 <= CLOSURE_REL_TOL,
+            format!("e64={e64:.6e} tol={CLOSURE_REL_TOL:.3e}"),
+        );
+        push(
+            &mut checks,
+            "grid_freeze_spectral_grid_v1_64",
+            e64 <= e32 / 2.0 + 1e-15
+                && e64 <= CLOSURE_REL_TOL
+                && e128 <= e64 + 1e-15
+                && e256 <= e128 + 1e-15,
+            "authoritative spectral-grid-v1 = 64 bins".into(),
+        );
     }
+
+    push(
+        &mut checks,
+        "artifact_csv_has_spectral_bins",
+        {
+            let csv = std::fs::read_to_string(root.join(
+                "artifacts/gate-2b2-spectral-transport/gate-run-0/selected-pixel-spectra.csv",
+            ))?;
+            let header = csv.lines().next().unwrap_or("");
+            header.contains("m_capt")
+                && header.contains("nu_0")
+                && header.contains("i_nu_obs_0")
+                && header.contains(&format!("i_nu_obs_{}", SpectralGrid::V1_N_BINS - 1))
+        },
+        "selected-pixel-spectra.csv includes ν and I_ν bins".into(),
+    );
+    push(
+        &mut checks,
+        "artifact_meta_m_capt_pgm_semantics",
+        {
+            let meta: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join(
+                "artifacts/gate-2b2-spectral-transport/gate-run-0/spectral-frame-meta.json",
+            ))?)?;
+            meta.get("bolometric_relative_error_pgm")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.contains("M_capt"))
+        },
+        "meta declares truncation-aware PGM semantics".into(),
+    );
 
     // Scope exclusions
     push(

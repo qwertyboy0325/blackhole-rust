@@ -3,7 +3,10 @@
 //! Gate 2B2 primitives. No image I/O. Canonical transported quantity is `I_ν`.
 
 use crate::error::CoreError;
+use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Which spectral density is being represented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -30,7 +33,8 @@ impl SpectralMeasure {
 }
 
 /// Strictly positive finite frequency (diagnostic or SI — caller documents units).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(transparent)]
 pub struct Frequency(f64);
 
 impl Frequency {
@@ -59,8 +63,16 @@ impl Frequency {
     }
 }
 
+impl<'de> Deserialize<'de> for Frequency {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let v = f64::deserialize(deserializer)?;
+        Frequency::new(v).map_err(de::Error::custom)
+    }
+}
+
 /// Strictly positive finite wavelength.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(transparent)]
 pub struct Wavelength(f64);
 
 impl Wavelength {
@@ -86,6 +98,13 @@ impl Wavelength {
     #[must_use]
     pub fn to_bits(self) -> u64 {
         self.0.to_bits()
+    }
+}
+
+impl<'de> Deserialize<'de> for Wavelength {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let v = f64::deserialize(deserializer)?;
+        Wavelength::new(v).map_err(de::Error::custom)
     }
 }
 
@@ -158,7 +177,9 @@ pub fn transport_i_nu(i_nu_em: f64, g: f64) -> Result<f64, CoreError> {
 }
 
 /// Log-spaced observer-frame frequency grid (canonical Gate 2B2 layout metadata).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// Construction and deserialization both run [`SpectralGrid::validate`].
+#[derive(Debug, Clone, PartialEq)]
 pub struct SpectralGrid {
     measure: SpectralMeasure,
     grid_id: String,
@@ -172,6 +193,7 @@ pub struct SpectralGrid {
 
 impl SpectralGrid {
     pub const V1_ID: &'static str = "spectral-grid-v1";
+    /// Frozen authoritative bin count (Gate 2B2 closure `5203577417`).
     pub const V1_N_BINS: u32 = 64;
     pub const V1_NU_MIN: f64 = 0.25;
     pub const V1_NU_MAX: f64 = 4.0;
@@ -207,7 +229,6 @@ impl SpectralGrid {
             }
             edges.push(edge);
         }
-        // Exact endpoints.
         edges[0] = nu_min;
         edges[n] = nu_max;
 
@@ -227,7 +248,7 @@ impl SpectralGrid {
             weights.push(w);
         }
 
-        Ok(Self {
+        let grid = Self {
             measure: SpectralMeasure::FrequencySpecificIntensity,
             grid_id: grid_id.into(),
             nu_min,
@@ -236,7 +257,9 @@ impl SpectralGrid {
             edges,
             centers,
             weights,
-        })
+        };
+        grid.validate()?;
+        Ok(grid)
     }
 
     pub fn spectral_grid_v1() -> Result<Self, CoreError> {
@@ -289,6 +312,7 @@ impl SpectralGrid {
     }
 
     pub fn integrate(&self, samples: &[f64]) -> Result<f64, CoreError> {
+        self.validate()?;
         if samples.len() != self.n_bins as usize {
             return Err(CoreError::InvalidFrequency {
                 context: "spectral integrate length mismatch",
@@ -311,25 +335,250 @@ impl SpectralGrid {
         Ok(acc)
     }
 
+    /// Full structural + consistency validation (constructor and deser authority).
     pub fn validate(&self) -> Result<(), CoreError> {
         if self.measure != SpectralMeasure::FrequencySpecificIntensity {
             return Err(CoreError::InvalidFrequency {
                 context: "canonical spectral grid must be frequency measure",
             });
         }
-        if self.n_bins == 0 || self.centers.len() != self.n_bins as usize {
+        if self.grid_id.is_empty() {
             return Err(CoreError::InvalidFrequency {
-                context: "spectral grid bin metadata inconsistent",
+                context: "spectral grid id must be non-empty",
             });
         }
-        if self.edges.len() != self.n_bins as usize + 1
-            || self.weights.len() != self.n_bins as usize
+        if self.n_bins == 0 || self.n_bins > Self::MAX_BINS {
+            return Err(CoreError::InvalidFrequency {
+                context: "spectral grid bin count out of bounds",
+            });
+        }
+        if !self.nu_min.is_finite()
+            || !self.nu_max.is_finite()
+            || !(self.nu_min > 0.0)
+            || !(self.nu_max > self.nu_min)
         {
             return Err(CoreError::InvalidFrequency {
-                context: "spectral grid edge/weight length inconsistent",
+                context: "spectral grid requires 0 < nu_min < nu_max finite",
             });
         }
+        let n = self.n_bins as usize;
+        if self.centers.len() != n || self.weights.len() != n || self.edges.len() != n + 1 {
+            return Err(CoreError::InvalidFrequency {
+                context: "spectral grid edge/center/weight length inconsistent",
+            });
+        }
+        if !spectral_f64_consistent(self.edges[0], self.nu_min)
+            || !spectral_f64_consistent(self.edges[n], self.nu_max)
+        {
+            return Err(CoreError::InvalidFrequency {
+                context: "spectral grid endpoints must match nu_min/nu_max",
+            });
+        }
+        for i in 0..=n {
+            let e = self.edges[i];
+            if !e.is_finite() || !(e > 0.0) {
+                return Err(CoreError::InvalidFrequency {
+                    context: "spectral grid edge non-finite or non-positive",
+                });
+            }
+            if i > 0 && !(e > self.edges[i - 1]) {
+                return Err(CoreError::InvalidFrequency {
+                    context: "spectral grid edges must be strictly monotonic increasing",
+                });
+            }
+        }
+        for i in 0..n {
+            let lo = self.edges[i];
+            let hi = self.edges[i + 1];
+            let expected_w = hi - lo;
+            let expected_c = (lo * hi).sqrt();
+            let w = self.weights[i];
+            let c = self.centers[i];
+            if !w.is_finite() || !(w > 0.0) || !spectral_f64_consistent(w, expected_w) {
+                return Err(CoreError::InvalidFrequency {
+                    context: "spectral grid weight must equal edge delta",
+                });
+            }
+            if !c.is_finite() || !(c > 0.0) || !spectral_f64_consistent(c, expected_c) {
+                return Err(CoreError::InvalidFrequency {
+                    context: "spectral grid center must equal geometric midpoint",
+                });
+            }
+            if !(c > lo && c < hi) {
+                return Err(CoreError::InvalidFrequency {
+                    context: "spectral grid center outside its bin",
+                });
+            }
+        }
         Ok(())
+    }
+
+    /// Rebuild centers/weights from edges (post-deser canonicalize).
+    fn recompute_centers_weights_from_edges(&mut self) -> Result<(), CoreError> {
+        let n = self.n_bins as usize;
+        if self.edges.len() != n + 1 {
+            return Err(CoreError::InvalidFrequency {
+                context: "cannot recompute centers: edge length mismatch",
+            });
+        }
+        // Pin endpoints to declared bounds (JSON may perturb trailing bits).
+        self.edges[0] = self.nu_min;
+        self.edges[n] = self.nu_max;
+        let mut centers = Vec::with_capacity(n);
+        let mut weights = Vec::with_capacity(n);
+        for i in 0..n {
+            let lo = self.edges[i];
+            let hi = self.edges[i + 1];
+            let c = (lo * hi).sqrt();
+            let w = hi - lo;
+            if !c.is_finite() || !(c > 0.0) || !w.is_finite() || !(w > 0.0) {
+                return Err(CoreError::InvalidFrequency {
+                    context: "recomputed center/weight invalid",
+                });
+            }
+            centers.push(c);
+            weights.push(w);
+        }
+        self.centers = centers;
+        self.weights = weights;
+        Ok(())
+    }
+}
+
+/// Exact bits, or a few ULPs — enough for JSON float round-trip, not for corruption.
+fn spectral_f64_consistent(stored: f64, expected: f64) -> bool {
+    if stored.to_bits() == expected.to_bits() {
+        return true;
+    }
+    let scale = expected.abs().max(1.0);
+    (stored - expected).abs() <= 8.0 * f64::EPSILON * scale
+}
+
+impl Serialize for SpectralGrid {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut state = serializer.serialize_struct("SpectralGrid", 8)?;
+        state.serialize_field("measure", &self.measure)?;
+        state.serialize_field("grid_id", &self.grid_id)?;
+        state.serialize_field("nu_min", &self.nu_min)?;
+        state.serialize_field("nu_max", &self.nu_max)?;
+        state.serialize_field("n_bins", &self.n_bins)?;
+        state.serialize_field("edges", &self.edges)?;
+        state.serialize_field("centers", &self.centers)?;
+        state.serialize_field("weights", &self.weights)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for SpectralGrid {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Measure,
+            GridId,
+            NuMin,
+            NuMax,
+            NBins,
+            Edges,
+            Centers,
+            Weights,
+        }
+
+        struct SpectralGridVisitor;
+
+        impl<'de> Visitor<'de> for SpectralGridVisitor {
+            type Value = SpectralGrid;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("validated SpectralGrid")
+            }
+
+            fn visit_map<V: MapAccess<'de>>(self, mut map: V) -> Result<SpectralGrid, V::Error> {
+                let mut measure = None;
+                let mut grid_id = None;
+                let mut nu_min = None;
+                let mut nu_max = None;
+                let mut n_bins = None;
+                let mut edges = None;
+                let mut centers = None;
+                let mut weights = None;
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Measure => measure = Some(map.next_value()?),
+                        Field::GridId => grid_id = Some(map.next_value()?),
+                        Field::NuMin => nu_min = Some(map.next_value()?),
+                        Field::NuMax => nu_max = Some(map.next_value()?),
+                        Field::NBins => n_bins = Some(map.next_value()?),
+                        Field::Edges => edges = Some(map.next_value()?),
+                        Field::Centers => centers = Some(map.next_value()?),
+                        Field::Weights => weights = Some(map.next_value()?),
+                    }
+                }
+                let mut grid = SpectralGrid {
+                    measure: measure.ok_or_else(|| de::Error::missing_field("measure"))?,
+                    grid_id: grid_id.ok_or_else(|| de::Error::missing_field("grid_id"))?,
+                    nu_min: nu_min.ok_or_else(|| de::Error::missing_field("nu_min"))?,
+                    nu_max: nu_max.ok_or_else(|| de::Error::missing_field("nu_max"))?,
+                    n_bins: n_bins.ok_or_else(|| de::Error::missing_field("n_bins"))?,
+                    edges: edges.ok_or_else(|| de::Error::missing_field("edges"))?,
+                    centers: centers.ok_or_else(|| de::Error::missing_field("centers"))?,
+                    weights: weights.ok_or_else(|| de::Error::missing_field("weights"))?,
+                };
+                // Reject corrupt tables, then canonicalize centers/weights from edges.
+                grid.validate().map_err(de::Error::custom)?;
+                grid.recompute_centers_weights_from_edges()
+                    .map_err(de::Error::custom)?;
+                grid.validate().map_err(de::Error::custom)?;
+                Ok(grid)
+            }
+
+            fn visit_seq<V: SeqAccess<'de>>(self, mut seq: V) -> Result<SpectralGrid, V::Error> {
+                let measure = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+                let grid_id = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+                let nu_min = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(2, &self))?;
+                let nu_max = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(3, &self))?;
+                let n_bins = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(4, &self))?;
+                let edges = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(5, &self))?;
+                let centers = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(6, &self))?;
+                let weights = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(7, &self))?;
+                let mut grid = SpectralGrid {
+                    measure,
+                    grid_id,
+                    nu_min,
+                    nu_max,
+                    n_bins,
+                    edges,
+                    centers,
+                    weights,
+                };
+                grid.validate().map_err(de::Error::custom)?;
+                grid.recompute_centers_weights_from_edges()
+                    .map_err(de::Error::custom)?;
+                grid.validate().map_err(de::Error::custom)?;
+                Ok(grid)
+            }
+        }
+
+        const FIELDS: &[&str] = &[
+            "measure", "grid_id", "nu_min", "nu_max", "n_bins", "edges", "centers", "weights",
+        ];
+        deserializer.deserialize_struct("SpectralGrid", FIELDS, SpectralGridVisitor)
     }
 }
 
@@ -343,6 +592,15 @@ mod tests {
         assert!(Frequency::new(-1.0).is_err());
         assert!(Frequency::new(f64::NAN).is_err());
         assert!(Frequency::new(1.0).is_ok());
+    }
+
+    #[test]
+    fn frequency_deserialize_rejects_non_positive() {
+        assert!(serde_json::from_str::<Frequency>("0.0").is_err());
+        assert!(serde_json::from_str::<Frequency>("-1.0").is_err());
+        assert!(serde_json::from_str::<Frequency>("1.5").is_ok());
+        assert!(serde_json::from_str::<Wavelength>("0.0").is_err());
+        assert!(serde_json::from_str::<Wavelength>("2.0").is_ok());
     }
 
     #[test]
@@ -367,7 +625,6 @@ mod tests {
 
     #[test]
     fn wavelength_transport_g5() {
-        // I_λ,obs(λ_obs) = g⁵ I_λ,em(g λ_obs)
         let g = 0.5;
         let lambda_obs = Wavelength::new(1.0).unwrap();
         let lambda_em = Wavelength::new(g * lambda_obs.value()).unwrap();
@@ -397,6 +654,39 @@ mod tests {
     #[test]
     fn spectral_grid_rejects_bad_bounds() {
         assert!(SpectralGrid::log_spaced("x", 1.0, 1.0, 8).is_err());
-        assert!(SpectralGrid::log_spaced("x", 0.1, 1.0, 0).is_err());
+        assert!(SpectralGrid::log_spaced("x", 2.0, 1.0, 8).is_err());
+    }
+
+    #[test]
+    fn spectral_grid_deserialize_rejects_tampered_weight() {
+        let g = SpectralGrid::spectral_grid_v1().unwrap();
+        let mut v = serde_json::to_value(&g).unwrap();
+        v["weights"][0] = serde_json::json!(1.0e9);
+        assert!(serde_json::from_value::<SpectralGrid>(v).is_err());
+    }
+
+    #[test]
+    fn spectral_grid_deserialize_roundtrip() {
+        let g = SpectralGrid::spectral_grid_v1().unwrap();
+        let bytes = serde_json::to_vec(&g).unwrap();
+        let back: SpectralGrid = serde_json::from_slice(&bytes).unwrap();
+        // Edges may shift by JSON float noise; centers/weights are recomputed.
+        assert_eq!(back.grid_id(), g.grid_id());
+        assert_eq!(back.n_bins(), g.n_bins());
+        back.validate().unwrap();
+        for i in 0..g.n_bins() as usize {
+            assert!(spectral_f64_consistent(back.edges()[i], g.edges()[i]));
+        }
+        assert!(spectral_f64_consistent(
+            back.edges()[g.n_bins() as usize],
+            g.nu_max()
+        ));
+    }
+
+    #[test]
+    fn spectral_grid_validate_rejects_non_monotonic_edges() {
+        let mut g = SpectralGrid::log_spaced("t", 0.25, 4.0, 4).unwrap();
+        g.edges[2] = g.edges[1];
+        assert!(g.validate().is_err());
     }
 }

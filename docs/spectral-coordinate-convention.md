@@ -23,18 +23,30 @@ This axis is independent of Gate 2B0 kinematic `ν_obs,kin = 1`.
 
 ## Authoritative grid
 
-Id: `spectral-grid-v1`
+Id: `spectral-grid-v1` (**frozen**)
 
 ```text
 spacing: logarithmic in frequency
-bins: 64 (provisional authoritative; freeze after convergence evidence)
+bins: 64 (authoritative; Gate 2B2 owner closure 5203577417)
 edges: n+1 log-spaced points on [ν_min, ν_max]
 centers: geometric midpoints of adjacent edges
 weights: Δν = edge[i+1] − edge[i]  (rectangle rule on centers)
 ```
 
-Non-authoritative exploratory grids (32 / 128 / 256) are allowed for
-convergence studies only.
+### Grid-selection / error-budget rule
+
+Freeze `spectral-grid-v1` at 64 bins when all hold on the smoke corpus:
+
+```text
+e64 ≤ e32 / 2                 (≥2× improvement 32→64)
+e64 ≤ CLOSURE_REL_TOL         (error budget; frozen 2e-3)
+e128 ≤ e64                    (64→128 improves)
+(e64/e128) ≤ 1.25 (e32/e64)   (64→128 not accelerating)
+e256 ≤ e128                   (128→256 improves)
+(e128/e256) ≤ 1.25 (e64/e128) (128→256 not accelerating)
+```
+
+Exploratory grids (32 / 128 / 256) remain non-authoritative convergence probes only.
 
 ## Transport evaluation
 

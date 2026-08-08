@@ -241,6 +241,8 @@ fn write_meta(
         "spectral_digest": spectral,
         "closure": closure,
         "payload": "spectral-i-nu-obs.f64le",
+        "bolometric_relative_error_pgm": "truncation-aware relative error vs I_obs_bol * M_capt",
+        "selected_pixel_spectra_csv": "summary columns plus nu_* and i_nu_obs_* bins",
         "colorimetry": "absent",
     });
     std::fs::write(
@@ -294,11 +296,14 @@ fn write_integral_pgms(
         if let SpectralPixel::DiskHit(s) = pixel {
             emitted[i] = log_gray(s.integrated_emitted_i_nu);
             observed[i] = log_gray(s.integrated_observed_i_nu);
-            let err = if s.observed_bolometric_intensity > 0.0 {
-                (s.integrated_observed_i_nu - s.observed_bolometric_intensity).abs()
-                    / s.observed_bolometric_intensity
-            } else {
+            let captured = (1.0 - s.truncated_observed_energy_fraction).clamp(0.0, 1.0);
+            let expected = s.observed_bolometric_intensity * captured;
+            let err = if expected > 0.0 {
+                (s.integrated_observed_i_nu - expected).abs() / expected
+            } else if s.integrated_observed_i_nu == 0.0 {
                 0.0
+            } else {
+                1.0
             };
             rel_err[i] = ((err * 255.0).clamp(0.0, 255.0)) as u8;
         }
@@ -348,14 +353,20 @@ fn write_selected_csv(
     out: &Path,
     frame: &relativity_render::SpectralFrame,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut rows = Vec::new();
-    rows.push(
-        "source_index,col,row,g,i_em_bol,i_obs_bol,integ_em,integ_obs,trunc_em_frac,trunc_obs_frac"
-            .into(),
+    let centers = frame.spectral_grid().centers();
+    let n_bins = centers.len();
+    let mut header = String::from(
+        "source_index,col,row,g,i_em_bol,i_obs_bol,integ_em,integ_obs,m_capt,trunc_em_frac,trunc_obs_frac",
     );
+    for i in 0..n_bins {
+        header.push_str(&format!(",nu_{i}"));
+    }
+    for i in 0..n_bins {
+        header.push_str(&format!(",i_nu_obs_{i}"));
+    }
+    let mut rows = vec![header];
     let w = frame.grid().width;
     let mut selected = Vec::new();
-    // Pick extremes by g and a couple of radii.
     for (idx, pixel) in frame.pixels().iter().enumerate() {
         if let SpectralPixel::DiskHit(s) = pixel {
             selected.push((idx, s));
@@ -384,16 +395,25 @@ fn write_selected_csv(
     for (idx, s) in picks {
         let col = (idx as u32) % w;
         let row = (idx as u32) / w;
-        rows.push(format!(
-            "{idx},{col},{row},{},{},{},{},{},{},{}",
+        let m_capt = (1.0 - s.truncated_emitted_energy_fraction).clamp(0.0, 1.0);
+        let mut row_s = format!(
+            "{idx},{col},{row},{},{},{},{},{},{},{},{}",
             s.g_factor,
             s.emitted_bolometric_intensity,
             s.observed_bolometric_intensity,
             s.integrated_emitted_i_nu,
             s.integrated_observed_i_nu,
+            m_capt,
             s.truncated_emitted_energy_fraction,
             s.truncated_observed_energy_fraction
-        ));
+        );
+        for &nu in centers {
+            row_s.push_str(&format!(",{nu}"));
+        }
+        for &i_nu in &s.i_nu_obs {
+            row_s.push_str(&format!(",{i_nu}"));
+        }
+        rows.push(row_s);
     }
     std::fs::write(
         out.join("selected-pixel-spectra.csv"),
