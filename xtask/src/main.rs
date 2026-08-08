@@ -22,6 +22,7 @@ mod evaluate_gate2b1_bolometric_radiance;
 mod evaluate_gate2b2_spectral_transport;
 mod evaluate_gate2c0_physical_emission;
 mod evaluate_gate2c1_colorimetry;
+mod evaluate_gate2d0_presentation;
 mod evaluate_r1_e0_oracle_corpus;
 mod inspect;
 mod integrate_ray;
@@ -32,6 +33,7 @@ mod render_disk_spectrum;
 mod render_lensed_celestial;
 mod render_physical_color;
 mod render_physical_disk_spectrum;
+mod render_presentation;
 mod render_tier;
 mod spike_dop853;
 mod trace_outcome_map;
@@ -284,6 +286,27 @@ enum Commands {
         #[arg(long, default_value_t = true)]
         spectral_diagnostic: bool,
     },
+    /// Gate 2D0: presentation transform → RGB16 sRGB beauty PNG (not scientific authority).
+    RenderPresentation {
+        #[arg(long)]
+        preset: String,
+        #[arg(long)]
+        presentation: String,
+        #[arg(long, value_enum)]
+        tier: Option<render_tier::DiagnosticRenderTier>,
+        #[arg(long)]
+        width: Option<u32>,
+        #[arg(long)]
+        height: Option<u32>,
+        #[arg(long)]
+        output_dir: String,
+        #[arg(long, value_enum, default_value_t = ExecutionArg::Serial)]
+        execution: ExecutionArg,
+        #[arg(long)]
+        threads: Option<usize>,
+        #[arg(long, default_value_t = false)]
+        require_release: bool,
+    },
     /// Emit canonical Gate 1B1 corpus JSON (numerical records; for determinism).
     CorpusReport {
         #[arg(long)]
@@ -384,6 +407,8 @@ fn main() {
                 evaluate_gate2c0_physical_emission::evaluate()
             } else if scope == "gate-2c1-colorimetry" {
                 evaluate_gate2c1_colorimetry::evaluate()
+            } else if scope == "gate-2d0-presentation" {
+                evaluate_gate2d0_presentation::evaluate()
             } else if scope == "r1-e0-oracle-corpus" {
                 evaluate_r1_e0_oracle_corpus::evaluate()
             } else if scope == "e1-adaptive-sampling" {
@@ -605,6 +630,33 @@ fn main() {
                 exec,
                 threads,
                 spectral_diagnostic,
+            )
+        }
+        Commands::RenderPresentation {
+            preset,
+            presentation,
+            tier,
+            width,
+            height,
+            output_dir,
+            execution,
+            threads,
+            require_release,
+        } => {
+            let exec = match execution {
+                ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
+                ExecutionArg::Parallel => trace_outcome_map::CliExecution::Parallel,
+            };
+            render_presentation::run(
+                &preset,
+                &presentation,
+                tier,
+                width,
+                height,
+                &output_dir,
+                require_release,
+                exec,
+                threads,
             )
         }
         Commands::CorpusReport { scope } => {

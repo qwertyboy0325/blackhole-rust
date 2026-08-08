@@ -1,0 +1,17 @@
+# Gate 2D0 presentation preset — artistic/display only; not scientific authority.
+schema_version = 1
+model_id = "presentation-model-v1"
+description = "Gate 2D0 cinematic SDR presentation for gargantua-physical-v1; not film/DNGR reconstruction"
+
+# A1: EV=0 maps middle_gray_luminance_cd_m2 → linear 0.18 before gamut/tone-map.
+# Frozen from Gate 2C1 gate-tier median positive Y (physical_color_digest 16663188…).
+middle_gray_luminance_cd_m2 = 2411578982.805191
+exposure_ev = 0.0
+
+tone_mapper = "khronos-pbr-neutral-v1"
+gamut_mapper = "luminance-axis-desat-v1"
+display_target = "srgb-iec61966-2-1-v1"
+oetf = "srgb-iec61966-2-1-v1"
+bit_depth = 16
+
+# PNG sRGB rendering intent is fixed globally (A3 Perceptual); not preset-selectable.

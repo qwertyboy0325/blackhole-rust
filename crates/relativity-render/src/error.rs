@@ -127,3 +127,29 @@ pub enum ColorimetryError {
     #[error("spectral error: {0}")]
     Spectral(String),
 }
+
+#[derive(Debug, Error, Clone, PartialEq)]
+pub enum PresentationError {
+    #[error("invalid presentation specification: {0}")]
+    InvalidPresentationSpec(String),
+    #[error("invalid exposure: {0}")]
+    InvalidExposure(String),
+    #[error("non-finite source color: {0}")]
+    NonFiniteSourceColor(String),
+    #[error("non-finite presentation result: {0}")]
+    NonFinitePresentationResult(String),
+    #[error("presentation gamut failure: {0}")]
+    PresentationGamutFailure(String),
+    #[error("tone-map domain error: {0}")]
+    ToneMapDomainError(String),
+    #[error("tone-map range failure: {0}")]
+    ToneMapRangeFailure(String),
+    #[error("display encoding failure: {0}")]
+    DisplayEncodingFailure(String),
+    #[error("quantization failure: {0}")]
+    QuantizationFailure(String),
+    #[error("frame length mismatch")]
+    FrameLengthMismatch,
+    #[error("unsupported operator `{0}`")]
+    UnsupportedOperator(String),
+}

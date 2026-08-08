@@ -8,12 +8,14 @@
 //! Gate 2B2: diagnostic spectral `I_ν` transport (`g³`). Not physical RGB/OpenEXR.
 //! Gate 2C0: physical Page–Thorne thin-disk emission, `T_eff`, Planck `B_ν`, SI Hz `g³`.
 //! Gate 2C1: absolute CIE XYZ + scene-linear Rec.709/D65 RGB from emission frame (Arch B).
+//! Gate 2D0: presentation-only exposure / gamut / tone-map / sRGB display encoding.
 
 #![forbid(unsafe_code)]
 
 pub mod bolometric;
 pub mod color_space;
 pub mod colorimetry;
+pub mod display_encoding;
 pub mod error;
 pub mod frequency_shift;
 pub mod lensed;
@@ -21,8 +23,10 @@ pub mod page_thorne;
 pub mod physical_disk;
 pub mod physical_spectral;
 pub mod planck;
+pub mod presentation;
 pub mod spectral;
 pub mod texture;
+pub mod tone_map;
 
 pub use bolometric::{
     bolometric_debug_display_spec_digest, bolometric_debug_display_v1,
@@ -58,9 +62,14 @@ pub use colorimetry::{
     PRODUCTION_LAMBDA_MIN_NM, PRODUCTION_N_SAMPLES, RAW_COLOR_PAYLOAD_MAGIC,
     RAW_COLOR_PAYLOAD_SCHEMA,
 };
+pub use display_encoding::{
+    quantize_u16, srgb_oetf, DisplayEncodedRgb16, DISPLAY_LINEAR_EPS, DISPLAY_TARGET_SRGB_V1,
+    OETF_ID_SRGB_IEC61966_2_1_V1, PNG_FORMAT_RGB16_SRGB_V1, PNG_GAMA_SRGB,
+    PNG_SRGB_INTENT_PERCEPTUAL,
+};
 pub use error::{
     BolometricRenderError, CelestialRenderError, ColorimetryError, FrequencyShiftError,
-    SpectralRenderError,
+    PresentationError, SpectralRenderError,
 };
 pub use frequency_shift::{
     build_disk_frequency_shift_frame, build_disk_frequency_shift_map_artifact,
@@ -102,6 +111,14 @@ pub use planck::{
     integrate_pi_b_nu_log_grid, planck_b_lambda_from_b_nu, planck_b_nu, stefan_boltzmann_flux,
     teff_from_one_face_flux, PLANCK_MODEL_ID, TEMPERATURE_MODEL_ID,
 };
+pub use presentation::{
+    apply_exposure, apply_gamut, authored_rgb16_bytes, luminance_axis_desat_v1,
+    png_metadata_constants, present_physical_color_frame, presentation_frame_digest,
+    presentation_spec_digest, ExposureSpec, GamutMapOperator, PresentationFrame,
+    PresentationMetrics, PresentationSpec, BIT_DEPTH_RGB16, GAMUT_EPS,
+    GAMUT_MAPPER_ID_LUMINANCE_AXIS_DESAT_V1, PRESENTATION_MODEL_V1, REC709_LUMA_WB, REC709_LUMA_WG,
+    REC709_LUMA_WR,
+};
 pub use spectral::{
     build_disk_spectral_frame, compute_bolometric_closure, continuum_mass_on_interval,
     continuum_normalization, diagnostic_gaussian_line_v1, diagnostic_lognormal_continuum_v1,
@@ -115,4 +132,8 @@ pub use texture::{
     procedural_coordinate_grid_v1, procedural_texture_spec_digest,
     render_procedural_texture_reference, sample_procedural_celestial,
     ProceduralCelestialTextureSpec, TEXTURE_ID_V1,
+};
+pub use tone_map::{
+    apply_tone_map, canonicalize_tone_output, khronos_pbr_neutral, LinearRgb, ToneMapOperator,
+    TONE_MAPPER_ID_KHRONOS_PBR_NEUTRAL_V1,
 };
