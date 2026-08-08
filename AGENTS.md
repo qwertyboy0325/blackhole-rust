@@ -2,8 +2,8 @@
 
 ## Current gate
 
-Gate 0, 1A, 1B0–1B2, Gate 2A0–2A2, Gate 2B0, Gate 2B1, and Gate 2B2 are complete
-(Gate 2B2 merged to `main` via PR #17 @ `95c4062`).
+Gate 0, 1A, 1B0–1B2, Gate 2A0–2A2, Gate 2B0, Gate 2B1, Gate 2B2, Gate 2C0,
+and Gate 2C1 are complete on `main` (Gate 2C1 merged via PR #19 @ `c964c74`).
 R1/E0 is complete.
 E1 physics-aware adaptive quadtree sampling is merged (PR #15).
 E1 execution-performance restructuring: authoritative evaluate PASS after
@@ -21,9 +21,14 @@ E1 is experimental:
 `5225371466` (merged via PR #18 @ `57659c62`).
 
 **Gate 2C1** physical colorimetry: authoritative evaluate **PASS** @ `9175600`
-after owner closures `5225581548` (C1–C4) + `5225636038` (C2b) on
-`gate-2c1-physical-colorimetry` (PR #19 draft; pending owner merge). Do not
-begin E2 ray differentials, E3 ray bundles, GPU, wgpu, egui or GUI work.
+after owner closures `5225581548` (C1–C4) + `5225636038` (C2b); merged to
+`main` via PR #19 @ `c964c74`.
+
+**Gate 2D0** cinematic presentation: authoritative evaluate **PASS** @
+`beb4efd` after D0-C1 independent sRGB OETF oracle closure
+(`presentation_frame_digest` `f8e10323…` unchanged); pending owner merge
+review. Do not begin Gate 2D1/2D2/2D3, E2 ray differentials, E3 ray bundles,
+GPU, wgpu, egui or GUI work.
 
 When a gate or research package produces new reviewable image artifacts,
 regenerate `docs/media/blackhole-rust-evolution.gif` and keep it embedded in

@@ -142,8 +142,8 @@ is a separate owner-reviewed command and never an automatic side effect.
 cargo xtask render --preset gargantua-baseline
 ```
 
-Render scientific EXR/report artifacts only. Optional presentation export must be
-an explicit flag and must not replace raw output.
+Render scientific EXR/report artifacts only. Gate 2D0 presentation export is a
+separate `render-presentation` command and must not replace raw scientific output.
 
 ```bash
 cargo xtask inspect-ray --x <x> --y <y>

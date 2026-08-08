@@ -170,8 +170,21 @@ tests, rather than transcribed from an incompatibly licensed repository.
   `K_m = 683 lm/W` (CIE photometry / CIE 018). Access via CIE publications;
   bibliographic citation.
 - **[IEC61966-2-1]** IEC 61966-2-1 / Rec. ITU-R BT.709 chromaticities and D65
-  white for scene-linear RGB matrix (no OETF in scientific path). Standards
+  white for scene-linear RGB matrix (no OETF in scientific path). Gate 2D0 uses
+  the same standard's piecewise sRGB OETF for display encoding. Standards
   access only.
+- **[KhronosPBRNeutral]** Khronos PBR Neutral Tone Mapper specification and
+  sample implementation.
+  [GitHub](https://github.com/KhronosGroup/ToneMapping/blob/main/PBR_Neutral/README.md).
+  License: **CC-BY-4.0**. Analytic Rec.709 operator; Gate 2D0 re-implements the
+  published equations in f64 (no LUT / OCIO config vendored).
+- **[PNG3]** Portable Network Graphics (PNG) Specification, 3rd Edition.
+  [W3C](https://www.w3.org/TR/png-3/). sRGB chunk intents (Perceptual=0), gAMA
+  substitution value 45455, and cHRM guidance for sRGB. Document license.
+- **[`png` crate]** Pure-Rust PNG encode/decode, version **0.18.1**,
+  license **MIT OR Apache-2.0**. Used in `xtask` only for Gate 2D0 RGB16 beauty
+  artifacts (`set_source_srgb(Perceptual)` + `gAMA=45455`).
+  [crates.io](https://crates.io/crates/png/0.18.1).
 - **OpenEXR technical introduction.** Multi-channel `HALF`, `FLOAT`, and `UINT`
   storage and metadata. [Official documentation](https://openexr.com/en/latest/TechnicalIntroduction.html).
   OpenEXR software is BSD-3-Clause; specification/documentation terms are linked

@@ -410,6 +410,31 @@ def main() -> int:
     frames.append(p)
 
     p = next_frame()
+    title_card(
+        p,
+        "Gate 2C0",
+        "+ physical thin-disk emission",
+        "Page–Thorne · Planck · g³ spectral transport",
+        fnt,
+    )
+    frames.append(p)
+
+    p = next_frame()
+    title_card(
+        p,
+        "Gate 2C1",
+        "+ absolute CIE XYZ / Rec.709",
+        "Km photometry · scene-linear scientific RGB",
+        fnt,
+    )
+    frames.append(p)
+
+    src_2d0 = require(ROOT / "artifacts/gate-2d0-presentation/gate-run-0/beauty-srgb16.png")
+    p = next_frame()
+    annotate(src_2d0, p, "Gate 2D0", "+ cinematic sRGB16 beauty", fnt)
+    frames.append(p)
+
+    p = next_frame()
     corpus_montage(
         corpus_paths,
         corpus_labels,
