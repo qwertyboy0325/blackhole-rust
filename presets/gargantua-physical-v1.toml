@@ -1,0 +1,97 @@
+schema_version = 1
+name = "gargantua-physical-v1"
+description = "Gate 2C0 physical thin-disk radiometry demonstration; not film/DNGR reconstruction"
+
+[provenance]
+physical_reference = "James et al. 2015, arXiv:1502.03808 (geometry/spin context only)"
+published_spin_context = "a/M=0.999 is used in published DNGR demonstrations"
+artistic_disclaimer = "mass_solar and mdot_kg_s are project physical demonstration knobs, not film parameters"
+unknowns = [
+  "proprietary DNGR implementation and ray-bundle filters",
+  "film source textures and exact disk material",
+  "shot-specific camera and lens parameters",
+  "shot-specific spin and presentation choices",
+  "production compositing and color pipeline",
+]
+
+[spacetime]
+model = "kerr"
+units = "geometrized_g_eq_c_eq_m_eq_1"
+mass = 1.0
+spin_a_over_m = 0.999
+integration_coordinates = "cartesian_kerr_schild"
+reporting_coordinates = "boyer_lindquist"
+
+[geodesics]
+formulation = "canonical_hamiltonian"
+integrator = "dop853"
+scalar = "f64"
+relative_tolerance = 1.0e-10
+absolute_tolerance_position = 1.0e-11
+absolute_tolerance_momentum = 1.0e-11
+maximum_steps = 1000000
+maximum_backward_affine_parameter = 1000000.0
+event_localization_mode = "dense_output_bracket_subdivide"
+
+[observer]
+motion = "zamo"
+boyer_lindquist_r = 20.0
+boyer_lindquist_theta_degrees = 85.0
+boyer_lindquist_phi_degrees = 0.0
+
+[camera]
+projection = "rectilinear"
+horizontal_field_of_view_degrees = 50.0
+look_at = "black_hole_origin"
+roll_degrees = 0.0
+
+[disk]
+geometry = "equatorial_zero_thickness"
+inner_edge = "prograde_isco"
+outer_radius_m = 20.0
+optical_model = "opaque_first_intersection"
+velocity_model = "prograde_circular_geodesic"
+emission_model = "page-thorne-blackbody-v1"
+emission_claim = "project physical demonstration, not film/DNGR reconstruction"
+
+[celestial_sphere]
+radius_m = 1000.0
+texture = "procedural_coordinate_grid"
+seam = "positive_x_half_plane"
+
+[spectrum]
+representation = "sampled_specific_intensity_f64"
+wavelength_min_nm = 400.0
+wavelength_max_nm = 700.0
+wavelength_step_nm = 10.0
+sampling_status = "provisional_until_spectral_convergence_calibration"
+
+[diagnostic_render]
+width = 128
+height = 128
+samples_per_pixel = 1
+sampling = "pixel_center"
+seed = 0
+thread_assembly = "fixed_row_major_tiles"
+
+[artifacts]
+image_format = "raw_f64le_meta_json"
+scene_linear_rgb = "deferred_to_gate_2c1"
+report_format = "canonical_json"
+digest = "sha256"
+presentation_transform = "none"
+
+[gpu]
+enabled = false
+status = "deferred_until_cpu_oracle_and_precision_envelope_exist"
+
+# Project physical demonstration knobs — not film/DNGR reconstruction.
+# mass_solar cited only as showcase scale; digest uses pinned IAU/CODATA path.
+[physical]
+mass_solar = 1.0e8
+mdot_kg_s = 1.0e18
+mass_claim = "project physical demonstration, not film/DNGR reconstruction"
+flux_model = "page-thorne-zero-torque-v1"
+temperature_model = "stefan-boltzmann-teff-v1"
+emission_model = "page-thorne-blackbody-v1"
+emission_claim = "project physical demonstration, not film/DNGR reconstruction"

@@ -42,6 +42,9 @@ pub enum CoreError {
 
     #[error("circular equatorial orbit unavailable: {context}")]
     CircularOrbitUnavailable { context: &'static str },
+
+    #[error("invalid physical quantity: {context}")]
+    InvalidPhysicalQuantity { context: &'static str },
 }
 
 /// Chart/domain classification for Cartesian Kerr–Schild evaluation.
