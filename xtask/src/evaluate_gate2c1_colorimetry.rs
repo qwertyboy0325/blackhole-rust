@@ -4,10 +4,11 @@ use crate::build_meta::{
     is_optimized_release_execution, require_release_execution, BuildExecutionMetadata,
 };
 use crate::render_tier::DiagnosticRenderTier;
+use relativity_core::{BOLTZMANN_K_J_K, PLANCK_H_J_S, SPEED_OF_LIGHT_M_S};
 use relativity_render::{
     blackbody_planckian_direction_ok, integrate_xyz_from_emission, payload_sha256,
-    physical_spectral_grid_v1, Cie1931Table, IntegrationMeasure, XyzToRgbMatrix,
-    CIE_OBSERVER_ID_V1, CIE_RELATIVE_ASSET_PATH, CIE_TABLE_MD5, CIE_TABLE_SHA256,
+    physical_spectral_grid_v1, Cie1931Table, CieSample, IntegrationMeasure, XyzToRgbMatrix,
+    CIE_OBSERVER_ID_V1, CIE_RELATIVE_ASSET_PATH, CIE_TABLE_MD5, CIE_TABLE_SHA256, KM_LM_PER_W,
     PHYSICAL_GRID_V1_ID, PRODUCTION_BAND_ID, PRODUCTION_LAMBDA_MAX_NM, PRODUCTION_LAMBDA_MIN_NM,
     PRODUCTION_N_SAMPLES, SCENE_LINEAR_RGB_SPACE_ID,
 };
@@ -26,6 +27,12 @@ const REF_GRID_2C0: &str = "ceb3db28082bb357e50cac2635b221711bf79ea2806f2c25b60c
 const NU_LAMBDA_REL_TOL: f64 = 1e-5;
 /// Sampling ladder: 10 nm max rel Y vs 1 nm reference (blackbody 6500 K).
 const LADDER_10NM_REL_TOL: f64 = 5e-2;
+/// Independent B_λ Planckian xy vs production (convergence-justified floor).
+const PLANCKIAN_INDEPENDENT_XY_FLOOR: f64 = 1e-5;
+/// Substeps per nm for independent B_λ×CMF quadrature (0.1 nm).
+const PLANCKIAN_REF_SUBSTEPS_PER_NM: usize = 10;
+/// Finer grid used only to measure reference self-convergence.
+const PLANCKIAN_REF_SUBSTEPS_FINE: usize = 40;
 
 #[derive(Serialize, Clone)]
 struct Check {
@@ -366,6 +373,103 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Evaluator-local Planck `B_λ(λ,T)` from SI `h,c,k_B` only — not production Planck/transport.
+fn independent_planck_b_lambda(lambda_m: f64, t_k: f64) -> Result<f64, String> {
+    if !(lambda_m > 0.0 && lambda_m.is_finite() && t_k > 0.0 && t_k.is_finite()) {
+        return Err("independent B_λ requires finite λ>0 and T>0".into());
+    }
+    let h = PLANCK_H_J_S;
+    let c = SPEED_OF_LIGHT_M_S;
+    let k = BOLTZMANN_K_J_K;
+    let lam2 = lambda_m * lambda_m;
+    let lam5 = lam2 * lam2 * lambda_m;
+    let x = h * c / (lambda_m * k * t_k);
+    if !x.is_finite() {
+        return Err("independent B_λ x=hc/λkT non-finite".into());
+    }
+    let pre = 2.0 * h * c * c / lam5;
+    let b = if x < 1e-5 {
+        // Rayleigh–Jeans in λ: B_λ ≈ 2 c k T / λ⁴
+        2.0 * c * k * t_k / (lam2 * lam2)
+    } else if x > 700.0 {
+        pre * (-x).exp()
+    } else {
+        pre / f64::exp_m1(x)
+    };
+    if !b.is_finite() || b < 0.0 {
+        return Err("independent B_λ non-finite or negative".into());
+    }
+    Ok(b)
+}
+
+fn lerp_cmf(a: &CieSample, b: &CieSample, lambda_nm: f64) -> (f64, f64, f64) {
+    let la = a.lambda_nm as f64;
+    let lb = b.lambda_nm as f64;
+    let t = if (lb - la).abs() < 1e-30 {
+        0.0
+    } else {
+        (lambda_nm - la) / (lb - la)
+    };
+    (
+        a.x_bar + t * (b.x_bar - a.x_bar),
+        a.y_bar + t * (b.y_bar - a.y_bar),
+        a.z_bar + t * (b.z_bar - a.z_bar),
+    )
+}
+
+/// Independent XYZ: trapezoid of `B_λ × CMF` on a refined λ grid (linear CMF between official nodes).
+fn independent_planckian_xyz(
+    samples: &[CieSample],
+    t_k: f64,
+    substeps_per_nm: usize,
+) -> Result<(f64, f64, f64, f64, f64), String> {
+    if samples.len() < 2 || substeps_per_nm == 0 {
+        return Err("need >=2 CIE samples and substeps>0".into());
+    }
+    let mut acc_x = 0.0;
+    let mut acc_y = 0.0;
+    let mut acc_z = 0.0;
+    for i in 0..samples.len() - 1 {
+        let a = &samples[i];
+        let b = &samples[i + 1];
+        let la_nm = a.lambda_nm as f64;
+        let lb_nm = b.lambda_nm as f64;
+        let span_nm = lb_nm - la_nm;
+        if !(span_nm > 0.0) {
+            return Err(format!(
+                "CIE λ not ascending at {}→{}",
+                a.lambda_nm, b.lambda_nm
+            ));
+        }
+        let n = ((span_nm * substeps_per_nm as f64).round() as usize).max(1);
+        let dlam_nm = span_nm / n as f64;
+        let dlam_m = dlam_nm * 1e-9;
+        for j in 0..n {
+            let lam0_nm = la_nm + j as f64 * dlam_nm;
+            let lam1_nm = lam0_nm + dlam_nm;
+            let lam0 = lam0_nm * 1e-9;
+            let lam1 = lam1_nm * 1e-9;
+            let (x0, y0, z0) = lerp_cmf(a, b, lam0_nm);
+            let (x1, y1, z1) = lerp_cmf(a, b, lam1_nm);
+            let b0 = independent_planck_b_lambda(lam0, t_k)?;
+            let b1 = independent_planck_b_lambda(lam1, t_k)?;
+            acc_x += 0.5 * (b0 * x0 + b1 * x1) * dlam_m;
+            acc_y += 0.5 * (b0 * y0 + b1 * y1) * dlam_m;
+            acc_z += 0.5 * (b0 * z0 + b1 * z1) * dlam_m;
+        }
+    }
+    let x = KM_LM_PER_W * acc_x;
+    let y = KM_LM_PER_W * acc_y;
+    let z = KM_LM_PER_W * acc_z;
+    let s = x + y + z;
+    if !(s > 0.0 && s.is_finite()) {
+        return Err(format!(
+            "independent Planckian XYZ sum non-positive at T={t_k}"
+        ));
+    }
+    Ok((x, y, z, x / s, y / s))
+}
+
 fn hermetic_color_checks(
     root: &Path,
     checks: &mut Vec<Check>,
@@ -491,6 +595,49 @@ fn hermetic_color_checks(
             );
         }
     }
+
+    // C2b: independent B_λ×CMF Planckian xy oracle (not production integrate_xyz_from_emission).
+    let temps = [3000.0_f64, 5000.0, 6500.0, 10000.0];
+    let mut max_dxy_prod = 0.0_f64;
+    let mut max_dxy_ref_conv = 0.0_f64;
+    let mut detail_parts = Vec::new();
+    let mut independent_ok = true;
+    for &t in &temps {
+        let (_, _, _, xr, yr) =
+            independent_planckian_xyz(&samples, t, PLANCKIAN_REF_SUBSTEPS_PER_NM)?;
+        let (_, _, _, xf, yf) =
+            independent_planckian_xyz(&samples, t, PLANCKIAN_REF_SUBSTEPS_FINE)?;
+        let dxy_conv = (xr - xf).hypot(yr - yf);
+        max_dxy_ref_conv = max_dxy_ref_conv.max(dxy_conv);
+
+        let prod = integrate_xyz_from_emission(t, 1.0, &samples, IntegrationMeasure::FrequencyNu)?;
+        let (xp, yp) = prod.chromaticity_xy().ok_or("production blackbody xy")?;
+        let dxy = (xp - xr).hypot(yp - yr);
+        max_dxy_prod = max_dxy_prod.max(dxy);
+        detail_parts.push(format!(
+            "T={t}: prod=({xp:.8},{yp:.8}) ref=({xr:.8},{yr:.8}) dxy={dxy:.3e} conv={dxy_conv:.3e}"
+        ));
+    }
+    // Tolerance = max(floor, 10× reference self-convergence). Floor matches ν↔λ envelope.
+    let tol = PLANCKIAN_INDEPENDENT_XY_FLOOR.max(10.0 * max_dxy_ref_conv);
+    // Also require Planckian x decreases with T on the independent reference.
+    let mut xs = Vec::new();
+    for &t in &temps {
+        let (_, _, _, x, _) =
+            independent_planckian_xyz(&samples, t, PLANCKIAN_REF_SUBSTEPS_PER_NM)?;
+        xs.push(x);
+    }
+    let x_decreasing = xs.windows(2).all(|w| w[1] < w[0]);
+    independent_ok = independent_ok && max_dxy_prod < tol && x_decreasing;
+    push(
+        checks,
+        "hermetic_blackbody_planckian_independent_xy",
+        independent_ok,
+        format!(
+            "max_dxy={max_dxy_prod:.3e} tol={tol:.3e} max_ref_conv={max_dxy_ref_conv:.3e} x_decreasing={x_decreasing}; {}",
+            detail_parts.join(" | ")
+        ),
+    );
 
     // Blackbody luminance increases with T at g=1.
     let y3 = integrate_xyz_from_emission(3000.0, 1.0, &samples, IntegrationMeasure::FrequencyNu)?.y;
