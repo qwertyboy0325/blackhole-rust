@@ -376,12 +376,19 @@ fn hermetic_color_checks(checks: &mut Vec<Check>) -> Result<(), Box<dyn std::err
     let m = XyzToRgbMatrix::rec709_d65_linear_v1();
     let rgb = m.apply(xyz_nu)?;
     let back = m.invert_apply(rgb)?;
-    let rt = (back.x - xyz_nu.x).abs() + (back.y - xyz_nu.y).abs() + (back.z - xyz_nu.z).abs();
+    let scale = xyz_nu
+        .x
+        .abs()
+        .max(xyz_nu.y.abs())
+        .max(xyz_nu.z.abs())
+        .max(1.0);
+    let rt_rel =
+        ((back.x - xyz_nu.x).abs() + (back.y - xyz_nu.y).abs() + (back.z - xyz_nu.z).abs()) / scale;
     push(
         checks,
         "hermetic_rgb_matrix_roundtrip",
-        rt < 1e-9,
-        format!("L1={rt} digest={}", m.digest()),
+        rt_rel < 1e-12,
+        format!("rel_L1={rt_rel} digest={}", m.digest()),
     );
 
     // Blackbody luminance increases with T at g=1.
