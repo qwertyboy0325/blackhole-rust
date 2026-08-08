@@ -6,12 +6,12 @@ Gargantua in *Interstellar*, not an exact reconstruction of Double Negative's
 proprietary assets, renderer, grading, camera, or undocumented production
 parameters.
 
-## Status: Gate 2C0 blocked — physics root fix (closure 5225301622)
+## Status: Gate 2C0 authoritative PASS after 5225301622 fix (pending merge)
 
 Gate 0–2B2 and R1/E0 are complete on `main` (Gate 2B2 merge `95c4062`, PR #17).
-Prior Gate 2C0 PASS @ `551f69e` is **invalidated** (Page–Thorne flux
-normalization + oracle). Fix in progress on `gate-2c0-physical-emission`. Gate
-2C1 (CIE/RGB/OpenEXR), GPU, and GUI are not authorized. E1 research remains
+Gate 2C0 physical Page–Thorne emission re-evaluated **PASS** @ `a760427` after
+closure `5225301622` (prior `551f69e` PASS invalidated). Gate 2C1
+(CIE/RGB/OpenEXR), GPU, and GUI are not authorized. E1 research remains
 `PAUSE_RESEARCH_WEDGE`.
 
 ![Gate evolution (diagnostic channels)](docs/media/blackhole-rust-evolution.gif)
