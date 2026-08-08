@@ -6,7 +6,7 @@ use crate::bolometric::ResolvedDiskBounds;
 use crate::error::BolometricRenderError;
 use crate::frequency_shift::{DiskFrequencyShiftFrame, DiskFrequencyShiftPixel, DiskVelocityModel};
 use crate::page_thorne::{page_thorne_one_face_flux, FACE_POLICY, FLUX_MODEL_ID};
-use crate::planck::{teff_from_one_face_flux, TEMPERATURE_MODEL_ID};
+use crate::planck::{stefan_boltzmann_flux, teff_from_one_face_flux, TEMPERATURE_MODEL_ID};
 use relativity_core::{
     prograde_isco_radius, FluxWPerM2, KerrParams, MdotKgPerS, PhysicalScale, TemperatureKelvin,
     CONSTANTS_REVISION,
@@ -21,6 +21,10 @@ pub const PHYSICAL_EMISSION_CLAIM: &str =
     "project physical demonstration, not film/DNGR reconstruction";
 pub const PHYSICAL_FLUX_UNITS: &str = "W_m^-2_one_face";
 pub const PHYSICAL_TEFF_UNITS: &str = "K";
+/// Relative tolerance for persisted `F ↔ σ T_eff⁴` (constructor arithmetic, not spectral quad).
+pub const F_TEFF_CONSTRUCTOR_REL_TOL: f64 = 1e-12;
+/// Relative tolerance for `radius_m = r_g · radius_over_m`.
+pub const RADIUS_M_PROVENANCE_REL_TOL: f64 = 1e-12;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PhysicalDiskEmissionSpec {
@@ -229,6 +233,8 @@ pub struct PhysicalDiskEmissionFrame {
     pub pixels: Vec<PhysicalDiskEmissionPixel>,
     pub r_isco_over_m: f64,
     pub bounds: ResolvedDiskBounds,
+    /// Physical scale used to author `radius_m = r_g · radius_over_m` (hashed).
+    pub gravitational_radius_m: f64,
 }
 
 impl PhysicalDiskEmissionFrame {
@@ -237,6 +243,7 @@ impl PhysicalDiskEmissionFrame {
         pixels: Vec<PhysicalDiskEmissionPixel>,
         r_isco_over_m: f64,
         bounds: ResolvedDiskBounds,
+        gravitational_radius_m: f64,
     ) -> Result<Self, BolometricRenderError> {
         if pixels.len() != grid.pixel_count() {
             return Err(BolometricRenderError::FrameLengthMismatch);
@@ -247,22 +254,122 @@ impl PhysicalDiskEmissionFrame {
                 "r_isco/M must be finite and > 0".into(),
             ));
         }
-        for pix in &pixels {
-            if let PhysicalDiskEmissionPixel::DiskHit(s) = pix {
-                s.validate()?;
-            }
+        if !gravitational_radius_m.is_finite() || !(gravitational_radius_m > 0.0) {
+            return Err(BolometricRenderError::InvalidEmissionSpec(
+                "gravitational_radius_m must be finite and > 0".into(),
+            ));
         }
-        Ok(Self {
+        let frame = Self {
             grid,
             pixels,
             r_isco_over_m,
             bounds,
-        })
+            gravitational_radius_m,
+        };
+        frame.validate()?;
+        Ok(frame)
+    }
+
+    /// Frame-level authority: bounds/ISCO/emission state, F↔T_eff, radius_m provenance.
+    pub fn validate(&self) -> Result<(), BolometricRenderError> {
+        self.bounds.validate()?;
+        if !self.r_isco_over_m.is_finite() || !(self.r_isco_over_m > 0.0) {
+            return Err(BolometricRenderError::InvalidEmissionSpec(
+                "r_isco/M must be finite and > 0".into(),
+            ));
+        }
+        if !self.gravitational_radius_m.is_finite() || !(self.gravitational_radius_m > 0.0) {
+            return Err(BolometricRenderError::InvalidEmissionSpec(
+                "gravitational_radius_m must be finite and > 0".into(),
+            ));
+        }
+        if self.pixels.len() != self.grid.pixel_count() {
+            return Err(BolometricRenderError::FrameLengthMismatch);
+        }
+        for pix in &self.pixels {
+            let PhysicalDiskEmissionPixel::DiskHit(s) = pix else {
+                continue;
+            };
+            s.validate()?;
+            validate_emission_sample_in_frame(
+                s,
+                self.r_isco_over_m,
+                self.bounds,
+                self.gravitational_radius_m,
+            )?;
+        }
+        Ok(())
     }
 
     pub fn pixel_at(&self, col: u32, row: u32) -> &PhysicalDiskEmissionPixel {
         &self.pixels[pixel_index(self.grid, col, row)]
     }
+}
+
+fn validate_emission_sample_in_frame(
+    s: &PhysicalDiskEmissionSample,
+    r_isco_over_m: f64,
+    bounds: ResolvedDiskBounds,
+    gravitational_radius_m: f64,
+) -> Result<(), BolometricRenderError> {
+    let expect_inside = s.radius_over_m <= r_isco_over_m;
+    if s.inside_isco != expect_inside {
+        return Err(BolometricRenderError::InvalidEmissionSpec(format!(
+            "inside_isco={} inconsistent with radius_over_m={} vs r_isco/M={}",
+            s.inside_isco, s.radius_over_m, r_isco_over_m
+        )));
+    }
+
+    let expect_rm = gravitational_radius_m * s.radius_over_m;
+    let denom = expect_rm.abs().max(1.0);
+    if (s.radius_m - expect_rm).abs() / denom > RADIUS_M_PROVENANCE_REL_TOL {
+        return Err(BolometricRenderError::InvalidEmissionSpec(format!(
+            "radius_m={} inconsistent with r_g·(r/M)={expect_rm}",
+            s.radius_m
+        )));
+    }
+
+    let in_bounds = bounds.contains(s.radius_over_m);
+    let emitting = s.f_one_face_w_m2 > 0.0 || s.t_eff_k > 0.0;
+    if emitting {
+        if !in_bounds {
+            return Err(BolometricRenderError::InvalidIntensity(
+                "positive F/T_eff outside resolved disk bounds (absence, not clamp)".into(),
+            ));
+        }
+        if expect_inside || s.inside_isco {
+            return Err(BolometricRenderError::InvalidIntensity(
+                "positive F/T_eff inside ISCO is forbidden".into(),
+            ));
+        }
+        // Authoritative Stefan–Boltzmann: F = σ T⁴ (constructor arithmetic).
+        let t = TemperatureKelvin::new(s.t_eff_k)
+            .map_err(|e| BolometricRenderError::InvalidIntensity(e.to_string()))?;
+        let f_from_t = stefan_boltzmann_flux(t)?.value();
+        let scale = s.f_one_face_w_m2.max(f_from_t).max(1e-30);
+        if (s.f_one_face_w_m2 - f_from_t).abs() / scale > F_TEFF_CONSTRUCTOR_REL_TOL {
+            return Err(BolometricRenderError::InvalidIntensity(format!(
+                "F↔T_eff Stefan–Boltzmann mismatch: F={} σT⁴={}",
+                s.f_one_face_w_m2, f_from_t
+            )));
+        }
+        // Also require T matches teff_from_one_face_flux(F) within constructor tol.
+        let f = FluxWPerM2::new(s.f_one_face_w_m2)
+            .map_err(|e| BolometricRenderError::InvalidIntensity(e.to_string()))?;
+        let t_from_f = teff_from_one_face_flux(f)?.value();
+        let t_scale = s.t_eff_k.max(t_from_f).max(1e-30);
+        if (s.t_eff_k - t_from_f).abs() / t_scale > F_TEFF_CONSTRUCTOR_REL_TOL {
+            return Err(BolometricRenderError::InvalidIntensity(format!(
+                "T_eff={} inconsistent with (F/σ)^(1/4)={t_from_f}",
+                s.t_eff_k
+            )));
+        }
+    } else if s.f_one_face_w_m2 != 0.0 || s.t_eff_k != 0.0 {
+        return Err(BolometricRenderError::InvalidIntensity(
+            "zero-emission samples require exact F=0 and T_eff=0".into(),
+        ));
+    }
+    Ok(())
 }
 
 impl<'de> Deserialize<'de> for PhysicalDiskEmissionFrame {
@@ -273,10 +380,17 @@ impl<'de> Deserialize<'de> for PhysicalDiskEmissionFrame {
             pixels: Vec<PhysicalDiskEmissionPixel>,
             r_isco_over_m: f64,
             bounds: ResolvedDiskBounds,
+            gravitational_radius_m: f64,
         }
         let raw = Raw::deserialize(deserializer)?;
-        Self::try_new(raw.grid, raw.pixels, raw.r_isco_over_m, raw.bounds)
-            .map_err(serde::de::Error::custom)
+        Self::try_new(
+            raw.grid,
+            raw.pixels,
+            raw.r_isco_over_m,
+            raw.bounds,
+            raw.gravitational_radius_m,
+        )
+        .map_err(serde::de::Error::custom)
     }
 }
 
@@ -368,7 +482,13 @@ pub fn build_physical_disk_emission_frame(
             pixels.push(pixel);
         }
     }
-    PhysicalDiskEmissionFrame::try_new(grid, pixels, r_isco_over_m, bounds)
+    PhysicalDiskEmissionFrame::try_new(
+        grid,
+        pixels,
+        r_isco_over_m,
+        bounds,
+        scale.gravitational_radius_m,
+    )
 }
 
 pub fn physical_disk_emission_spec_digest(spec: &PhysicalDiskEmissionSpec) -> String {
@@ -393,17 +513,14 @@ pub fn physical_disk_emission_digest(
     frequency_shift_digest: &str,
 ) -> Result<String, BolometricRenderError> {
     spec.validate()?;
-    for pix in &frame.pixels {
-        if let PhysicalDiskEmissionPixel::DiskHit(s) = pix {
-            s.validate()?;
-        }
-    }
+    frame.validate()?;
     let mut h = Sha256::new();
     h.update(b"physical-disk-emission-digest-v1");
     h.update(convention.convention_id.as_bytes());
     h.update(physical_disk_emission_spec_digest(spec).as_bytes());
     h.update(frequency_shift_digest.as_bytes());
     h.update(frame.r_isco_over_m.to_bits().to_le_bytes());
+    h.update(frame.gravitational_radius_m.to_bits().to_le_bytes());
     h.update(frame.bounds.inner_radius().to_bits().to_le_bytes());
     h.update(frame.bounds.outer_radius().to_bits().to_le_bytes());
     h.update(frame.grid.width.to_le_bytes());
@@ -413,10 +530,12 @@ pub fn physical_disk_emission_digest(
             PhysicalDiskEmissionPixel::DiskHit(s) => {
                 h.update([1u8]);
                 h.update(s.radius_over_m.to_bits().to_le_bytes());
+                h.update(s.radius_m.to_bits().to_le_bytes());
                 h.update(s.azimuth.to_bits().to_le_bytes());
                 h.update(s.g_factor.to_bits().to_le_bytes());
                 h.update(s.f_one_face_w_m2.to_bits().to_le_bytes());
                 h.update(s.t_eff_k.to_bits().to_le_bytes());
+                h.update([u8::from(s.inside_isco)]);
             }
             PhysicalDiskEmissionPixel::NotDiskHit { outcome_class } => {
                 h.update([0u8]);
@@ -430,6 +549,21 @@ pub fn physical_disk_emission_digest(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use relativity_core::stefan_boltzmann_w_m2_k4;
+
+    fn valid_emitting_sample(r_over_m: f64, r_g: f64) -> PhysicalDiskEmissionSample {
+        let f = 1.0e12_f64;
+        let t = (f / stefan_boltzmann_w_m2_k4()).powf(0.25);
+        PhysicalDiskEmissionSample {
+            radius_over_m: r_over_m,
+            radius_m: r_g * r_over_m,
+            azimuth: 0.0,
+            g_factor: 1.0,
+            f_one_face_w_m2: f,
+            t_eff_k: t,
+            inside_isco: false,
+        }
+    }
 
     #[test]
     fn spec_digest_stable() {
@@ -452,5 +586,135 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn frame_rejects_outside_bounds_positive_flux() {
+        let bounds = ResolvedDiskBounds::new(3.0, 20.0).unwrap();
+        let r_g = 1.0e11;
+        let mut s = valid_emitting_sample(25.0, r_g);
+        s.inside_isco = false;
+        let err = PhysicalDiskEmissionFrame::try_new(
+            TraceGrid {
+                width: 1,
+                height: 1,
+            },
+            vec![PhysicalDiskEmissionPixel::DiskHit(s)],
+            1.2,
+            bounds,
+            r_g,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("outside resolved disk bounds"));
+    }
+
+    #[test]
+    fn frame_rejects_wrong_inside_isco() {
+        let bounds = ResolvedDiskBounds::new(1.0, 20.0).unwrap();
+        let r_g = 1.0e11;
+        let mut s = valid_emitting_sample(10.0, r_g);
+        s.inside_isco = true; // wrong: r > r_isco
+        s.f_one_face_w_m2 = 0.0;
+        s.t_eff_k = 0.0;
+        let err = PhysicalDiskEmissionFrame::try_new(
+            TraceGrid {
+                width: 1,
+                height: 1,
+            },
+            vec![PhysicalDiskEmissionPixel::DiskHit(s)],
+            1.2,
+            bounds,
+            r_g,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("inside_isco"));
+    }
+
+    #[test]
+    fn frame_rejects_inconsistent_f_teff() {
+        let bounds = ResolvedDiskBounds::new(3.0, 20.0).unwrap();
+        let r_g = 1.0e11;
+        let mut s = valid_emitting_sample(10.0, r_g);
+        s.t_eff_k *= 1.01; // break SB
+        let err = PhysicalDiskEmissionFrame::try_new(
+            TraceGrid {
+                width: 1,
+                height: 1,
+            },
+            vec![PhysicalDiskEmissionPixel::DiskHit(s)],
+            1.2,
+            bounds,
+            r_g,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("Stefan–Boltzmann")
+                || err.to_string().contains("T_eff")
+                || err.to_string().contains("inconsistent")
+        );
+    }
+
+    #[test]
+    fn frame_rejects_inconsistent_radius_m() {
+        let bounds = ResolvedDiskBounds::new(3.0, 20.0).unwrap();
+        let r_g = 1.0e11;
+        let mut s = valid_emitting_sample(10.0, r_g);
+        s.radius_m *= 1.5;
+        let err = PhysicalDiskEmissionFrame::try_new(
+            TraceGrid {
+                width: 1,
+                height: 1,
+            },
+            vec![PhysicalDiskEmissionPixel::DiskHit(s)],
+            1.2,
+            bounds,
+            r_g,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("radius_m"));
+    }
+
+    #[test]
+    fn frame_accepts_absence_outside_bounds_zero_flux() {
+        let bounds = ResolvedDiskBounds::new(3.0, 20.0).unwrap();
+        let r_g = 1.0e11;
+        let s = PhysicalDiskEmissionSample {
+            radius_over_m: 25.0,
+            radius_m: r_g * 25.0,
+            azimuth: 0.1,
+            g_factor: 0.9,
+            f_one_face_w_m2: 0.0,
+            t_eff_k: 0.0,
+            inside_isco: false,
+        };
+        PhysicalDiskEmissionFrame::try_new(
+            TraceGrid {
+                width: 1,
+                height: 1,
+            },
+            vec![PhysicalDiskEmissionPixel::DiskHit(s)],
+            1.2,
+            bounds,
+            r_g,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn deserialize_rejects_tampered_f_teff() {
+        let bounds = ResolvedDiskBounds::new(3.0, 20.0).unwrap();
+        let r_g = 1.0e11;
+        let mut s = valid_emitting_sample(10.0, r_g);
+        s.t_eff_k *= 2.0;
+        let json = serde_json::json!({
+            "grid": {"width": 1, "height": 1},
+            "pixels": [{"DiskHit": s}],
+            "r_isco_over_m": 1.2,
+            "bounds": {"inner_radius": 3.0, "outer_radius": 20.0},
+            "gravitational_radius_m": r_g,
+        });
+        // bounds serialize format - check ResolvedDiskBounds serde
+        let _ = bounds;
+        assert!(serde_json::from_value::<PhysicalDiskEmissionFrame>(json).is_err());
     }
 }

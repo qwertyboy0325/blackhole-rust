@@ -80,7 +80,35 @@ radiation, Comptonization.
   total); transport `∫I_obs ≈ g⁴ ∫I_em` on the mapped band. Absolute and relative
   maxima are tracked independently (lowest raster index on ties).
 
-## Artifacts (raw authority)
+### Why freeze 256 (not 128 / 512)
+
+Smoke 32² emitter-SB ladder after the Page–Thorne root fix:
+
+| bins | max rel emitter SB | vs prior |
+| ---: | --- | --- |
+| 64 | `1.94e-3` | — |
+| 128 | `4.85e-4` | ~4× |
+| 256 | `1.21e-4` | ~4× |
+| 512 | `3.03e-5` | ~4× |
+
+Gate acceptance uses frozen emitter-SB rel tol `5e-4`. **128** clears that
+ceiling on smoke but leaves little headroom once gate 128² geometry and
+g-mapping broaden the worst pixel; **256** sits ~4× under the tol with the same
+~4×/doubling convergence and keeps the gate `I_ν` cube at ~32 MiB (128²×256).
+**512** halves error again but doubles spectral memory/cost without changing the
+physical claim (`PT + Planck + g³` on a frozen Hz band). Freeze at 256 as the
+coarsest grid that clears the calibrated gate envelope with documented margin;
+explore ladders remain non-authoritative.
+
+## Emission-frame authority
+
+`PhysicalDiskEmissionFrame` fails closed on `try_new` / deserialize / digest:
+
+- `inside_isco` ↔ `radius_over_m <= r_isco/M`;
+- positive `F`/`T_eff` only inside resolved bounds and strictly outside ISCO;
+- absence = zero `F`/`T` (no clamp);
+- `radius_m = gravitational_radius_m · radius_over_m` (scale hashed);
+- emitting samples obey constructor `F = σ T_eff⁴` within `1e-12` rel.
 
 | File | Role |
 | --- | --- |
@@ -108,6 +136,5 @@ cargo run --release -p xtask -- evaluate --scope gate-2c0-physical-emission
 
 - Diagnostic scene `r_inner` may differ from true ISCO; emission requires
   `r > r_isco` inside the resolved annulus.
-- Physical grid bin count is exploratory pending ladder freeze.
 - No celestial-background physical radiometry; non-disk = absence.
 - No CIE/OpenEXR in this gate.

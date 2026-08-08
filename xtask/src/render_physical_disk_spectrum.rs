@@ -222,6 +222,7 @@ fn write_emission_meta(
         "width": frame.grid.width,
         "height": frame.grid.height,
         "r_isco_over_m": frame.r_isco_over_m,
+        "gravitational_radius_m": frame.gravitational_radius_m,
         "bounds_inner": frame.bounds.inner_radius(),
         "bounds_outer": frame.bounds.outer_radius(),
         "frequency_shift_digest": freq,
