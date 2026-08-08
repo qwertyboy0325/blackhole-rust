@@ -3,7 +3,8 @@
 ## Current gate
 
 Gate 0, 1A, 1B0–1B2, Gate 2A0–2A2, Gate 2B0, Gate 2B1, Gate 2B2, Gate 2C0,
-and Gate 2C1 are complete on `main` (Gate 2C1 merged via PR #19 @ `c964c74`).
+Gate 2C1, and Gate 2D0 are complete on `main` (Gate 2D0 merged via PR #20 @
+`b832e47`).
 R1/E0 is complete.
 E1 physics-aware adaptive quadtree sampling is merged (PR #15).
 E1 execution-performance restructuring: authoritative evaluate PASS after
@@ -26,9 +27,17 @@ after owner closures `5225581548` (C1–C4) + `5225636038` (C2b); merged to
 
 **Gate 2D0** cinematic presentation: authoritative evaluate **PASS** @
 `beb4efd` after D0-C1 independent sRGB OETF oracle closure
-(`presentation_frame_digest` `f8e10323…` unchanged); pending owner merge
-review. Do not begin Gate 2D1/2D2/2D3, E2 ray differentials, E3 ray bundles,
-GPU, wgpu, egui or GUI work.
+(`presentation_frame_digest` `f8e10323…` unchanged); merged to `main` via
+PR #20 @ `b832e47`.
+
+**Gate 2D1** production scene appearance: authoritative evaluate **PASS** @
+`345c560` (eval content `c146210d…`) after D1-V1 visual-semantic closure;
+D1-B + E1-B + S2 with A1–A6; identity `presentation_frame_digest`
+`f8e10323…` exact; scene beauty `68b55544…` unchanged. D1-V1 confirms
+DiskHit ≈75% occlusion geometry (not sky domain error). Pending owner final
+PR #21 review — **do not merge** without owner authorization. Do not begin
+Gate 2D2/2D3, E2 ray differentials, E3 ray bundles, GPU, wgpu, egui or GUI
+work.
 
 When a gate or research package produces new reviewable image artifacts,
 regenerate `docs/media/blackhole-rust-evolution.gif` and keep it embedded in

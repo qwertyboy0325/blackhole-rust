@@ -1,0 +1,66 @@
+# Gate 2D1 scene appearance — PHYSICALLY_MOTIVATED_APPEARANCE + ARTISTIC_ENVIRONMENT.
+# Not scientific authority. Not a real Milky Way reconstruction.
+schema_version = 1
+model_id = "scene-appearance-v1"
+description = "Gate 2D1 production scene appearance for gargantua-physical-v1"
+
+[disk]
+model_id = "spiral-harmonic-flux-modulation-v1"
+radial_envelope_id = "raised-cosine-radial-envelope-v1"
+mean_preservation_claim = "ANNULAR_APPEARANCE_MEAN_PRESERVING"
+a_max = 0.30
+r_ref_over_m = 6.0
+identity_modulation = false
+
+[[disk.modes]]
+m = 2
+weight = 0.55
+k_log = 0.8
+phase = 0.0
+
+[[disk.modes]]
+m = 3
+weight = 0.30
+k_log = 1.1
+phase = 0.7
+
+[[disk.modes]]
+m = 5
+weight = 0.15
+k_log = 1.6
+phase = 1.9
+
+[environment]
+model_id = "procedural-hdr-direction-domain-v1"
+sky_floor = 0.004
+identity_black = false
+
+[environment.rotation]
+w = 1.0
+x = 0.0
+y = 0.0
+z = 0.0
+
+[environment.milky_way]
+label = "MILKY_WAY_LIKE_PROCEDURAL_APPEARANCE"
+pole = [0.0, 0.20791169081775934, 0.9781476007338057]
+band_sigma_rad = 0.22
+band_peak = 0.045
+core_sigma_rad = 0.07
+core_peak = 0.07
+dust_sigma_rad = 0.045
+dust_depth = 0.40
+longitude_modulation_amp = 0.30
+longitude_harmonics = 2
+
+[environment.stars]
+profile_id = "angular-gaussian-v1"
+algorithm_id = "splitmix64-v1"
+seed = 758293441
+count = 256
+# A1: fixed angular sigma (~0.86°); not pixel-relative.
+angular_sigma_rad = 0.015
+peak_scale = 1.2
+band_bias = 0.60
+t_min_k = 3500.0
+t_max_k = 12000.0

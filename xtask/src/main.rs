@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 mod build_meta;
 mod corpus_report;
+mod d1_v1_visual_semantic;
 mod diagnostic_scene;
 mod e1_adaptive_sampling;
 mod evaluate;
@@ -23,6 +24,7 @@ mod evaluate_gate2b2_spectral_transport;
 mod evaluate_gate2c0_physical_emission;
 mod evaluate_gate2c1_colorimetry;
 mod evaluate_gate2d0_presentation;
+mod evaluate_gate2d1_scene_appearance;
 mod evaluate_r1_e0_oracle_corpus;
 mod inspect;
 mod integrate_ray;
@@ -34,6 +36,7 @@ mod render_lensed_celestial;
 mod render_physical_color;
 mod render_physical_disk_spectrum;
 mod render_presentation;
+mod render_scene_appearance;
 mod render_tier;
 mod spike_dop853;
 mod trace_outcome_map;
@@ -307,6 +310,35 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         require_release: bool,
     },
+    /// Gate 2D1: scene appearance (disk + celestial environment) → RGB16 beauty.
+    RenderSceneAppearance {
+        #[arg(long)]
+        preset: String,
+        #[arg(long)]
+        appearance: String,
+        #[arg(long)]
+        presentation: String,
+        #[arg(long, value_enum)]
+        tier: Option<render_tier::DiagnosticRenderTier>,
+        #[arg(long)]
+        width: Option<u32>,
+        #[arg(long)]
+        height: Option<u32>,
+        #[arg(long)]
+        output_dir: String,
+        #[arg(long, value_enum, default_value_t = ExecutionArg::Serial)]
+        execution: ExecutionArg,
+        #[arg(long)]
+        threads: Option<usize>,
+        #[arg(long, default_value_t = false)]
+        require_release: bool,
+        #[arg(long, default_value_t = true)]
+        write_env_reference: bool,
+        #[arg(long, default_value_t = false)]
+        no_env_reference: bool,
+        #[arg(long, default_value_t = false)]
+        visual_semantic_diagnostics: bool,
+    },
     /// Emit canonical Gate 1B1 corpus JSON (numerical records; for determinism).
     CorpusReport {
         #[arg(long)]
@@ -409,6 +441,8 @@ fn main() {
                 evaluate_gate2c1_colorimetry::evaluate()
             } else if scope == "gate-2d0-presentation" {
                 evaluate_gate2d0_presentation::evaluate()
+            } else if scope == "gate-2d1-scene-appearance" {
+                evaluate_gate2d1_scene_appearance::evaluate()
             } else if scope == "r1-e0-oracle-corpus" {
                 evaluate_r1_e0_oracle_corpus::evaluate()
             } else if scope == "e1-adaptive-sampling" {
@@ -657,6 +691,40 @@ fn main() {
                 require_release,
                 exec,
                 threads,
+            )
+        }
+        Commands::RenderSceneAppearance {
+            preset,
+            appearance,
+            presentation,
+            tier,
+            width,
+            height,
+            output_dir,
+            execution,
+            threads,
+            require_release,
+            write_env_reference,
+            no_env_reference,
+            visual_semantic_diagnostics,
+        } => {
+            let exec = match execution {
+                ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
+                ExecutionArg::Parallel => trace_outcome_map::CliExecution::Parallel,
+            };
+            render_scene_appearance::run(
+                &preset,
+                &appearance,
+                &presentation,
+                tier,
+                width,
+                height,
+                &output_dir,
+                require_release,
+                exec,
+                threads,
+                write_env_reference && !no_env_reference,
+                visual_semantic_diagnostics,
             )
         }
         Commands::CorpusReport { scope } => {

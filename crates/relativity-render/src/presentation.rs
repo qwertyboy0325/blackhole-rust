@@ -360,22 +360,32 @@ pub fn authored_rgb16_bytes(pixels: &[DisplayEncodedRgb16]) -> Vec<u8> {
     out
 }
 
-/// Apply the full presentation pipeline to a scientific color frame (immutable consume).
-pub fn present_physical_color_frame(
-    frame: &PhysicalColorFrame,
-    spec: &PresentationSpec,
-) -> Result<PresentationFrame, PresentationError> {
-    spec.validate()?;
-    let exposure = spec.exposure()?;
-    let tone_op = spec.tone_operator()?;
-    let gamut_op = spec.gamut_operator()?;
-    let spec_digest = presentation_spec_digest(spec)?;
-    let source_digest = physical_color_digest(frame).map_err(|e| {
-        PresentationError::NonFiniteSourceColor(format!("source digest failed: {e}"))
-    })?;
+/// Post-exposure pixel feed for the shared Gate 2D0 display tail (A4).
+///
+/// `Black` encodes as `DisplayEncodedRgb16::BLACK` without gamut/tone (matches
+/// Gate 2D0 `PhysicalColorPixel::Absent`). `ExposedLinear` must already include
+/// Gate 2D0 A1 exposure / Gate 2D1 S2 EV scaling — never re-apply absolute→0.18.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ExposedLinearPixel {
+    Black,
+    ExposedLinear { rgb: LinearRgb, count_as_lit: bool },
+}
 
-    let n = frame.pixels.len();
-    if n != frame.grid.pixel_count() {
+/// Shared post-exposure presentation primitive (A4):
+/// `exposed linear → gamut → tone → sRGB OETF → RGB16`.
+pub fn present_exposed_linear_rgb(
+    width: u32,
+    height: u32,
+    pixels: &[ExposedLinearPixel],
+    gamut_op: GamutMapOperator,
+    tone_op: ToneMapOperator,
+    source_digest: &str,
+    presentation_spec_digest: &str,
+) -> Result<PresentationFrame, PresentationError> {
+    let n = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or(PresentationError::FrameLengthMismatch)?;
+    if pixels.len() != n {
         return Err(PresentationError::FrameLengthMismatch);
     }
 
@@ -396,13 +406,16 @@ pub fn present_physical_color_frame(
     let mut final_code_min = u16::MAX;
     let mut final_code_max = 0u16;
 
-    for (i, pixel) in frame.pixels.iter().enumerate() {
-        let encoded = match pixel {
-            PhysicalColorPixel::Absent { .. } => DisplayEncodedRgb16::BLACK,
-            PhysicalColorPixel::DiskHit(hit) => {
-                source_disk_hit_count += 1;
-                let abs = LinearRgb::new(hit.rgb.r, hit.rgb.g, hit.rgb.b)?;
-                let exposed = apply_exposure(abs, &exposure)?;
+    for (i, pixel) in pixels.iter().enumerate() {
+        let encoded = match *pixel {
+            ExposedLinearPixel::Black => DisplayEncodedRgb16::BLACK,
+            ExposedLinearPixel::ExposedLinear {
+                rgb: exposed,
+                count_as_lit,
+            } => {
+                if count_as_lit {
+                    source_disk_hit_count += 1;
+                }
                 let neg_n = exposed.negative_component_count();
                 if neg_n > 0 {
                     negative_component_count_before_gamut += u64::from(neg_n);
@@ -467,19 +480,19 @@ pub fn present_physical_color_frame(
     };
 
     let frame_digest = presentation_frame_digest(
-        &source_digest,
-        &spec_digest,
-        frame.grid.width,
-        frame.grid.height,
+        source_digest,
+        presentation_spec_digest,
+        width,
+        height,
         &out_pixels,
     );
 
     Ok(PresentationFrame {
-        width: frame.grid.width,
-        height: frame.grid.height,
+        width,
+        height,
         pixels: out_pixels,
-        source_physical_color_digest: source_digest,
-        presentation_spec_digest: spec_digest,
+        source_physical_color_digest: source_digest.to_string(),
+        presentation_spec_digest: presentation_spec_digest.to_string(),
         presentation_frame_digest: frame_digest,
         metrics: PresentationMetrics {
             pixel_count: n as u64,
@@ -500,6 +513,51 @@ pub fn present_physical_color_frame(
             final_code_max,
         },
     })
+}
+
+/// Apply the full presentation pipeline to a scientific color frame (immutable consume).
+pub fn present_physical_color_frame(
+    frame: &PhysicalColorFrame,
+    spec: &PresentationSpec,
+) -> Result<PresentationFrame, PresentationError> {
+    spec.validate()?;
+    let exposure = spec.exposure()?;
+    let tone_op = spec.tone_operator()?;
+    let gamut_op = spec.gamut_operator()?;
+    let spec_digest = presentation_spec_digest(spec)?;
+    let source_digest = physical_color_digest(frame).map_err(|e| {
+        PresentationError::NonFiniteSourceColor(format!("source digest failed: {e}"))
+    })?;
+
+    let n = frame.pixels.len();
+    if n != frame.grid.pixel_count() {
+        return Err(PresentationError::FrameLengthMismatch);
+    }
+
+    let mut exposed = Vec::with_capacity(n);
+    for pixel in &frame.pixels {
+        match pixel {
+            PhysicalColorPixel::Absent { .. } => exposed.push(ExposedLinearPixel::Black),
+            PhysicalColorPixel::DiskHit(hit) => {
+                let abs = LinearRgb::new(hit.rgb.r, hit.rgb.g, hit.rgb.b)?;
+                let rgb = apply_exposure(abs, &exposure)?;
+                exposed.push(ExposedLinearPixel::ExposedLinear {
+                    rgb,
+                    count_as_lit: true,
+                });
+            }
+        }
+    }
+
+    present_exposed_linear_rgb(
+        frame.grid.width,
+        frame.grid.height,
+        &exposed,
+        gamut_op,
+        tone_op,
+        &source_digest,
+        &spec_digest,
+    )
 }
 
 /// Fixed Gate 2D0 PNG metadata constants (A3/A4).

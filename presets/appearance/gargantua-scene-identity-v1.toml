@@ -1,0 +1,52 @@
+# Gate 2D1 identity differential — m=1 disk + black environment (A5).
+schema_version = 1
+model_id = "scene-appearance-v1"
+description = "Identity scene for Gate 2D0 RGB16 / presentation_frame_digest regression"
+
+[disk]
+model_id = "spiral-harmonic-flux-modulation-v1"
+radial_envelope_id = "raised-cosine-radial-envelope-v1"
+mean_preservation_claim = "ANNULAR_APPEARANCE_MEAN_PRESERVING"
+a_max = 0.0
+r_ref_over_m = 6.0
+identity_modulation = true
+
+[[disk.modes]]
+m = 2
+weight = 1.0
+k_log = 0.0
+phase = 0.0
+
+[environment]
+model_id = "procedural-hdr-direction-domain-v1"
+sky_floor = 0.0
+identity_black = true
+
+[environment.rotation]
+w = 1.0
+x = 0.0
+y = 0.0
+z = 0.0
+
+[environment.milky_way]
+label = "MILKY_WAY_LIKE_PROCEDURAL_APPEARANCE"
+pole = [0.0, 0.0, 1.0]
+band_sigma_rad = 0.25
+band_peak = 0.0
+core_sigma_rad = 0.08
+core_peak = 0.0
+dust_sigma_rad = 0.05
+dust_depth = 0.0
+longitude_modulation_amp = 0.0
+longitude_harmonics = 1
+
+[environment.stars]
+profile_id = "angular-gaussian-v1"
+algorithm_id = "splitmix64-v1"
+seed = 0
+count = 0
+angular_sigma_rad = 0.015
+peak_scale = 0.0
+band_bias = 0.0
+t_min_k = 3500.0
+t_max_k = 12000.0
