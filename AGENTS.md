@@ -16,10 +16,10 @@ E1 is experimental:
 - research recommendation remains `PAUSE_RESEARCH_WEDGE` until owner authorizes estimator iteration.
 
 Gate 2B2 spectral transport authoritative evaluate **PASS** on
-`aa28e7d555d6fb0f38d64bf2d5a6d1a6bef449d4` after owner closure `5203577417`
-(branch `gate-2b2-spectral-transport`). Pending owner merge — do not merge until
-accepted. Do not begin E2 ray differentials, E3 ray bundles, physical RGB,
-OpenEXR, GPU, wgpu, egui or GUI work.
+`3499d8e51535bf809967c975bfccc7c6fbd45dfc` after owner closures `5203577417` and
+`5224835191` (branch `gate-2b2-spectral-transport`). Pending owner merge — do
+not merge until accepted. Do not begin E2 ray differentials, E3 ray bundles,
+physical RGB, OpenEXR, GPU, wgpu, egui or GUI work.
 
 When a gate or research package produces new reviewable image artifacts,
 regenerate `docs/media/blackhole-rust-evolution.gif` and keep it embedded in
