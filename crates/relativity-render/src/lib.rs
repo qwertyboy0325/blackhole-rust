@@ -6,6 +6,7 @@
 //! Gate 2B0: disk-hit frequency-shift kinematics (`g = ν_obs/ν_em`). Not emission.
 //! Gate 2B1: diagnostic bolometric emission and `g⁴` transport. Not spectra/RGB.
 //! Gate 2B2: diagnostic spectral `I_ν` transport (`g³`). Not physical RGB/OpenEXR.
+//! Gate 2C0: physical Page–Thorne thin-disk emission, `T_eff`, Planck `B_ν`, SI Hz `g³`.
 
 #![forbid(unsafe_code)]
 
@@ -13,6 +14,10 @@ pub mod bolometric;
 pub mod error;
 pub mod frequency_shift;
 pub mod lensed;
+pub mod page_thorne;
+pub mod physical_disk;
+pub mod physical_spectral;
+pub mod planck;
 pub mod spectral;
 pub mod texture;
 
@@ -48,6 +53,31 @@ pub use lensed::{
     render_lensed_celestial, validate_mode_surface_set, verify_lensed_celestial_frame,
     LensedCelestialFrame, LensedCelestialMode, OutcomeColorCounts, AFFINE_LIMIT_RGB, FAILED_RGB,
     HORIZON_RGB, OPAQUE_DISK_MASK_RGB,
+};
+pub use page_thorne::{
+    newtonian_zero_torque_flux, page_thorne_one_face_flux, page_thorne_one_face_flux_numerical,
+    page_thorne_q, page_thorne_q_numerical, PageThorneRoots, ThinDiskFluxModel, FACE_POLICY,
+    FLUX_MODEL_ID, NEWTONIAN_ORACLE_ID,
+};
+pub use physical_disk::{
+    build_physical_disk_emission_frame, physical_disk_emission_digest,
+    physical_disk_emission_spec_digest, sample_physical_disk_emission,
+    validate_physical_emission_provenance, PhysicalDiskEmissionConvention,
+    PhysicalDiskEmissionFrame, PhysicalDiskEmissionPixel, PhysicalDiskEmissionSample,
+    PhysicalDiskEmissionSpec, PHYSICAL_DISK_EMISSION_CONVENTION_ID, PHYSICAL_EMISSION_CLAIM,
+    PHYSICAL_EMISSION_MODEL_ID, PHYSICAL_FLUX_UNITS, PHYSICAL_TEFF_UNITS,
+};
+pub use physical_spectral::{
+    build_physical_spectral_frame, compute_physical_spectral_closure,
+    independent_physical_i_nu_obs, parse_physical_spectral_grid_id, physical_spectral_digest,
+    physical_spectral_grid_digest, physical_spectral_grid_explore, PhysicalSpectralClosureMetrics,
+    PhysicalSpectralConvention, PhysicalSpectralDiskSample, PhysicalSpectralFrame,
+    PhysicalSpectralPixel, PHYSICAL_GRID_EXPLORE_PREFIX, PHYSICAL_GRID_NU_MAX_HZ,
+    PHYSICAL_GRID_NU_MIN_HZ, PHYSICAL_SPECTRAL_CONVENTION_ID, PHYSICAL_SPECTRAL_UNITS,
+};
+pub use planck::{
+    integrate_pi_b_nu_log_grid, planck_b_lambda_from_b_nu, planck_b_nu, stefan_boltzmann_flux,
+    teff_from_one_face_flux, PLANCK_MODEL_ID, TEMPERATURE_MODEL_ID,
 };
 pub use spectral::{
     build_disk_spectral_frame, compute_bolometric_closure, continuum_mass_on_interval,

@@ -59,8 +59,24 @@ a reuse license. Access checked 2026-08-03.
   (`I_ν/ν³`, `I_ν,obs = g³ I_ν,em(ν_obs/g)`, bolometric `g⁴`); arXiv access only.
 - **[Rybicki1979]** G. B. Rybicki and A. P. Lightman, *Radiative Processes in
   Astrophysics*, Wiley, 1979. Standard radiometric identities including
-  `I_λ = I_ν |dν/dλ| = I_ν c/λ²` (wavelength Jacobian); book copyright, access
-  only — cited for conversion identities, not copied.
+  `I_λ = I_ν |dν/dλ| = I_ν c/λ²` (wavelength Jacobian) and Planck/Stefan–Boltzmann
+  closures (`π ∫ B_ν dν = σ T⁴` for isotropic Lambert emitters); book copyright,
+  access only — cited for conversion identities, not copied.
+- **[PageThorne1974]** D. N. Page and K. S. Thorne, “Disk-Accretion onto a Black
+  Hole. Time-Averaged Structure of Accretion Disk,” *Astrophysical Journal* 191,
+  499–506. [DOI](https://doi.org/10.1086/152990). Algebraic one-face thin-disk
+  flux `F(r)` with zero torque at ISCO; publisher copyright, access only.
+  Re-derived in-tree — **no GPL GRRT code copied**.
+- **[NovikovThorne1973]** I. D. Novikov and K. S. Thorne, “Astrophysics of black
+  holes,” in *Black Holes (Les Astres Occlus)*, pp. 343–450. Notation and
+  thin-disk review companion to Page–Thorne 1974; bibliographic access only.
+- **[CODATA2018]** E. Tiesinga et al., CODATA recommended values of the
+  fundamental constants (2018). `G`, and SI context for exact `h`, `c`, `k_B`
+  (2019 SI). [NIST](https://physics.nist.gov/cuu/Constants/). Public domain /
+  USGov access.
+- **[IAU2015B3]** IAU 2015 Resolution B3: nominal solar and planetary mass
+  parameters (`GM_☉ⁿ`). [IAU resolutions](https://www.iau.org/static/resolutions/IAU2015_English.pdf).
+  Access only; used for `mass_solar → kg` via `GM_☉ⁿ/G`.
 - **[RAPTOR2018]** T. Bronzwaer et al., “RAPTOR I: Time-dependent radiative
   transfer in arbitrary spacetimes,” *Astronomy & Astrophysics* 613, A2.
   [DOI](https://doi.org/10.1051/0004-6361/201732149). Coordinate-independent

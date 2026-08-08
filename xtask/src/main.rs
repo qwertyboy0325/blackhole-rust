@@ -20,6 +20,7 @@ mod evaluate_gate2a2_lensed_celestial;
 mod evaluate_gate2b0_frequency_shift;
 mod evaluate_gate2b1_bolometric_radiance;
 mod evaluate_gate2b2_spectral_transport;
+mod evaluate_gate2c0_physical_emission;
 mod evaluate_r1_e0_oracle_corpus;
 mod inspect;
 mod integrate_ray;
@@ -28,6 +29,7 @@ mod preset;
 mod reference_pipeline;
 mod render_disk_spectrum;
 mod render_lensed_celestial;
+mod render_physical_disk_spectrum;
 mod render_tier;
 mod spike_dop853;
 mod trace_outcome_map;
@@ -231,6 +233,29 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         require_release: bool,
     },
+    /// Gate 2C0: physical Page–Thorne thin-disk emission + Planck I_ν (g³).
+    RenderPhysicalDiskSpectrum {
+        #[arg(long)]
+        preset: String,
+        #[arg(long, value_enum)]
+        tier: Option<render_tier::DiagnosticRenderTier>,
+        #[arg(long)]
+        width: Option<u32>,
+        #[arg(long)]
+        height: Option<u32>,
+        #[arg(long, default_value = "page-thorne-blackbody-v1")]
+        physical_emission: String,
+        #[arg(long, default_value = "physical-spectral-grid-explore-256")]
+        physical_spectral_grid: String,
+        #[arg(long)]
+        output_dir: String,
+        #[arg(long, value_enum, default_value_t = ExecutionArg::Serial)]
+        execution: ExecutionArg,
+        #[arg(long)]
+        threads: Option<usize>,
+        #[arg(long, default_value_t = false)]
+        require_release: bool,
+    },
     /// Emit canonical Gate 1B1 corpus JSON (numerical records; for determinism).
     CorpusReport {
         #[arg(long)]
@@ -327,6 +352,8 @@ fn main() {
                 evaluate_gate2b1_bolometric_radiance::evaluate()
             } else if scope == "gate-2b2-spectral-transport" {
                 evaluate_gate2b2_spectral_transport::evaluate()
+            } else if scope == "gate-2c0-physical-emission" {
+                evaluate_gate2c0_physical_emission::evaluate()
             } else if scope == "r1-e0-oracle-corpus" {
                 evaluate_r1_e0_oracle_corpus::evaluate()
             } else if scope == "e1-adaptive-sampling" {
@@ -484,6 +511,35 @@ fn main() {
                 height,
                 &spectrum,
                 &spectral_grid,
+                &output_dir,
+                require_release,
+                exec,
+                threads,
+            )
+        }
+        Commands::RenderPhysicalDiskSpectrum {
+            preset,
+            tier,
+            width,
+            height,
+            physical_emission,
+            physical_spectral_grid,
+            output_dir,
+            execution,
+            threads,
+            require_release,
+        } => {
+            let exec = match execution {
+                ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
+                ExecutionArg::Parallel => trace_outcome_map::CliExecution::Parallel,
+            };
+            render_physical_disk_spectrum::run(
+                &preset,
+                tier,
+                width,
+                height,
+                &physical_emission,
+                &physical_spectral_grid,
                 &output_dir,
                 require_release,
                 exec,

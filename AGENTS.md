@@ -2,7 +2,8 @@
 
 ## Current gate
 
-Gate 0, 1A, 1B0–1B2, Gate 2A0–2A2, Gate 2B0, and Gate 2B1 are complete.
+Gate 0, 1A, 1B0–1B2, Gate 2A0–2A2, Gate 2B0, Gate 2B1, and Gate 2B2 are complete
+(Gate 2B2 merged to `main` via PR #17 @ `95c4062`).
 R1/E0 is complete.
 E1 physics-aware adaptive quadtree sampling is merged (PR #15).
 E1 execution-performance restructuring: authoritative evaluate PASS after
@@ -15,11 +16,11 @@ E1 is experimental:
 - do not require permanent schema governance for prototype internals.
 - research recommendation remains `PAUSE_RESEARCH_WEDGE` until owner authorizes estimator iteration.
 
-Gate 2B2 spectral transport authoritative evaluate **PASS** on
-`3499d8e51535bf809967c975bfccc7c6fbd45dfc` after owner closures `5203577417` and
-`5224835191` (branch `gate-2b2-spectral-transport`). Pending owner merge — do
-not merge until accepted. Do not begin E2 ray differentials, E3 ray bundles,
-physical RGB, OpenEXR, GPU, wgpu, egui or GUI work.
+**Active implementation: Gate 2C0** physical thin-disk emission (Page–Thorne,
+`T_eff`, Planck `B_ν`, physical Hz `g³`, raw f64 artifacts) on branch
+`gate-2c0-physical-emission`. Gate 2C1 (CIE XYZ / scene-linear RGB / OpenEXR)
+is deferred until 2C0 is accepted. Do not begin E2 ray differentials, E3 ray
+bundles, GPU, wgpu, egui or GUI work.
 
 When a gate or research package produces new reviewable image artifacts,
 regenerate `docs/media/blackhole-rust-evolution.gif` and keep it embedded in

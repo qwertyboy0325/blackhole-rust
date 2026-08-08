@@ -115,4 +115,5 @@ No temperature/Planck, physical RGB, OpenEXR, CIE, GPU, E2/E3.
 
 ## Owner stop
 
-Awaiting final merge decision on PR #17. Do not start RGB / OpenEXR / E2.
+Merged to `main` via PR #17 (`95c4062`). Gate 2C0 physical emission is the
+next slice; CIE/RGB/OpenEXR remain Gate 2C1. Do not start E2/E3/GPU/GUI.

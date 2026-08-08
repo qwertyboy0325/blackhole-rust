@@ -140,6 +140,17 @@ The baseline emission is a labeled diagnostic profile, not a Novikov-Thorne or
 GRMHD claim. The published *Interstellar* disk was art-directed and intentionally
 anemic [James2015]. Gate 0 does not infer its unavailable textures or parameters.
 
+Gate 2C0 adds an **optional physical** emission path (separate frames and
+digests; does not mutate diagnostic 2B1/2B2 authorities):
+
+- one-face Page–Thorne zero-torque flux `F(r)` at prograde ISCO [PageThorne1974];
+- `T_eff = (F/σ_SB)^{1/4}` and isotropic Planck `I_ν,em = B_ν(T_eff)` with the
+  mandatory Lambert identity `π ∫ B_ν dν = σ T⁴ = F` [Rybicki1979];
+- physical SI Hz grids and `g³` transport into `PhysicalSpectralFrame`.
+
+See `docs/physical-disk-emission-v1.md`. Physical `M` and `Ṁ` are project
+demonstration knobs (IAU/CODATA pinned), not film reconstruction.
+
 ## Frequency shift and radiance
 
 For future-directed photon momentum `k` and observer/emitter velocities, the
@@ -159,8 +170,10 @@ I_obs,bolometric = g^4 I_em,bolometric.
 This combines gravitational and kinematic Doppler shifts. Beaming is not an
 independent arbitrary multiplier. Gate 2B2 realizes the spectral `g³` law on a
 diagnostic continuum scaled from Gate 2B1 bolometric intensity; see
-`docs/diagnostic-spectral-emission-v1.md`. Absorption, scattering, polarization,
-plasma dispersion, and time-dependent transfer remain deferred.
+`docs/diagnostic-spectral-emission-v1.md`. Gate 2C0 reuses the same `g³` law on
+physical Planck `I_ν` in Hz (`docs/physical-disk-emission-v1.md`). Absorption,
+scattering, polarization, plasma dispersion, and time-dependent transfer remain
+deferred.
 
 Wavelength densities require the Jacobian [Rybicki1979]:
 

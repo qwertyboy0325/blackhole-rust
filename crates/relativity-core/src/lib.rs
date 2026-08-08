@@ -11,9 +11,12 @@ pub mod corpus;
 pub mod error;
 pub mod frequency;
 pub mod hamiltonian;
+pub mod isco;
 pub mod kerr;
 pub mod metric;
 pub mod observer;
+pub mod physical_constants;
+pub mod physical_units;
 pub mod radius;
 pub mod ray_init;
 pub mod spectral;
@@ -37,6 +40,7 @@ pub use frequency::{
     measured_frequency_from_future_covector, FrequencyShift, MeasuredFrequency,
 };
 pub use hamiltonian::{evaluate_hamiltonian, HamiltonianEval};
+pub use isco::prograde_isco_radius;
 pub use kerr::KerrParams;
 pub use metric::{
     evaluate_kerr_schild, inverse_metric_spatial_derivatives, lower_vector, matrix_inverse_oracle,
@@ -44,6 +48,15 @@ pub use metric::{
     MinkowskiMetric, SpatialDerivativeIndex,
 };
 pub use observer::{check_tetrad, minkowski_static_observer, zamo_observer, Observer, Tetrad};
+pub use physical_constants::{
+    mass_kg_from_solar_masses, solar_mass_kg, stefan_boltzmann_w_m2_k4, BOLTZMANN_K_J_K,
+    CONSTANTS_REVISION, GM_SUN_NOMINAL_M3_S2, GRAVITATIONAL_G_M3_KG_S2, PLANCK_H_J_S,
+    SPEED_OF_LIGHT_M_S,
+};
+pub use physical_units::{
+    FluxWPerM2, MassKg, MdotKgPerS, PhysicalFrequencyHz, PhysicalScale, SpecificIntensityNu,
+    TemperatureKelvin,
+};
 pub use radius::{evaluate_oblate_radius, OblateRadius};
 pub use ray_init::{initialize_rectilinear_ray, CameraParams, InitialRay, SensorCoord};
 pub use spectral::{

@@ -34,6 +34,9 @@ pub struct Preset {
     pub diagnostic_render: DiagnosticRender,
     pub artifacts: Artifacts,
     pub gpu: Gpu,
+    /// Gate 2C0 physical radiometry knobs (absent on diagnostic presets).
+    #[serde(default)]
+    pub physical: Option<PhysicalSection>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -144,6 +147,19 @@ pub struct Artifacts {
 pub struct Gpu {
     pub enabled: bool,
     pub status: String,
+}
+
+/// Gate 2C0 physical scale / accretion / emission provenance.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PhysicalSection {
+    pub mass_solar: f64,
+    pub mdot_kg_s: f64,
+    pub mass_claim: String,
+    pub flux_model: String,
+    pub temperature_model: String,
+    pub emission_model: String,
+    pub emission_claim: String,
 }
 
 pub fn load_preset(path: &Path) -> Result<Preset, PresetError> {
