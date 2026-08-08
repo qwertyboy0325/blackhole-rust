@@ -5,7 +5,7 @@
 
 #![allow(dead_code)]
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
 
@@ -73,7 +73,7 @@ pub struct Geodesics {
     pub event_localization_mode: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ObserverSection {
     pub motion: String,
@@ -82,7 +82,7 @@ pub struct ObserverSection {
     pub boyer_lindquist_phi_degrees: f64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CameraSection {
     pub projection: String,

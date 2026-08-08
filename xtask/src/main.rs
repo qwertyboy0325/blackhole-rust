@@ -3,6 +3,10 @@
 use clap::{Parser, Subcommand, ValueEnum};
 
 mod build_meta;
+mod camera_composition;
+mod camera_search;
+mod camera_search_run;
+mod composition_metrics;
 mod corpus_report;
 mod d1_v1_visual_semantic;
 mod diagnostic_scene;
@@ -25,6 +29,7 @@ mod evaluate_gate2c0_physical_emission;
 mod evaluate_gate2c1_colorimetry;
 mod evaluate_gate2d0_presentation;
 mod evaluate_gate2d1_scene_appearance;
+mod evaluate_gate2d3a_camera_composition;
 mod evaluate_r1_e0_oracle_corpus;
 mod inspect;
 mod integrate_ray;
@@ -338,6 +343,14 @@ enum Commands {
         no_env_reference: bool,
         #[arg(long, default_value_t = false)]
         visual_semantic_diagnostics: bool,
+        /// Optional Gate 2D3A camera/composition preset (C2 overlay; D3A-A1).
+        #[arg(long)]
+        camera: Option<String>,
+    },
+    /// Gate 2D3A Phase A: deterministic camera sweep → STOP_FOR_OWNER_HERO_SELECTION.
+    CameraSearchPhaseA {
+        #[arg(long)]
+        threads: Option<usize>,
     },
     /// Emit canonical Gate 1B1 corpus JSON (numerical records; for determinism).
     CorpusReport {
@@ -443,6 +456,8 @@ fn main() {
                 evaluate_gate2d0_presentation::evaluate()
             } else if scope == "gate-2d1-scene-appearance" {
                 evaluate_gate2d1_scene_appearance::evaluate()
+            } else if scope == "gate-2d3a-camera-composition" {
+                evaluate_gate2d3a_camera_composition::evaluate()
             } else if scope == "r1-e0-oracle-corpus" {
                 evaluate_r1_e0_oracle_corpus::evaluate()
             } else if scope == "e1-adaptive-sampling" {
@@ -707,6 +722,7 @@ fn main() {
             write_env_reference,
             no_env_reference,
             visual_semantic_diagnostics,
+            camera,
         } => {
             let exec = match execution {
                 ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
@@ -725,8 +741,10 @@ fn main() {
                 threads,
                 write_env_reference && !no_env_reference,
                 visual_semantic_diagnostics,
+                camera.as_deref(),
             )
         }
+        Commands::CameraSearchPhaseA { threads } => camera_search_run::run_phase_a(threads),
         Commands::CorpusReport { scope } => {
             if scope == "gate-1b1" {
                 corpus_report::run()

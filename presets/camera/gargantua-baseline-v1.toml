@@ -1,0 +1,20 @@
+# Gate 2D3A BASELINE_CAMERA — exact observer/camera of gargantua-physical-v1.
+# Overlay onto physical preset must bit-exact reproduce Gate 2D1 beauty
+# presentation_frame_digest 68b555442c277c8eb95c1562568c24746fb2489c174730350671d5567cf43cd0.
+# Physical / appearance / presentation presets are never mutated.
+schema_version = 1
+camera_preset_id = "gargantua-baseline-v1"
+role = "BASELINE_CAMERA"
+description = "Regression camera identical to Gate 2D1 / gargantua-physical-v1 observer+camera"
+
+[observer]
+motion = "zamo"
+boyer_lindquist_r = 20.0
+boyer_lindquist_theta_degrees = 85.0
+boyer_lindquist_phi_degrees = 0.0
+
+[camera]
+projection = "rectilinear"
+horizontal_field_of_view_degrees = 50.0
+look_at = "black_hole_origin"
+roll_degrees = 0.0
