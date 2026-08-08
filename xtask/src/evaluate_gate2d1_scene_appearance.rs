@@ -154,6 +154,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "parallel",
         Some(auth_threads),
         false,
+        false,
     )?;
     push(
         &mut checks,
@@ -237,6 +238,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "parallel",
         Some(auth_threads),
         true,
+        true,
     )?;
     let gate_serial = run_scene(
         &root,
@@ -246,6 +248,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "serial",
         None,
         false,
+        false,
     )?;
     let gate_parallel = run_scene(
         &root,
@@ -254,6 +257,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         DiagnosticRenderTier::Smoke,
         "parallel",
         Some(2),
+        false,
         false,
     )?;
     push(
@@ -332,6 +336,112 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         beauty.display().to_string(),
     );
 
+    // --- D1-V1 visual-semantic closure ---
+    let vs_dir = root.join("artifacts/gate-2d1-scene-appearance/gate-run-0/d1-v1-visual-semantic");
+    let vs_report_path = vs_dir.join("visual-semantic-report.json");
+    let vs_ok = vs_report_path.is_file()
+        && vs_dir.join("disk-only-srgb16.png").is_file()
+        && vs_dir.join("lensed-environment-only-srgb16.png").is_file()
+        && vs_dir.join("pre-tone-clamp-oetf-srgb16.png").is_file()
+        && vs_dir.join("source-mask.ppm").is_file();
+    push(
+        &mut checks,
+        "d1_v1_diagnostic_artifacts_present",
+        vs_ok,
+        vs_dir.display().to_string(),
+    );
+    let vs: serde_json::Value = if vs_report_path.is_file() {
+        serde_json::from_slice(&std::fs::read(&vs_report_path)?)?
+    } else {
+        serde_json::json!({})
+    };
+    push(
+        &mut checks,
+        "d1_v1_source_mask_matches_bundle",
+        vs["source_mask_counts_match_bundle"].as_bool() == Some(true),
+        format!("{}", vs["source_mask_counts_match_bundle"]),
+    );
+    let disk_frac = vs["class_luma_pre_tone"]["disk"]["fraction"]
+        .as_f64()
+        .unwrap_or(-1.0);
+    let esc_frac = vs["class_luma_pre_tone"]["escaped"]["fraction"]
+        .as_f64()
+        .unwrap_or(-1.0);
+    push(
+        &mut checks,
+        "d1_v1_disk_dominates_pixel_fraction",
+        disk_frac > 0.5 && esc_frac > 0.05 && esc_frac < 0.4,
+        format!("disk_frac={disk_frac:.4} escaped_frac={esc_frac:.4}"),
+    );
+    let mod_std = vs["modulation_visibility"]["modulation_std"]
+        .as_f64()
+        .unwrap_or(0.0);
+    let mod_gt05 = vs["modulation_visibility"]["fraction_abs_delta_gt_0_05"]
+        .as_f64()
+        .unwrap_or(0.0);
+    push(
+        &mut checks,
+        "d1_v1_modulation_visible_on_disk",
+        mod_std > 0.01 && mod_gt05 > 0.05,
+        format!("std={mod_std:.4} frac_|m-1|>0.05={mod_gt05:.4}"),
+    );
+    let bright_n = vs["bright_arc_candidates"]
+        .as_array()
+        .map(|a| a.len())
+        .unwrap_or(0);
+    push(
+        &mut checks,
+        "d1_v1_bright_arc_candidates_recorded",
+        bright_n > 0,
+        format!("n={bright_n}"),
+    );
+
+    let _ = run_scene_wh(
+        &root,
+        "artifacts/gate-2d1-scene-appearance/d1-v1-512",
+        "presets/appearance/gargantua-scene-v1.toml",
+        512,
+        512,
+        "parallel",
+        Some(auth_threads),
+        false,
+        true,
+    )?;
+    let high_png =
+        root.join("artifacts/gate-2d1-scene-appearance/d1-v1-512/beauty-scene-srgb16.png");
+    let mask_ppm = vs_dir.join("source-mask.ppm");
+    let mut res_ok = false;
+    let mut res_detail = "missing inputs".into();
+    if beauty.is_file() && high_png.is_file() && mask_ppm.is_file() {
+        match crate::d1_v1_visual_semantic::compare_resolution_from_artifacts(
+            &beauty, &high_png, &mask_ppm,
+        ) {
+            Ok(stats) => {
+                std::fs::write(
+                    vs_dir.join("resolution-consistency-128-vs-512.json"),
+                    serde_json::to_string_pretty(&stats)?,
+                )?;
+                res_ok = stats.mse_all_codes.is_finite()
+                    && stats.mse_escaped_codes.is_finite()
+                    && stats.mse_disk_codes.is_finite();
+                res_detail = format!(
+                    "mse_all={:.2} mse_disk={:.2} mse_escaped={:.2} max_abs={}",
+                    stats.mse_all_codes,
+                    stats.mse_disk_codes,
+                    stats.mse_escaped_codes,
+                    stats.max_abs_code_delta
+                );
+            }
+            Err(e) => res_detail = e.to_string(),
+        }
+    }
+    push(
+        &mut checks,
+        "d1_v1_resolution_consistency_evidence",
+        res_ok,
+        res_detail,
+    );
+
     let app_preset =
         std::fs::read_to_string(root.join("presets/appearance/gargantua-scene-v1.toml"))?;
     push(
@@ -399,6 +509,12 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "a3_no_luminosity_claim_in_preset",
         "gate_not_identity",
         "identity_scene_flag",
+        "d1_v1_diagnostic_artifacts_present",
+        "d1_v1_source_mask_matches_bundle",
+        "d1_v1_disk_dominates_pixel_fraction",
+        "d1_v1_modulation_visible_on_disk",
+        "d1_v1_bright_arc_candidates_recorded",
+        "d1_v1_resolution_consistency_evidence",
     ]
     .iter()
     .all(|n| {
@@ -450,6 +566,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_scene(
     root: &Path,
     out: &str,
@@ -458,6 +575,7 @@ fn run_scene(
     execution: &str,
     threads: Option<usize>,
     write_env_reference: bool,
+    visual_semantic_diagnostics: bool,
 ) -> Result<SceneAppearanceReport, Box<dyn std::error::Error>> {
     let tier_s = match tier {
         DiagnosticRenderTier::Smoke => "smoke",
@@ -495,6 +613,72 @@ fn run_scene(
         args.push("--write-env-reference");
     } else {
         args.push("--no-env-reference");
+    }
+    if visual_semantic_diagnostics {
+        args.push("--visual-semantic-diagnostics");
+    }
+    let status = Command::new("cargo")
+        .current_dir(root)
+        .args(&args)
+        .status()?;
+    if !status.success() {
+        return Err(format!("render-scene-appearance failed for {out}").into());
+    }
+    let report_path = root.join(out).join("appearance-report.json");
+    let report_bytes = std::fs::read(report_path)?;
+    let report: SceneAppearanceReport = serde_json::from_slice(&report_bytes)?;
+    Ok(report)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_scene_wh(
+    root: &Path,
+    out: &str,
+    appearance: &str,
+    width: u32,
+    height: u32,
+    execution: &str,
+    threads: Option<usize>,
+    write_env_reference: bool,
+    visual_semantic_diagnostics: bool,
+) -> Result<SceneAppearanceReport, Box<dyn std::error::Error>> {
+    let w = width.to_string();
+    let h = height.to_string();
+    let mut args = vec![
+        "run",
+        "--release",
+        "-p",
+        "xtask",
+        "--",
+        "render-scene-appearance",
+        "--preset",
+        "presets/gargantua-physical-v1.toml",
+        "--appearance",
+        appearance,
+        "--presentation",
+        "presets/presentation/gargantua-cinematic-v1.toml",
+        "--width",
+        &w,
+        "--height",
+        &h,
+        "--output-dir",
+        out,
+        "--execution",
+        execution,
+        "--require-release",
+    ];
+    let threads_s = threads.map(|t| t.to_string());
+    if let Some(ref t) = threads_s {
+        args.push("--threads");
+        args.push(t);
+    }
+    if write_env_reference {
+        args.push("--write-env-reference");
+    } else {
+        args.push("--no-env-reference");
+    }
+    if visual_semantic_diagnostics {
+        args.push("--visual-semantic-diagnostics");
     }
     let status = Command::new("cargo")
         .current_dir(root)

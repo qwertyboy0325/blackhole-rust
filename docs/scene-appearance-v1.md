@@ -84,3 +84,24 @@ cargo run --release -p xtask -- render-scene-appearance \
 
 cargo run --release -p xtask -- evaluate --scope gate-2d1-scene-appearance
 ```
+
+## D1-V1 visual-semantic closure
+
+Owner product review evidence — **not** beauty/scientific authority.
+
+Enable with `--visual-semantic-diagnostics` (gate evaluate enables it on the
+canonical gate run). Artifacts under
+`…/d1-v1-visual-semantic/`:
+
+| Artifact | Purpose |
+| --- | --- |
+| `disk-only-srgb16.png` | DiskHit pixels only (same 2D0 presentation tail) |
+| `lensed-environment-only-srgb16.png` | Escaped pixels only |
+| `pre-tone-clamp-oetf-srgb16.png` | Scene-linear clamp→OETF (no PBR Neutral) |
+| `source-mask.ppm` | Outcome class mask (disk / escaped / horizon / …) |
+| `visual-semantic-report.json` | Class counts, luma distributions, modulation visibility, bright-arc candidates |
+| `resolution-consistency-128-vs-512.json` | Box-downsampled MSE (diagnostic; no frozen IQ threshold) |
+
+Gate evaluate includes D1-V1 checks in `APPEARANCE_PIPELINE_PASS`. These prove
+occlusion/source semantics and modulation visibility; they do **not** replace
+owner visual acceptance.

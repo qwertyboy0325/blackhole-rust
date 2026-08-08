@@ -247,6 +247,7 @@ pub fn run(
     execution: CliExecution,
     threads: Option<usize>,
     write_env_reference: bool,
+    visual_semantic_diagnostics: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let t0 = Instant::now();
     let build = BuildExecutionMetadata::current();
@@ -442,6 +443,18 @@ pub fn run(
         )
         .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
         write_beauty_png(&out_dir.join("environment-reference-srgb16.png"), &ref_pres)?;
+    }
+
+    if visual_semantic_diagnostics && !identity_scene {
+        crate::d1_v1_visual_semantic::write_visual_semantic_diagnostics(
+            &out_dir,
+            &scene_frame,
+            &bundle,
+            &app_emission,
+            &app_color,
+            &presentation_spec,
+            None,
+        )?;
     }
 
     let rel_luma = if scene_frame.integrated_luma_base_disk > 0.0 {

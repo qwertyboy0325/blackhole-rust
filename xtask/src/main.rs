@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 mod build_meta;
 mod corpus_report;
+mod d1_v1_visual_semantic;
 mod diagnostic_scene;
 mod e1_adaptive_sampling;
 mod evaluate;
@@ -335,6 +336,8 @@ enum Commands {
         write_env_reference: bool,
         #[arg(long, default_value_t = false)]
         no_env_reference: bool,
+        #[arg(long, default_value_t = false)]
+        visual_semantic_diagnostics: bool,
     },
     /// Emit canonical Gate 1B1 corpus JSON (numerical records; for determinism).
     CorpusReport {
@@ -703,6 +706,7 @@ fn main() {
             require_release,
             write_env_reference,
             no_env_reference,
+            visual_semantic_diagnostics,
         } => {
             let exec = match execution {
                 ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
@@ -720,6 +724,7 @@ fn main() {
                 exec,
                 threads,
                 write_env_reference && !no_env_reference,
+                visual_semantic_diagnostics,
             )
         }
         Commands::CorpusReport { scope } => {
