@@ -2,16 +2,25 @@
 
 ## Result
 
-Owner selected shortlist **`c024`** (F5_BALANCED_POSTER). Hero camera frozen;
-Phase B evaluator targets clean authoritative **PASS**.
+**Authoritative evaluate PASS** on clean worktree after owner selection
+**`c024`**. Merge still requires owner authorization (not authorized here).
 
 | Field | Value |
 | --- | --- |
+| Hero freeze tip | `825bb80a70578ea8854d9a5c9403eb62c1c8021a` |
+| Report tip | `f6914886524db2b993ec0d2c04eeff6a80647c77` |
+| Evaluation content digest (@ `825bb80`) | `a8fe240f1a345bc75cfb50fb5af06c1d65d5a1f400cabd7a9b162d12a55ccf4d` |
+| `result` | `PASS` |
+| `authoritative` | `true` |
+| `dirty` | `false` |
 | Scope | `gate-2d3a-camera-composition` |
 | Phase | `PHASE_B` |
 | Owner selection | `c024` |
 | Hero preset | `presets/camera/gargantua-hero-v1.toml` |
 | Search spec digest | `bc5b9257492310c612e2ac26d58926b761d31ff4acbd3fe5f2e77d98a3d9191b` |
+| Scientific inheritance | `SCIENTIFIC_INHERITANCE_PASS_BASELINE_PATH` |
+| Presentation inheritance | `PRESENTATION_INHERITANCE_PASS_BASELINE_PATH` |
+| Camera pipeline | `CAMERA_PIPELINE_PHASE_B_PASS` |
 | Amendments | D3A-A1…A8 binding |
 
 ## Frozen inheritance (baseline path only — D3A-A2)
@@ -43,5 +52,3 @@ Phase B evaluator targets clean authoritative **PASS**.
 | disk / escaped / horizon (128²) | ≈0.657 / 0.290 / 0.054 |
 
 Authority label: `CAMERA_DERIVED_PRODUCTION_OUTPUT_NOT_SCIENTIFIC_AUTHORITY`.
-
-Merge still requires owner authorization.
