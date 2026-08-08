@@ -1,0 +1,56 @@
+# Gate 2D3A camera-search-spec-v1 (D3A-A3/A4/A5/A6).
+# Entire candidate set, hard-invalidity rules, shortlist key, and guidance
+# midpoints are frozen here and hashed into camera_search_spec_digest.
+# No mid-run ad-hoc pruning. Class-fraction bands are SEARCH_GUIDANCE only.
+schema_version = 1
+search_spec_id = "camera-search-spec-v1"
+primary_family = "F5_BALANCED_POSTER"
+neighbor_families = ["F1_BASELINE", "F2_HERO_CLOSE", "F3_WIDER_ENV", "F4_EDGE_ON_DRAMATIC"]
+smoke_width = 32
+smoke_height = 32
+gate_width = 128
+gate_height = 128
+shortlist_n = 8
+max_candidates = 48
+parameterization_note = "V1: look_at=black_hole_origin, roll=0, ZAMO only; no aim offset (D3A-A8)"
+
+# Cartesian product axes (order frozen: hfov → r → theta → phi).
+# 4 × 3 × 2 × 2 = 48 ≤ 64.
+hfov_degrees = [50.0, 58.0, 65.0, 72.0]
+r_over_m = [20.0, 28.0, 36.0]
+theta_degrees = [85.0, 75.0]
+phi_degrees = [0.0, 90.0]
+
+[search_guidance]
+# A6: SEARCH_GUIDANCE only — not gate PASS/FAIL truth.
+disk_hit_mid = 0.51
+escaped_mid = 0.31
+horizon_mid = 0.12
+label = "SEARCH_GUIDANCE_NOT_GATE_TRUTH"
+
+[smoke_hard_invalidity]
+# Coarse reject only (D3A-A5). Survivors always re-evaluated at gate 128.
+max_affine_or_failed = 0
+max_disk_hit_fraction = 0.92
+min_escaped_fraction = 0.02
+
+[gate_hard_invalidity]
+# Applied only on 128² renders (D3A-A5). Search filters, not Gate 2D1 truth.
+max_affine_or_failed = 0
+max_disk_hit_fraction = 0.70
+min_disk_hit_fraction = 0.30
+min_escaped_fraction = 0.18
+max_escaped_fraction = 0.50
+min_horizon_fraction = 0.04
+max_horizon_fraction = 0.25
+min_disk_plus_horizon_fraction = 0.50
+min_shadow_edge_margin_frac = 0.04
+min_highlight_edge_margin_frac = 0.03
+
+[shortlist]
+# Deterministic lex key — not an unfrozen cinematic score (D3A-A4).
+# Sort ascending by:
+#   abs(disk - disk_hit_mid), abs(escaped - escaped_mid),
+#   -shadow_edge_margin_frac, candidate_id
+# Then take first shortlist_n among gate-valid candidates.
+rule_id = "lex-guidance-distance-then-margin-then-id-v1"

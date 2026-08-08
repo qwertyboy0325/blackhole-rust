@@ -234,6 +234,15 @@ pub fn load_appearance_specs(
     Ok((disk, env))
 }
 
+pub struct RenderedSceneAppearance {
+    pub report: SceneAppearanceReport,
+    pub scene_frame: relativity_render::SceneAppearanceFrame,
+    pub presented: relativity_render::PresentationFrame,
+    pub source_physical_color_digest: String,
+    #[allow(dead_code)]
+    pub camera_spec_digest: Option<String>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     preset_path: &str,
@@ -248,7 +257,47 @@ pub fn run(
     threads: Option<usize>,
     write_env_reference: bool,
     visual_semantic_diagnostics: bool,
+    camera_path: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let rendered = render(
+        preset_path,
+        appearance_path,
+        presentation_path,
+        tier,
+        width,
+        height,
+        output_dir,
+        require_release,
+        execution,
+        threads,
+        write_env_reference,
+        visual_semantic_diagnostics,
+        camera_path,
+        true,
+    )?;
+    println!("{}", serde_json::to_string_pretty(&rendered.report)?);
+    Ok(())
+}
+
+/// Core scene-appearance render. When `camera_path` is set, applies C2 overlay (D3A-A1).
+#[allow(clippy::too_many_arguments)]
+pub fn render(
+    preset_path: &str,
+    appearance_path: &str,
+    presentation_path: &str,
+    tier: Option<DiagnosticRenderTier>,
+    width: Option<u32>,
+    height: Option<u32>,
+    output_dir: &str,
+    require_release: bool,
+    execution: CliExecution,
+    threads: Option<usize>,
+    write_env_reference: bool,
+    visual_semantic_diagnostics: bool,
+    camera_path: Option<&str>,
+    print_suppressed: bool,
+) -> Result<RenderedSceneAppearance, Box<dyn std::error::Error>> {
+    let _ = print_suppressed;
     let t0 = Instant::now();
     let build = BuildExecutionMetadata::current();
     if require_release {
@@ -259,7 +308,17 @@ pub fn run(
     let trace_execution = resolve_execution(execution, threads)?;
     let root = workspace_root()?;
     let out_dir = resolve_path(&root, output_dir);
-    let preset = load_preset(&resolve_path(&root, preset_path))?;
+    let mut preset = load_preset(&resolve_path(&root, preset_path))?;
+    let camera_spec_digest = if let Some(cam_path) = camera_path {
+        let cam = crate::camera_composition::load_camera_composition_preset(&resolve_path(
+            &root, cam_path,
+        ))?;
+        let digest = crate::camera_composition::camera_spec_digest(&cam);
+        preset = crate::camera_composition::apply_camera_overlay(&preset, &cam)?;
+        Some(digest)
+    } else {
+        None
+    };
     let presentation_spec = load_presentation_spec(&resolve_path(&root, presentation_path))?;
     let (disk_spec, env_spec) = load_appearance_specs(&resolve_path(&root, appearance_path))?;
     validate_physical_emission_provenance(&preset.disk.emission_model, &preset.disk.emission_claim)
@@ -509,7 +568,7 @@ pub fn run(
     let report = SceneAppearanceReport {
         gate: "gate-2d1-scene-appearance".into(),
         result_hint: "local-render".into(),
-        source_physical_color_digest: color_digest,
+        source_physical_color_digest: color_digest.clone(),
         source_payload_sha256: payload_digest,
         presentation_spec_digest: presented.presentation_spec_digest.clone(),
         presentation_frame_digest: presented.presentation_frame_digest.clone(),
@@ -524,17 +583,25 @@ pub fn run(
         appearance_wall_clock_seconds: appearance_wall,
         presentation_wall_clock_seconds: presentation_wall,
         total_wall_clock_seconds: t0.elapsed().as_secs_f64(),
-        metrics: presented.metrics,
-        note: "Gate 2D1 appearance beauty; scientific channels remain Gate 2C0/2C1 authority"
-            .into(),
+        metrics: presented.metrics.clone(),
+        note: if camera_spec_digest.is_some() {
+            "Gate 2D3A camera-overlaid scene appearance; hero digests are camera-derived production outputs, not new 2C1 scientific authority (D3A-A2)".into()
+        } else {
+            "Gate 2D1 appearance beauty; scientific channels remain Gate 2C0/2C1 authority".into()
+        },
     };
     std::fs::write(
         out_dir.join("appearance-report.json"),
         serde_json::to_string_pretty(&report)?,
     )?;
 
-    println!("{}", serde_json::to_string_pretty(&report)?);
-    Ok(())
+    Ok(RenderedSceneAppearance {
+        report,
+        scene_frame,
+        presented,
+        source_physical_color_digest: color_digest,
+        camera_spec_digest,
+    })
 }
 
 fn workspace_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
