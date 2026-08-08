@@ -158,10 +158,26 @@ tests, rather than transcribed from an incompatibly licensed repository.
 
 ## Formats and GPU capability
 
+- **[CIE1931CMF]** CIE 1931 colour-matching functions, 2° observer, 1 nm.
+  DOI [10.25039/CIE.DS.xvudnb9b](https://doi.org/10.25039/CIE.DS.xvudnb9b);
+  CIE 018:2019 Table 6 / ISO/CIE 11664-1. Official CSV md5
+  `17cca777db64b17170f06f67ce9d3ab7`. License: **CC BY-SA 4.0**. Vendored in-tree
+  at `assets/standards/cie1931-2deg-v1.csv` with
+  `LICENSE-CIE-CC-BY-SA-4.0.txt` and `NOTICE` (DOI, attribution, unmodified,
+  owner acquisition `VENDOR_CC_BY_SA_DATA`, 2026-08-08). **Not** MIT/Apache;
+  code that loads the table remains dual-licensed.
+- **[Km683]** CIE luminous efficacy of monochromatic radiation at 555.016 nm,
+  `K_m = 683 lm/W` (CIE photometry / CIE 018). Access via CIE publications;
+  bibliographic citation.
+- **[IEC61966-2-1]** IEC 61966-2-1 / Rec. ITU-R BT.709 chromaticities and D65
+  white for scene-linear RGB matrix (no OETF in scientific path). Standards
+  access only.
 - **OpenEXR technical introduction.** Multi-channel `HALF`, `FLOAT`, and `UINT`
   storage and metadata. [Official documentation](https://openexr.com/en/latest/TechnicalIntroduction.html).
   OpenEXR software is BSD-3-Clause; specification/documentation terms are linked
-  by the project. No library is vendored in Gate 0.
+  by the project. Gate 2C1 uses pure-Rust [`exr`](https://crates.io/crates/exr)
+  1.74.2 (BSD-3-Clause) for **derived** FLOAT interchange; raw f64 remains
+  authority.
 - **WGSL specification.** Core shader arithmetic is centered on `f32`; `f16` is
   an optional extension. [W3C WGSL](https://www.w3.org/TR/WGSL/). W3C document
   license.

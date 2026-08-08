@@ -6,12 +6,12 @@ Gargantua in *Interstellar*, not an exact reconstruction of Double Negative's
 proprietary assets, renderer, grading, camera, or undocumented production
 parameters.
 
-## Status: Gate 2C0 authoritative PASS (pending merge)
+## Status: Gate 2C1 physical colorimetry (in delivery)
 
-Gate 0–2B2 and R1/E0 are complete on `main` (Gate 2B2 merge `95c4062`, PR #17).
-Gate 2C0 physical Page–Thorne emission evaluated **PASS** @ `7542144` after
-closures `5225301622` + `5225371466`. Gate 2C1 (CIE/RGB/OpenEXR), GPU, and GUI
-are not authorized. E1 research remains `PAUSE_RESEARCH_WEDGE`.
+Gate 0–2C0 and R1/E0 are complete on `main` (Gate 2C0 merge `57659c62`, PR #18).
+Gate 2C1: absolute CIE XYZ + scene-linear Rec.709/D65 + derived OpenEXR FLOAT
+from `PhysicalDiskEmissionFrame` (Architecture B). GPU and GUI remain deferred.
+E1 research remains `PAUSE_RESEARCH_WEDGE`.
 
 ![Gate evolution (diagnostic channels)](docs/media/blackhole-rust-evolution.gif)
 
@@ -20,10 +20,12 @@ Diagnostic scientific channels only — not a beauty render. Regenerate with
 this GIF linked from the README on subsequent commits.
 
 See [diagnostic bolometric emission V1](docs/diagnostic-bolometric-emission-v1.md),
-[diagnostic spectral emission V1](docs/diagnostic-spectral-emission-v1.md), and
-[physical disk emission V1](docs/physical-disk-emission-v1.md).
+[diagnostic spectral emission V1](docs/diagnostic-spectral-emission-v1.md),
+[physical disk emission V1](docs/physical-disk-emission-v1.md), and
+[physical colorimetry V1](docs/physical-colorimetry-v1.md).
 Gate 2B2 report: [gate-2b2-final-report](docs/work-log/gate-2b2-final-report.md).
 Gate 2C0 report: [gate-2c0-final-report](docs/work-log/gate-2c0-final-report.md).
+Gate 2C1 report: [gate-2c1-final-report](docs/work-log/gate-2c1-final-report.md).
 
 Selected path remains:
 
@@ -31,7 +33,7 @@ Selected path remains:
 - a CPU `f64` oracle using canonical Hamilton equations in horizon-penetrating
   Cartesian Kerr-Schild coordinates;
 - adaptive DOP853 with dense-output event localization (ADR 0005 accepted);
-- physical radiometry (2C0) before colorimetry/OpenEXR (2C1);
+- physical radiometry (2C0) and colorimetry/OpenEXR (2C1);
 - no UI or GPU dependency in the physics core.
 
 Start with [the vision](docs/vision.md), [physical assumptions](docs/physics-assumptions.md),

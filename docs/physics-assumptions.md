@@ -182,6 +182,12 @@ I_lambda = I_nu * c / lambda^2,
 I_lambda,obs(lambda_obs) = g^5 I_lambda,em(g lambda_obs).
 ```
 
+Gate 2C1 absolute colorimetry (Architecture B) integrates observer-frame
+`I_ν` against CIE 1931 2° colour-matching functions with photometric scale
+`K_m = 683 lm/W` [CIE1931CMF, Km683]. Scene-linear Rec.709/D65 RGB follows from
+the IEC matrix without chromatic adaptation [IEC61966-2-1]. Finite negative RGB
+components are retained (out-of-gamut), not clamped.
+
 ## Photon regions, shadows, and critical curves
 
 Kerr has a family of unstable spherical photon orbits rather than one spherical

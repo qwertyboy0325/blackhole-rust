@@ -13,7 +13,7 @@ diagnostic `SpectralFrame V1`, not CIE/RGB/OpenEXR (Gate 2C1).
 | Physical Hz grid + `g³` transport | AUTHORITATIVE |
 | Raw `f64le` + meta JSON | AUTHORITATIVE |
 | Diagnostic `spectral-grid-v1` ν | **not Hz** — typed reject |
-| CIE XYZ / scene-linear RGB / OpenEXR | DEFERRED (2C1) |
+| CIE XYZ / scene-linear RGB / OpenEXR | **Gate 2C1** — see `docs/physical-colorimetry-v1.md` |
 
 Inherited geometry/kinematics (frozen): geodesic integration, disk bounds from
 the resolved thin-disk scene, prograde circular geodesic emitter, Gate 2B0 `g`.
@@ -137,4 +137,4 @@ cargo run --release -p xtask -- evaluate --scope gate-2c0-physical-emission
 - Diagnostic scene `r_inner` may differ from true ISCO; emission requires
   `r > r_isco` inside the resolved annulus.
 - No celestial-background physical radiometry; non-disk = absence.
-- No CIE/OpenEXR in this gate.
+- CIE/OpenEXR delivered in Gate 2C1 (`docs/physical-colorimetry-v1.md`).

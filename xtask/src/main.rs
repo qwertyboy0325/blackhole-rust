@@ -21,6 +21,7 @@ mod evaluate_gate2b0_frequency_shift;
 mod evaluate_gate2b1_bolometric_radiance;
 mod evaluate_gate2b2_spectral_transport;
 mod evaluate_gate2c0_physical_emission;
+mod evaluate_gate2c1_colorimetry;
 mod evaluate_r1_e0_oracle_corpus;
 mod inspect;
 mod integrate_ray;
@@ -29,6 +30,7 @@ mod preset;
 mod reference_pipeline;
 mod render_disk_spectrum;
 mod render_lensed_celestial;
+mod render_physical_color;
 mod render_physical_disk_spectrum;
 mod render_tier;
 mod spike_dop853;
@@ -256,6 +258,32 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         require_release: bool,
     },
+    /// Gate 2C1: absolute CIE XYZ + scene-linear Rec.709 RGB + derived OpenEXR.
+    RenderPhysicalColor {
+        #[arg(long)]
+        preset: String,
+        #[arg(long, value_enum)]
+        tier: Option<render_tier::DiagnosticRenderTier>,
+        #[arg(long)]
+        width: Option<u32>,
+        #[arg(long)]
+        height: Option<u32>,
+        #[arg(long, default_value = "cie-1931-2deg-v1")]
+        cie_observer: String,
+        #[arg(long, default_value = "scene-linear-rec709-d65-v1")]
+        rgb_space: String,
+        #[arg(long)]
+        output_dir: String,
+        #[arg(long, value_enum, default_value_t = ExecutionArg::Serial)]
+        execution: ExecutionArg,
+        #[arg(long)]
+        threads: Option<usize>,
+        #[arg(long, default_value_t = false)]
+        require_release: bool,
+        /// Build frozen 256-bin cube for Architecture A-vs-B diagnostic only.
+        #[arg(long, default_value_t = true)]
+        spectral_diagnostic: bool,
+    },
     /// Emit canonical Gate 1B1 corpus JSON (numerical records; for determinism).
     CorpusReport {
         #[arg(long)]
@@ -354,6 +382,8 @@ fn main() {
                 evaluate_gate2b2_spectral_transport::evaluate()
             } else if scope == "gate-2c0-physical-emission" {
                 evaluate_gate2c0_physical_emission::evaluate()
+            } else if scope == "gate-2c1-colorimetry" {
+                evaluate_gate2c1_colorimetry::evaluate()
             } else if scope == "r1-e0-oracle-corpus" {
                 evaluate_r1_e0_oracle_corpus::evaluate()
             } else if scope == "e1-adaptive-sampling" {
@@ -544,6 +574,37 @@ fn main() {
                 require_release,
                 exec,
                 threads,
+            )
+        }
+        Commands::RenderPhysicalColor {
+            preset,
+            tier,
+            width,
+            height,
+            cie_observer,
+            rgb_space,
+            output_dir,
+            execution,
+            threads,
+            require_release,
+            spectral_diagnostic,
+        } => {
+            let exec = match execution {
+                ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
+                ExecutionArg::Parallel => trace_outcome_map::CliExecution::Parallel,
+            };
+            render_physical_color::run(
+                &preset,
+                tier,
+                width,
+                height,
+                &cie_observer,
+                &rgb_space,
+                &output_dir,
+                require_release,
+                exec,
+                threads,
+                spectral_diagnostic,
             )
         }
         Commands::CorpusReport { scope } => {
