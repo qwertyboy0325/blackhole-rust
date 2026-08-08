@@ -153,3 +153,27 @@ pub enum PresentationError {
     #[error("unsupported operator `{0}`")]
     UnsupportedOperator(String),
 }
+
+#[derive(Debug, Error, Clone, PartialEq)]
+pub enum AppearanceError {
+    #[error("invalid appearance specification: {0}")]
+    InvalidSpec(String),
+    #[error("frame length mismatch")]
+    FrameLengthMismatch,
+    #[error("grid dimension mismatch")]
+    GridMismatch,
+    #[error("scene outcome parity failure at ({col},{row}): {detail}")]
+    SceneOutcomeParity { col: u32, row: u32, detail: String },
+    #[error("scene numerical failure: affine_limit={affine_limit} failed={failed}")]
+    SceneNumericalFailure { affine_limit: u64, failed: u64 },
+    #[error("non-finite appearance value: {0}")]
+    NonFinite(String),
+    #[error("appearance mapping failed at ({col},{row}): {cause}")]
+    PixelMappingFailed { col: u32, row: u32, cause: String },
+    #[error("colorimetry error: {0}")]
+    Colorimetry(String),
+    #[error("presentation error: {0}")]
+    Presentation(String),
+    #[error("emission error: {0}")]
+    Emission(String),
+}

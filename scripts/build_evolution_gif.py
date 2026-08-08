@@ -434,6 +434,13 @@ def main() -> int:
     annotate(src_2d0, p, "Gate 2D0", "+ cinematic sRGB16 beauty", fnt)
     frames.append(p)
 
+    src_2d1 = require(
+        ROOT / "artifacts/gate-2d1-scene-appearance/gate-run-0/beauty-scene-srgb16.png"
+    )
+    p = next_frame()
+    annotate(src_2d1, p, "Gate 2D1", "+ disk appearance + celestial env", fnt)
+    frames.append(p)
+
     p = next_frame()
     corpus_montage(
         corpus_paths,

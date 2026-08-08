@@ -9,12 +9,15 @@
 //! Gate 2C0: physical Page–Thorne thin-disk emission, `T_eff`, Planck `B_ν`, SI Hz `g³`.
 //! Gate 2C1: absolute CIE XYZ + scene-linear Rec.709/D65 RGB from emission frame (Arch B).
 //! Gate 2D0: presentation-only exposure / gamut / tone-map / sRGB display encoding.
+//! Gate 2D1: derived disk appearance + procedural celestial environment + scene composition.
 
 #![forbid(unsafe_code)]
 
 pub mod bolometric;
+pub mod celestial_environment;
 pub mod color_space;
 pub mod colorimetry;
+pub mod disk_appearance;
 pub mod display_encoding;
 pub mod error;
 pub mod frequency_shift;
@@ -24,6 +27,7 @@ pub mod physical_disk;
 pub mod physical_spectral;
 pub mod planck;
 pub mod presentation;
+pub mod scene_appearance;
 pub mod spectral;
 pub mod texture;
 pub mod tone_map;
@@ -44,6 +48,11 @@ pub use bolometric::{
     BOLOMETRIC_CONVENTION_ID, CANONICAL_DISK_EMISSION_CLAIM, CANONICAL_DISK_EMISSION_MODEL,
     DISK_BOUNDS_SOURCE_V1, DISPLAY_ID_V1, EMISSION_PROFILE_ID_V1,
 };
+pub use celestial_environment::{
+    build_celestial_environment, environment_spec_digest, render_environment_reference,
+    sample_environment_linear, CelestialEnvironment, EnvironmentSpec, MilkyWayLikeSpec, StarsSpec,
+    UnitQuaternion, ENVIRONMENT_MODEL_ID, HASH_PRNG_ID, MILKY_WAY_LABEL, STAR_PROFILE_ID,
+};
 pub use color_space::{
     SceneLinearRgb, SceneLinearRgbSpace, XyzToRgbMatrix, RGB_MATRIX_REVISION,
     SCENE_LINEAR_RGB_SPACE_ID,
@@ -62,14 +71,22 @@ pub use colorimetry::{
     PRODUCTION_LAMBDA_MIN_NM, PRODUCTION_N_SAMPLES, RAW_COLOR_PAYLOAD_MAGIC,
     RAW_COLOR_PAYLOAD_SCHEMA,
 };
+pub use disk_appearance::{
+    appearance_disk_color_digest, build_appearance_disk_color_frame,
+    build_appearance_disk_emission_frame, disk_appearance_spec_digest, modulation_factor,
+    radial_amplitude_a, AppearanceDiskColorFrame, AppearanceDiskColorPixel,
+    AppearanceDiskColorSample, AppearanceDiskEmissionFrame, AppearanceDiskEmissionPixel,
+    AppearanceDiskEmissionSample, DiskAppearanceSpec, SpiralHarmonicMode, DISK_APPEARANCE_MODEL_ID,
+    MEAN_PRESERVATION_CLAIM, RADIAL_ENVELOPE_ID,
+};
 pub use display_encoding::{
     quantize_u16, srgb_oetf, DisplayEncodedRgb16, DISPLAY_LINEAR_EPS, DISPLAY_TARGET_SRGB_V1,
     OETF_ID_SRGB_IEC61966_2_1_V1, PNG_FORMAT_RGB16_SRGB_V1, PNG_GAMA_SRGB,
     PNG_SRGB_INTENT_PERCEPTUAL, SRGB_OETF_NUMERIC_ORACLE_V1, SRGB_OETF_ORACLE_ABS_TOL,
 };
 pub use error::{
-    BolometricRenderError, CelestialRenderError, ColorimetryError, FrequencyShiftError,
-    PresentationError, SpectralRenderError,
+    AppearanceError, BolometricRenderError, CelestialRenderError, ColorimetryError,
+    FrequencyShiftError, PresentationError, SpectralRenderError,
 };
 pub use frequency_shift::{
     build_disk_frequency_shift_frame, build_disk_frequency_shift_map_artifact,
@@ -113,11 +130,16 @@ pub use planck::{
 };
 pub use presentation::{
     apply_exposure, apply_gamut, authored_rgb16_bytes, luminance_axis_desat_v1,
-    png_metadata_constants, present_physical_color_frame, presentation_frame_digest,
-    presentation_spec_digest, ExposureSpec, GamutMapOperator, PresentationFrame,
-    PresentationMetrics, PresentationSpec, BIT_DEPTH_RGB16, GAMUT_EPS,
-    GAMUT_MAPPER_ID_LUMINANCE_AXIS_DESAT_V1, PRESENTATION_MODEL_V1, REC709_LUMA_WB, REC709_LUMA_WG,
-    REC709_LUMA_WR,
+    png_metadata_constants, present_exposed_linear_rgb, present_physical_color_frame,
+    presentation_frame_digest, presentation_spec_digest, ExposedLinearPixel, ExposureSpec,
+    GamutMapOperator, PresentationFrame, PresentationMetrics, PresentationSpec, BIT_DEPTH_RGB16,
+    GAMUT_EPS, GAMUT_MAPPER_ID_LUMINANCE_AXIS_DESAT_V1, PRESENTATION_MODEL_V1, REC709_LUMA_WB,
+    REC709_LUMA_WG, REC709_LUMA_WR,
+};
+pub use scene_appearance::{
+    build_scene_appearance_frame, is_identity_scene_config, present_scene_appearance_frame,
+    scene_linear_from_absolute, SceneAppearanceFrame, SceneAppearancePixel,
+    SCENE_APPEARANCE_MODEL_ID,
 };
 pub use spectral::{
     build_disk_spectral_frame, compute_bolometric_closure, continuum_mass_on_interval,

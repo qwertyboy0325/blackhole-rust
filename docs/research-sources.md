@@ -185,6 +185,16 @@ tests, rather than transcribed from an incompatibly licensed repository.
   license **MIT OR Apache-2.0**. Used in `xtask` only for Gate 2D0 RGB16 beauty
   artifacts (`set_source_srgb(Perceptual)` + `gAMA=45455`).
   [crates.io](https://crates.io/crates/png/0.18.1).
+- **[SplitMix64]** Guy L. Steele Jr., Doug Lea, Christine H. Flood, “Fast
+  splittable pseudorandom number generators,” OOPSLA 2014 / related public
+  constant family. Gate 2D1 uses a project-owned `splitmix64` with frozen
+  constants for deterministic star catalog generation (no third-party crate).
+  Algorithm family is widely treated as public-domain / CC0-style for the
+  numeric constants; cite Steele et al. for provenance.
+- **[PageThorne1974]** (see Foundations) remains the **scientific** thin-disk
+  flux authority. Gate 2D1 azimuthal spiral modulation is explicitly
+  `PHYSICALLY_MOTIVATED_APPEARANCE` / `ANNULAR_APPEARANCE_MEAN_PRESERVING` and
+  is **outside** the axisymmetric Page–Thorne claim.
 - **OpenEXR technical introduction.** Multi-channel `HALF`, `FLOAT`, and `UINT`
   storage and metadata. [Official documentation](https://openexr.com/en/latest/TechnicalIntroduction.html).
   OpenEXR software is BSD-3-Clause; specification/documentation terms are linked
