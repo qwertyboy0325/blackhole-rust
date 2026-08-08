@@ -32,12 +32,15 @@ PR #20 @ `b832e47`.
 
 **Gate 2D1** production scene appearance: authoritative evaluate **PASS** @
 `345c560` (eval content `c146210d…`) after D1-V1 visual-semantic closure;
-D1-B + E1-B + S2 with A1–A6; identity `presentation_frame_digest`
-`f8e10323…` exact; scene beauty `68b55544…` unchanged. D1-V1 confirms
-DiskHit ≈75% occlusion geometry (not sky domain error). Pending owner final
-PR #21 review — **do not merge** without owner authorization. Do not begin
-Gate 2D2/2D3, E2 ray differentials, E3 ray bundles, GPU, wgpu, egui or GUI
-work.
+merged to `main` via PR #21 @ `2d97988`. Identity `presentation_frame_digest`
+`f8e10323…` exact; scene beauty `68b55544…` unchanged.
+
+**Gate 2D3A** camera composition: Phase A complete; owner selected **`c024`**;
+hero frozen as `presets/camera/gargantua-hero-v1.toml`. Baseline path keeps
+2C1/2D0/2D1 pins; hero digests are camera-derived production outputs
+(D3A-A2). Pending clean authoritative evaluate + owner PR review — **do not
+merge** without owner authorization. Do not begin Gate 2D2/2D3B, E2 ray
+differentials, E3 ray bundles, GPU, wgpu, egui or GUI work.
 
 When a gate or research package produces new reviewable image artifacts,
 regenerate `docs/media/blackhole-rust-evolution.gif` and keep it embedded in

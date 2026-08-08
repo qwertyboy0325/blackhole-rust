@@ -50,6 +50,21 @@ Phase A: camera-search-phase-a → STOP_FOR_OWNER_HERO_SELECTION
 Phase B: owner picks candidate_id → freeze hero → authoritative evaluate
 ```
 
+Owner selection (Phase B freeze): **`c024`** → `presets/camera/gargantua-hero-v1.toml`.
+
+Frozen hero digests (gate 128²; camera-derived, not 2C1 scientific authority):
+
+```text
+camera_spec_digest =
+42d3e3f8cc5d7b11950439ab46a850d6f5e2865f8e37a29ba6570f01b9ad2578
+
+presentation_frame_digest =
+fae0afdd2b16a1ff8c086303edbf633e675595f6e81620dde483e690e7266544
+
+scene_appearance_digest =
+b3c8f30afd3575215a8c75d2c5e82a0710f739e4d330a88e575de7880ccede84
+```
+
 ```bash
 cargo run --release -p xtask -- camera-search-phase-a --threads N
 cargo run --release -p xtask -- evaluate --scope gate-2d3a-camera-composition

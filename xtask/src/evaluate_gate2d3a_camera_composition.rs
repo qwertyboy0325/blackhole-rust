@@ -1,4 +1,4 @@
-//! Gate 2D3A Phase A evaluator — baseline exact + search evidence; awaits owner hero.
+//! Gate 2D3A camera composition evaluator — Phase A stop or Phase B authoritative PASS.
 
 use crate::build_meta::{require_release_execution, BuildExecutionMetadata};
 use crate::camera_composition::{
@@ -18,6 +18,17 @@ const REF_PRESENTATION_SPEC: &str =
 const REF_SCENE_2D1: &str = "68b555442c277c8eb95c1562568c24746fb2489c174730350671d5567cf43cd0";
 const REF_IDENTITY_2D0: &str = "f8e103239a331796bd474ff121627eecd0781f31c840f46d9f2d3a85c8d1e87b";
 
+/// Frozen hero digests (gate 128²; CAMERA_DERIVED — not 2C1 scientific authority).
+const REF_HERO_PRESENTATION_FRAME: &str =
+    "fae0afdd2b16a1ff8c086303edbf633e675595f6e81620dde483e690e7266544";
+const REF_HERO_SCENE_APPEARANCE: &str =
+    "b3c8f30afd3575215a8c75d2c5e82a0710f739e4d330a88e575de7880ccede84";
+/// Filled after first hero preset digest computation; updated if schema changes.
+const REF_HERO_CAMERA_SPEC: &str =
+    "42d3e3f8cc5d7b11950439ab46a850d6f5e2865f8e37a29ba6570f01b9ad2578";
+
+const OWNER_SELECTED_CANDIDATE: &str = "c024";
+
 #[derive(Serialize, Clone)]
 struct Check {
     name: String,
@@ -36,6 +47,7 @@ struct Gate2d3aEval {
     dirty_detail: String,
     owner_hero_selection_pending: bool,
     hero_frozen: bool,
+    owner_selected_candidate_id: Option<String>,
     scientific_inheritance: String,
     presentation_inheritance: String,
     camera_pipeline: String,
@@ -69,7 +81,6 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         format!("{:?}", build.cargo_profile),
     );
 
-    // fmt / clippy / tests are expected to be run by CI; record local fmt check lightly.
     let fmt = Command::new("cargo")
         .current_dir(&root)
         .args(["fmt", "--all", "--", "--check"])
@@ -124,7 +135,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         spec_digest.clone(),
     );
 
-    // Run baseline beauty with camera overlay (authoritative path for frozen pins).
+    // Baseline beauty with camera overlay (scientific pins — D3A-A2).
     let status = Command::new("cargo")
         .current_dir(&root)
         .args([
@@ -200,16 +211,6 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
 
     let hero_path = root.join("presets/camera/gargantua-hero-v1.toml");
     let hero_frozen = hero_path.is_file();
-    push(
-        &mut checks,
-        "a7_hero_not_frozen_before_owner_selection",
-        !hero_frozen,
-        if hero_frozen {
-            "hero preset present — Phase B only after owner selection".into()
-        } else {
-            "hero absent (expected in Phase A)".into()
-        },
-    );
 
     let phase_a = root.join("artifacts/gate-2d3a-camera-composition/phase-a-report.json");
     let shortlist_dir = root.join("artifacts/gate-2d3a-camera-composition/shortlist-contact");
@@ -225,6 +226,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
 
+    let mut shortlist_ids: Vec<String> = Vec::new();
     if phase_present {
         let pa: serde_json::Value = serde_json::from_slice(&std::fs::read(&phase_a)?)?;
         push(
@@ -233,19 +235,28 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             pa["baseline_exact"].as_bool() == Some(true),
             format!("{}", pa["baseline_exact"]),
         );
+        let status_ok = matches!(
+            pa["status"].as_str(),
+            Some("STOP_FOR_OWNER_HERO_SELECTION") | Some("CAMERA_PARAMETERIZATION_INSUFFICIENT")
+        );
         push(
             &mut checks,
-            "phase_a_status_stop_for_owner",
-            pa["status"].as_str() == Some("STOP_FOR_OWNER_HERO_SELECTION")
-                || pa["status"].as_str() == Some("CAMERA_PARAMETERIZATION_INSUFFICIENT"),
+            "phase_a_status_recorded",
+            status_ok,
             pa["status"].as_str().unwrap_or("").into(),
         );
-        let short_n = pa["shortlist_ids"].as_array().map(|a| a.len()).unwrap_or(0);
+        if let Some(arr) = pa["shortlist_ids"].as_array() {
+            shortlist_ids = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect();
+        }
         push(
             &mut checks,
             "phase_a_shortlist_nonempty_or_insufficient",
-            short_n > 0 || pa["parameterization_insufficient"].as_bool() == Some(true),
-            format!("shortlist_n={short_n}"),
+            !shortlist_ids.is_empty()
+                || pa["parameterization_insufficient"].as_bool() == Some(true),
+            format!("shortlist_n={}", shortlist_ids.len()),
         );
         push(
             &mut checks,
@@ -255,7 +266,6 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // Identity 2D0 pin remains a documentation reference; Phase A does not re-render identity.
     push(
         &mut checks,
         "documented_2d0_identity_digest",
@@ -263,42 +273,234 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         REF_IDENTITY_2D0.into(),
     );
 
+    let mut owner_selected: Option<String> = None;
+
+    if !hero_frozen {
+        push(
+            &mut checks,
+            "a7_hero_not_frozen_before_owner_selection",
+            true,
+            "hero absent (expected in Phase A)".into(),
+        );
+    } else {
+        let hero = load_camera_composition_preset(&hero_path)?;
+        let hero_digest = camera_spec_digest(&hero);
+        owner_selected = hero.source_candidate_id.clone();
+        let selected = owner_selected.as_deref().unwrap_or("");
+
+        push(
+            &mut checks,
+            "a7_hero_frozen_after_owner_selection",
+            true,
+            "hero preset present".into(),
+        );
+        push(
+            &mut checks,
+            "hero_role_is_hero_camera",
+            hero.role == CameraRole::HeroCamera,
+            hero.role.as_str().into(),
+        );
+        push(
+            &mut checks,
+            "hero_source_candidate_matches_owner",
+            selected == OWNER_SELECTED_CANDIDATE,
+            format!("source={selected} owner={OWNER_SELECTED_CANDIDATE}"),
+        );
+        push(
+            &mut checks,
+            "hero_source_in_phase_a_shortlist",
+            shortlist_ids.iter().any(|id| id == selected),
+            format!("selected={selected} shortlist={shortlist_ids:?}"),
+        );
+
+        let cand = candidates.iter().find(|c| c.id == selected);
+        let params_ok = match cand {
+            Some(c) => {
+                (hero.observer.boyer_lindquist_r - c.r_over_m).abs() < 1e-12
+                    && (hero.observer.boyer_lindquist_theta_degrees - c.theta_degrees).abs() < 1e-12
+                    && (hero.observer.boyer_lindquist_phi_degrees - c.phi_degrees).abs() < 1e-12
+                    && (hero.camera.horizontal_field_of_view_degrees - c.hfov_degrees).abs() < 1e-12
+            }
+            None => false,
+        };
+        push(
+            &mut checks,
+            "hero_params_match_selected_candidate",
+            params_ok,
+            format!("candidate={selected}"),
+        );
+
+        // Pin camera_spec_digest (must be real hex once placeholder replaced).
+        let spec_pin_ok = REF_HERO_CAMERA_SPEC.len() == 64
+            && REF_HERO_CAMERA_SPEC.chars().all(|c| c.is_ascii_hexdigit())
+            && hero_digest == REF_HERO_CAMERA_SPEC;
+        push(
+            &mut checks,
+            "hero_camera_spec_digest",
+            spec_pin_ok,
+            format!("got={hero_digest} want={REF_HERO_CAMERA_SPEC}"),
+        );
+
+        let hero_status = Command::new("cargo")
+            .current_dir(&root)
+            .args([
+                "run",
+                "--release",
+                "-p",
+                "xtask",
+                "--",
+                "render-scene-appearance",
+                "--preset",
+                "presets/gargantua-physical-v1.toml",
+                "--appearance",
+                "presets/appearance/gargantua-scene-v1.toml",
+                "--presentation",
+                "presets/presentation/gargantua-cinematic-v1.toml",
+                "--camera",
+                "presets/camera/gargantua-hero-v1.toml",
+                "--tier",
+                "gate",
+                "--output-dir",
+                "artifacts/gate-2d3a-camera-composition/hero-eval",
+                "--execution",
+                "parallel",
+                "--threads",
+                "8",
+                "--require-release",
+                "--no-env-reference",
+            ])
+            .status()?;
+        push(
+            &mut checks,
+            "hero_camera_render_ok",
+            hero_status.success(),
+            format!("exit={hero_status}"),
+        );
+
+        let hero_report_path =
+            root.join("artifacts/gate-2d3a-camera-composition/hero-eval/appearance-report.json");
+        let hero_report: serde_json::Value = if hero_report_path.is_file() {
+            serde_json::from_slice(&std::fs::read(&hero_report_path)?)?
+        } else {
+            serde_json::json!({})
+        };
+        let h_frame = hero_report["presentation_frame_digest"]
+            .as_str()
+            .unwrap_or("");
+        let h_scene = hero_report["scene_appearance_digest"]
+            .as_str()
+            .unwrap_or("");
+        let h_pres = hero_report["presentation_spec_digest"]
+            .as_str()
+            .unwrap_or("");
+        let h_note = hero_report["note"].as_str().unwrap_or("");
+
+        push(
+            &mut checks,
+            "hero_presentation_frame_digest",
+            h_frame == REF_HERO_PRESENTATION_FRAME,
+            h_frame.into(),
+        );
+        push(
+            &mut checks,
+            "hero_scene_appearance_digest",
+            h_scene == REF_HERO_SCENE_APPEARANCE,
+            h_scene.into(),
+        );
+        push(
+            &mut checks,
+            "hero_frame_differs_from_baseline",
+            h_frame != REF_SCENE_2D1 && !h_frame.is_empty(),
+            format!("hero={h_frame} baseline={REF_SCENE_2D1}"),
+        );
+        push(
+            &mut checks,
+            "hero_inherits_presentation_spec",
+            h_pres == REF_PRESENTATION_SPEC,
+            h_pres.into(),
+        );
+        push(
+            &mut checks,
+            "hero_authority_label_camera_derived",
+            h_note.contains("CAMERA_DERIVED") || h_note.contains("camera-derived"),
+            h_note.into(),
+        );
+
+        // Composition metrics from Phase A gate contact (material move vs baseline class mix).
+        let contact = root.join(format!(
+            "artifacts/gate-2d3a-camera-composition/shortlist-contact/03-{OWNER_SELECTED_CANDIDATE}.json"
+        ));
+        // Rank may vary; find any shortlist-contact file for the selected id.
+        let contact_path = if contact.is_file() {
+            contact
+        } else {
+            std::fs::read_dir(&shortlist_dir)?
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .find(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.contains(OWNER_SELECTED_CANDIDATE))
+                })
+                .unwrap_or(contact)
+        };
+        if contact_path.is_file() {
+            let c: serde_json::Value = serde_json::from_slice(&std::fs::read(&contact_path)?)?;
+            let disk = c["gate_metrics"]["disk_hit_fraction"]
+                .as_f64()
+                .unwrap_or(1.0);
+            let esc = c["gate_metrics"]["escaped_fraction"]
+                .as_f64()
+                .unwrap_or(0.0);
+            // Baseline D1-V1: disk≈0.751 / esc≈0.149. Hero must reduce disk occupancy and raise env.
+            let improved = disk < 0.72 && esc > 0.20;
+            push(
+                &mut checks,
+                "hero_class_fractions_materially_improved_vs_baseline",
+                improved,
+                format!("disk={disk:.4} esc={esc:.4} (baseline ~0.751/0.149)"),
+            );
+            let failed = c["gate_metrics"]["failed_count"].as_u64().unwrap_or(1);
+            let affine = c["gate_metrics"]["affine_limit_count"]
+                .as_u64()
+                .unwrap_or(1);
+            push(
+                &mut checks,
+                "hero_numerical_failures_zero",
+                failed == 0 && affine == 0,
+                format!("failed={failed} affine_limit={affine}"),
+            );
+        } else {
+            push(
+                &mut checks,
+                "hero_class_fractions_materially_improved_vs_baseline",
+                false,
+                "missing shortlist-contact metrics".into(),
+            );
+        }
+
+        let beauty =
+            root.join("artifacts/gate-2d3a-camera-composition/hero-eval/beauty-scene-srgb16.png");
+        push(
+            &mut checks,
+            "hero_beauty_artifact_present",
+            beauty.is_file(),
+            beauty.display().to_string(),
+        );
+    }
+
     let sci_ok = [
         "a2_baseline_physical_color_digest",
         "a2_baseline_payload_sha256",
     ]
     .iter()
-    .all(|n| {
-        checks
-            .iter()
-            .find(|c| c.name == *n)
-            .is_some_and(|c| c.status == "PASS")
-    });
+    .all(|n| check_pass(&checks, n));
     let pres_ok = [
         "inherit_2d0_presentation_spec_digest",
         "a1_baseline_presentation_frame_digest",
     ]
     .iter()
-    .all(|n| {
-        checks
-            .iter()
-            .find(|c| c.name == *n)
-            .is_some_and(|c| c.status == "PASS")
-    });
-    let cam_ok = [
-        "a1_overlay_matches_physical_observer_camera",
-        "a3_candidate_count_exact",
-        "a6_search_guidance_label",
-        "a7_hero_not_frozen_before_owner_selection",
-        "baseline_camera_role",
-    ]
-    .iter()
-    .all(|n| {
-        checks
-            .iter()
-            .find(|c| c.name == *n)
-            .is_some_and(|c| c.status == "PASS")
-    });
+    .all(|n| check_pass(&checks, n));
 
     let phase_a_complete = phase_present
         && checks
@@ -307,25 +509,59 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             .all(|c| c.status == "PASS");
 
     let all_pass = checks.iter().all(|c| c.status == "PASS");
-    let result = if all_pass && phase_a_complete {
-        "PHASE_A_COMPLETE_AWAITING_OWNER_HERO_SELECTION"
-    } else if all_pass && !phase_present {
-        "PHASE_A_INFRA_PASS_RUN_CAMERA_SEARCH"
+
+    let (phase, result, authoritative, pending) = if hero_frozen {
+        let auth = all_pass && !dirty && build.is_optimized_release_execution();
+        (
+            "PHASE_B",
+            if auth {
+                "PASS"
+            } else if all_pass {
+                "PASS_NON_AUTHORITATIVE"
+            } else {
+                "FAIL"
+            },
+            auth,
+            false,
+        )
     } else {
-        "FAIL"
+        let result = if all_pass && phase_a_complete {
+            "PHASE_A_COMPLETE_AWAITING_OWNER_HERO_SELECTION"
+        } else if all_pass && !phase_present {
+            "PHASE_A_INFRA_PASS_RUN_CAMERA_SEARCH"
+        } else {
+            "FAIL"
+        };
+        ("PHASE_A", result, false, true)
+    };
+
+    let camera_pipeline = if hero_frozen {
+        if check_pass(&checks, "hero_presentation_frame_digest")
+            && check_pass(&checks, "a7_hero_frozen_after_owner_selection")
+        {
+            "CAMERA_PIPELINE_PHASE_B_PASS"
+        } else {
+            "CAMERA_PIPELINE_FAIL"
+        }
+    } else if check_pass(&checks, "a7_hero_not_frozen_before_owner_selection")
+        && check_pass(&checks, "baseline_camera_role")
+    {
+        "CAMERA_PIPELINE_PHASE_A_PASS"
+    } else {
+        "CAMERA_PIPELINE_FAIL"
     };
 
     let mut report = Gate2d3aEval {
         gate: "gate-2d3a-camera-composition".into(),
-        phase: "PHASE_A".into(),
+        phase: phase.into(),
         result: result.into(),
-        // Full authoritative PASS only after Phase B hero freeze (D3A-A7).
-        authoritative: false,
+        authoritative,
         commit: commit.trim().into(),
         dirty,
         dirty_detail,
-        owner_hero_selection_pending: true,
-        hero_frozen: false,
+        owner_hero_selection_pending: pending,
+        hero_frozen,
+        owner_selected_candidate_id: owner_selected,
         scientific_inheritance: if sci_ok {
             "SCIENTIFIC_INHERITANCE_PASS_BASELINE_PATH"
         } else {
@@ -338,12 +574,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             "PRESENTATION_INHERITANCE_FAIL"
         }
         .into(),
-        camera_pipeline: if cam_ok {
-            "CAMERA_PIPELINE_PHASE_A_PASS"
-        } else {
-            "CAMERA_PIPELINE_FAIL"
-        }
-        .into(),
+        camera_pipeline: camera_pipeline.into(),
         build,
         checks,
         content_digest_excluding_digest_field: String::new(),
@@ -367,6 +598,9 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     if report.result == "PHASE_A_COMPLETE_AWAITING_OWNER_HERO_SELECTION" {
         return Err("STOP_FOR_OWNER_HERO_SELECTION".into());
     }
+    if report.result == "PASS" || report.result == "PASS_NON_AUTHORITATIVE" {
+        return Ok(());
+    }
     Ok(())
 }
 
@@ -382,6 +616,7 @@ impl Gate2d3aEval {
             dirty_detail: self.dirty_detail.clone(),
             owner_hero_selection_pending: self.owner_hero_selection_pending,
             hero_frozen: self.hero_frozen,
+            owner_selected_candidate_id: self.owner_selected_candidate_id.clone(),
             scientific_inheritance: self.scientific_inheritance.clone(),
             presentation_inheritance: self.presentation_inheritance.clone(),
             camera_pipeline: self.camera_pipeline.clone(),
@@ -390,6 +625,13 @@ impl Gate2d3aEval {
             content_digest_excluding_digest_field: String::new(),
         }
     }
+}
+
+fn check_pass(checks: &[Check], name: &str) -> bool {
+    checks
+        .iter()
+        .find(|c| c.name == name)
+        .is_some_and(|c| c.status == "PASS")
 }
 
 fn push(checks: &mut Vec<Check>, name: &str, ok: bool, detail: String) {

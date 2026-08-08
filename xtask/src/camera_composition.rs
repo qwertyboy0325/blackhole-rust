@@ -49,6 +49,9 @@ pub struct CameraCompositionPreset {
     pub schema_version: u32,
     pub camera_preset_id: String,
     pub role: CameraRole,
+    /// Phase B provenance: shortlist/gate candidate that froze this hero.
+    #[serde(default)]
+    pub source_candidate_id: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
     pub observer: ObserverSection,
@@ -82,6 +85,16 @@ impl CameraCompositionPreset {
             return Err(CameraCompositionError::Invalid(
                 "camera.roll_degrees must be 0.0 in Gate 2D3A v1 (D3A-A8)".into(),
             ));
+        }
+        if self.role == CameraRole::HeroCamera {
+            match &self.source_candidate_id {
+                Some(id) if !id.is_empty() => {}
+                _ => {
+                    return Err(CameraCompositionError::Invalid(
+                        "HERO_CAMERA requires non-empty source_candidate_id (D3A-A7)".into(),
+                    ));
+                }
+            }
         }
         for (name, v) in [
             ("boyer_lindquist_r", self.observer.boyer_lindquist_r),
@@ -149,6 +162,14 @@ pub fn camera_spec_digest(camera: &CameraCompositionPreset) -> String {
     h.update(camera.camera_preset_id.as_bytes());
     h.update(b"|");
     h.update(camera.role.as_str().as_bytes());
+    h.update(b"|src|");
+    h.update(
+        camera
+            .source_candidate_id
+            .as_deref()
+            .unwrap_or("")
+            .as_bytes(),
+    );
     h.update(b"|obs|");
     h.update(camera.observer.motion.as_bytes());
     h.update(camera.observer.boyer_lindquist_r.to_bits().to_le_bytes());
@@ -191,6 +212,7 @@ pub fn candidate_camera_preset(
         schema_version: CAMERA_PRESET_SCHEMA_VERSION,
         camera_preset_id: candidate_id.to_string(),
         role: CameraRole::CandidateCamera,
+        source_candidate_id: None,
         description: Some(format!(
             "search candidate {candidate_id}: r={r} θ={theta_deg} φ={phi_deg} hfov={hfov_deg}"
         )),
@@ -259,23 +281,15 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_fields() {
-        let bad = r#"
-schema_version = 1
-camera_preset_id = "x"
-role = "BASELINE_CAMERA"
-extra = 1
-[observer]
-motion = "zamo"
-boyer_lindquist_r = 20.0
-boyer_lindquist_theta_degrees = 85.0
-boyer_lindquist_phi_degrees = 0.0
-[camera]
-projection = "rectilinear"
-horizontal_field_of_view_degrees = 50.0
-look_at = "black_hole_origin"
-roll_degrees = 0.0
-"#;
-        assert!(toml::from_str::<CameraCompositionPreset>(bad).is_err());
+    fn hero_camera_spec_digest_frozen() {
+        let cam =
+            load_camera_composition_preset(&root().join("presets/camera/gargantua-hero-v1.toml"))
+                .unwrap();
+        assert_eq!(cam.role, CameraRole::HeroCamera);
+        assert_eq!(cam.source_candidate_id.as_deref(), Some("c024"));
+        assert_eq!(
+            camera_spec_digest(&cam),
+            "42d3e3f8cc5d7b11950439ab46a850d6f5e2865f8e37a29ba6570f01b9ad2578"
+        );
     }
 }

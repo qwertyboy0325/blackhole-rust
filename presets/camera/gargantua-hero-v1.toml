@@ -1,0 +1,21 @@
+# Gate 2D3A HERO_CAMERA — owner-selected production framing (D3A-A7).
+# Frozen from shortlist candidate c024 (F5_BALANCED_POSTER).
+# Digests are CAMERA_DERIVED_PRODUCTION_OUTPUT_NOT_SCIENTIFIC_AUTHORITY (D3A-A2).
+# Physical / appearance / presentation presets are never mutated.
+schema_version = 1
+camera_preset_id = "gargantua-hero-v1"
+role = "HERO_CAMERA"
+source_candidate_id = "c024"
+description = "Owner-selected hero from Phase A shortlist c024 (r=20 θ=85 φ=0 hfov=65)"
+
+[observer]
+motion = "zamo"
+boyer_lindquist_r = 20.0
+boyer_lindquist_theta_degrees = 85.0
+boyer_lindquist_phi_degrees = 0.0
+
+[camera]
+projection = "rectilinear"
+horizontal_field_of_view_degrees = 65.0
+look_at = "black_hole_origin"
+roll_degrees = 0.0
