@@ -9,9 +9,10 @@ parameters.
 ## Status: Gate 2C1 authoritative PASS (pending merge)
 
 Gate 0–2C0 and R1/E0 are complete on `main` (Gate 2C0 merge `57659c62`, PR #18).
-Gate 2C1 physical colorimetry evaluated **PASS** @ `480e6bf` after closure
-`5225581548` (`physical_color_digest` `16663188…`; eval content `b5727f26…`).
-GPU and GUI remain deferred. E1 research remains `PAUSE_RESEARCH_WEDGE`.
+Gate 2C1 physical colorimetry evaluated **PASS** @ `9175600` after closures
+`5225581548` + `5225636038` (`physical_color_digest` `16663188…`; eval content
+`6589bf68…`). GPU and GUI remain deferred. E1 research remains
+`PAUSE_RESEARCH_WEDGE`.
 
 ![Gate evolution (diagnostic channels)](docs/media/blackhole-rust-evolution.gif)
 

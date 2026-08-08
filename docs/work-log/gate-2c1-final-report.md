@@ -2,13 +2,13 @@
 
 ## Result
 
-**Authoritative evaluate PASS** on clean worktree after owner closure
-`5225581548` (C1–C4).
+**Authoritative evaluate PASS** on clean worktree after owner closures
+`5225581548` (C1–C4) + `5225636038` (C2b independent Planckian).
 
 | Field | Value |
 | --- | --- |
-| Evaluated tip | `480e6bfb2dfcc5cff797b4780c14ed68b93d2736` |
-| Evaluation content digest | `b5727f26e56bbbe084bbda6f03f03cf0e1ad61dea9e101bbe9d41b4a81c19b96` |
+| Evaluated tip | `9175600e3cae73ab33d662769227c09bdb22a678` |
+| Evaluation content digest | `6589bf68295033051d334c0bd08881a121381f68be5c280c430521977f22d31b` |
 | `result` | `PASS` |
 | `authoritative` | `true` |
 | `dirty` | `false` |
@@ -22,17 +22,19 @@ Implementation commits on branch `gate-2c1-physical-colorimetry`:
 2. `7e9fe82` — RGB matrix roundtrip check uses relative L1 on absolute photometric scale
 3. `8cac462` — report-only PASS @ pre-closure tip (superseded digests)
 4. `480e6bf` — closure C1–C4: runtime CIE, 360–830 band, raw/EXR authority
+5. `9175600` — C2b: evaluator-local independent `B_λ` Planckian xy oracle
 
-## Closure package (owner `5225581548`)
+## Closure package (owner `5225581548` + `5225636038`)
 
 | ID | Issue | Resolution |
 | --- | --- | --- |
 | C1 | CIE licensed as separate CC BY-SA CSV, but `include_str!` baked table into binary | Runtime load from `assets/standards/cie1931-2deg-v1.csv` + SHA-256 pin; unit tests use synthetic CMFs |
-| C2 | Production band was abridged 380–780 nm | Full official **360–830 nm @ 1 nm / 471 samples** (`cie-1931-360-830-1nm-v1`); Planckian xy direction check added |
+| C2 | Production band was abridged 380–780 nm | Full official **360–830 nm @ 1 nm / 471 samples** (`cie-1931-360-830-1nm-v1`) |
+| C2b | Planckian check reused production XYZ path | Evaluator-local SI `B_λ(h,c,k_B,T)` × official CMF on refined λ grid; compare production `xy` at 3000/5000/6500/10000 K with convergence-derived tol |
 | C3 | Digest hashed `OutcomeClass` but f64le lacked typed outcome | Schema-2 payload `BHRXYZR2`: presence + outcome u8 + XYZRGB; `payload_sha256` in meta; self-consistency check |
 | C4 | EXR “exact roundtrip” only verified XYZRGB+mask | Roundtrip verifies all `phys.*` + `outcome` channels; frame `validate()` before digest |
 
-`physical_color_digest` **changed** vs pre-closure (expected: band + digest tag v2 + outcome encoding).
+`physical_color_digest` changed vs pre-C1–C4 tip (band + digest tag v2 + outcome encoding). Unchanged by C2b (evaluator-only).
 
 ## Architecture B provenance (production)
 
@@ -86,7 +88,8 @@ All four inherited 2C0/2B0 digests **exact-match** frozen authorities.
 | ν↔λ agreement | hermetic envelope (tol `1e-5`) |
 | Sampling ladder 10→1 nm | hermetic ladder improves toward 1 nm |
 | Blackbody Y(T) | Y(3k) < Y(6.5k) < Y(10k) |
-| Blackbody Planckian xy | `hermetic_blackbody_planckian_direction` |
+| Blackbody Planckian xy (direction) | `hermetic_blackbody_planckian_direction` (supplemental) |
+| Blackbody Planckian xy (independent) | `hermetic_blackbody_planckian_independent_xy`: SI `B_λ`×CMF vs production; max Δxy ≈ `4.8e-7` (tol `1e-5`, ref-conv ≈ `5e-9`) |
 | RGB matrix roundtrip | relative L1 hermetic |
 | Schema-2 raw authority | `BHRXYZR2` + outcome; `raw_payload_self_consistent`; meta `payload_schema=2` |
 | Serial ≡ parallel | smoke color digests + f64le byte-identical |
