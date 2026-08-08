@@ -16,6 +16,7 @@ pub mod metric;
 pub mod observer;
 pub mod radius;
 pub mod ray_init;
+pub mod spectral;
 pub mod types;
 
 pub use circular_orbit::{
@@ -45,6 +46,11 @@ pub use metric::{
 pub use observer::{check_tetrad, minkowski_static_observer, zamo_observer, Observer, Tetrad};
 pub use radius::{evaluate_oblate_radius, OblateRadius};
 pub use ray_init::{initialize_rectilinear_ray, CameraParams, InitialRay, SensorCoord};
+pub use spectral::{
+    frequency_from_wavelength, i_lambda_from_i_nu, i_nu_from_i_lambda, transport_i_nu,
+    wavelength_from_frequency, Frequency, SpectralGrid, SpectralMeasure, Wavelength,
+    DIAGNOSTIC_WAVELENGTH_FREQUENCY_PRODUCT,
+};
 pub use types::{
     identity_residual, Covector, LocalComponents, MetricTensor, PositionBl, PositionKs, RawMatrix4,
     Vector,

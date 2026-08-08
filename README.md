@@ -6,12 +6,13 @@ Gargantua in *Interstellar*, not an exact reconstruction of Double Negative's
 proprietary assets, renderer, grading, camera, or undocumented production
 parameters.
 
-## Status: E1 in progress (physics-aware adaptive sampling)
+## Status: Gate 2B2 PASS (final merge review)
 
-Gate 0–2B1 and R1/E0 are complete. E1 evaluates corpus-bounded adaptive
-quadtree sampling against the frozen CPU `f64` oracle. Gate 2B2 remains
-deferred. This work does **not** implement spectra, temperature, physical RGB,
-OpenEXR, GPU, wgpu, egui, or GUI functionality.
+Gate 0–2B2 and R1/E0 are complete at evaluated commit
+`3499d8e51535bf809967c975bfccc7c6fbd45dfc` (closures `5203577417`,
+`5224835191`). Gate 2B2 is diagnostic spectral `I_ν` transport (`g³`) on
+`SpectralFrame V1` — not temperature, physical RGB, OpenEXR, GPU, wgpu, egui, or
+GUI. E1 research remains `PAUSE_RESEARCH_WEDGE`. Awaiting owner merge on PR #17.
 
 ![Gate evolution (diagnostic channels)](docs/media/blackhole-rust-evolution.gif)
 
@@ -19,7 +20,9 @@ Diagnostic scientific channels only — not a beauty render. Regenerate with
 `python3 scripts/build_evolution_gif.py` after new gate artifacts land; keep
 this GIF linked from the README on subsequent commits.
 
-See [diagnostic bolometric emission V1](docs/diagnostic-bolometric-emission-v1.md).
+See [diagnostic bolometric emission V1](docs/diagnostic-bolometric-emission-v1.md)
+and [diagnostic spectral emission V1](docs/diagnostic-spectral-emission-v1.md).
+Gate 2B2 report: [gate-2b2-final-report](docs/work-log/gate-2b2-final-report.md).
 
 Selected path remains:
 

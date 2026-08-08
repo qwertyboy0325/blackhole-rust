@@ -71,3 +71,33 @@ pub enum BolometricRenderError {
     #[error("celestial texture error: {0}")]
     Celestial(String),
 }
+
+#[derive(Debug, Error, Clone, PartialEq)]
+pub enum SpectralRenderError {
+    #[error("frame length mismatch")]
+    FrameLengthMismatch,
+    #[error("grid dimension mismatch")]
+    GridMismatch,
+    #[error("invalid spectrum specification: {0}")]
+    InvalidSpectrumSpec(String),
+    #[error("invalid spectral grid: {0}")]
+    InvalidGrid(String),
+    #[error("invalid spectral frequency: {0}")]
+    InvalidFrequency(String),
+    #[error("invalid spectral intensity: {0}")]
+    InvalidIntensity(String),
+    #[error("spectral mapping failed at ({col},{row}): {cause}")]
+    PixelMappingFailed { col: u32, row: u32, cause: String },
+    #[error("spectral verification failed at ({col},{row}): {cause}")]
+    VerificationFailed { col: u32, row: u32, cause: String },
+    #[error("spectral provenance mismatch: {0}")]
+    ProvenanceMismatch(String),
+    #[error("spectral flag requires frequency-shift and bolometric frames")]
+    FlagRequiresBolometric,
+    #[error("spectral flag requires opaque-disk surface set and opaque-disk-mask mode")]
+    FlagSurfaceModeMismatch,
+    #[error("unsupported spectrum id `{0}`")]
+    UnsupportedSpectrumId(String),
+    #[error("unsupported spectral grid id `{0}`")]
+    UnsupportedGridId(String),
+}

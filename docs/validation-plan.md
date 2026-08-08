@@ -68,6 +68,7 @@ near-critical rays, halve requested error/step scales and measure:
 - maximum normalized `H`, `E`, `L_z`, and `Q` drift;
 - outcome stability;
 - redshift and spectral integral convergence;
+- Gate 2B2 `I_ν` bolometric closure vs Gate 2B1 `g⁴` and line-shift fixtures;
 - shadow/critical-curve location convergence by azimuth.
 
 Near-critical rays may require a separate high-precision reference and are never

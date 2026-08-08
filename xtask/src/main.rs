@@ -19,12 +19,14 @@ mod evaluate_gate2a1_celestial;
 mod evaluate_gate2a2_lensed_celestial;
 mod evaluate_gate2b0_frequency_shift;
 mod evaluate_gate2b1_bolometric_radiance;
+mod evaluate_gate2b2_spectral_transport;
 mod evaluate_r1_e0_oracle_corpus;
 mod inspect;
 mod integrate_ray;
 mod oracle_benchmark;
 mod preset;
 mod reference_pipeline;
+mod render_disk_spectrum;
 mod render_lensed_celestial;
 mod render_tier;
 mod spike_dop853;
@@ -206,6 +208,29 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         emit_disk_bolometric_radiance: bool,
     },
+    /// Gate 2B2: diagnostic disk spectral I_ν transport (g³).
+    RenderDiskSpectrum {
+        #[arg(long)]
+        preset: String,
+        #[arg(long, value_enum)]
+        tier: Option<render_tier::DiagnosticRenderTier>,
+        #[arg(long)]
+        width: Option<u32>,
+        #[arg(long)]
+        height: Option<u32>,
+        #[arg(long, default_value = "diagnostic-lognormal-continuum-v1")]
+        spectrum: String,
+        #[arg(long, default_value = "spectral-grid-v1")]
+        spectral_grid: String,
+        #[arg(long)]
+        output_dir: String,
+        #[arg(long, value_enum, default_value_t = ExecutionArg::Serial)]
+        execution: ExecutionArg,
+        #[arg(long)]
+        threads: Option<usize>,
+        #[arg(long, default_value_t = false)]
+        require_release: bool,
+    },
     /// Emit canonical Gate 1B1 corpus JSON (numerical records; for determinism).
     CorpusReport {
         #[arg(long)]
@@ -300,6 +325,8 @@ fn main() {
                 evaluate_gate2b0_frequency_shift::evaluate()
             } else if scope == "gate-2b1-bolometric-radiance" {
                 evaluate_gate2b1_bolometric_radiance::evaluate()
+            } else if scope == "gate-2b2-spectral-transport" {
+                evaluate_gate2b2_spectral_transport::evaluate()
             } else if scope == "r1-e0-oracle-corpus" {
                 evaluate_r1_e0_oracle_corpus::evaluate()
             } else if scope == "e1-adaptive-sampling" {
@@ -432,6 +459,35 @@ fn main() {
                 threads,
                 emit_disk_frequency_shift,
                 emit_disk_bolometric_radiance,
+            )
+        }
+        Commands::RenderDiskSpectrum {
+            preset,
+            tier,
+            width,
+            height,
+            spectrum,
+            spectral_grid,
+            output_dir,
+            execution,
+            threads,
+            require_release,
+        } => {
+            let exec = match execution {
+                ExecutionArg::Serial => trace_outcome_map::CliExecution::Serial,
+                ExecutionArg::Parallel => trace_outcome_map::CliExecution::Parallel,
+            };
+            render_disk_spectrum::run(
+                &preset,
+                tier,
+                width,
+                height,
+                &spectrum,
+                &spectral_grid,
+                &output_dir,
+                require_release,
+                exec,
+                threads,
             )
         }
         Commands::CorpusReport { scope } => {
