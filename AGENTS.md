@@ -16,10 +16,10 @@ E1 is experimental:
 - do not require permanent schema governance for prototype internals.
 - research recommendation remains `PAUSE_RESEARCH_WEDGE` until owner authorizes estimator iteration.
 
-**Gate 2C0** physical thin-disk emission (Page–Thorne, `T_eff`, Planck `B_ν`,
-physical Hz `g³`, raw f64 artifacts): authoritative evaluate **PASS** on
-`gate-2c0-physical-emission` @ `551f69e` — pending owner merge review. Gate 2C1
-(CIE XYZ / scene-linear RGB / OpenEXR) is **not** authorized. Do not begin E2
+**Gate 2C0** physical thin-disk emission: prior authoritative PASS @ `551f69e`
+**INVALIDATED** (closure `5225301622` — Page–Thorne `F∝Q` missing `1/(B√C)` plus
+non-independent numerical oracle). Root-fix in progress on
+`gate-2c0-physical-emission`. Gate 2C1 is **not** authorized. Do not begin E2
 ray differentials, E3 ray bundles, GPU, wgpu, egui or GUI work.
 
 When a gate or research package produces new reviewable image artifacts,

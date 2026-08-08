@@ -245,7 +245,7 @@ enum Commands {
         height: Option<u32>,
         #[arg(long, default_value = "page-thorne-blackbody-v1")]
         physical_emission: String,
-        #[arg(long, default_value = "physical-spectral-grid-explore-256")]
+        #[arg(long, default_value = "physical-spectral-grid-v1")]
         physical_spectral_grid: String,
         #[arg(long)]
         output_dir: String,

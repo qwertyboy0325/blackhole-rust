@@ -35,12 +35,12 @@ Primary: Page & Thorne 1974, ApJ 191, 499 (zero torque at prograde ISCO).
 
 ```text
 Q(x) = B C^{-1/2} x^{-1} [ x − x₀ − (3/2) a* ln(x/x₀) − Σ log-root terms ]
-F_one_face = (3 c⁶ Ṁ) / (8 π G² M²) · Q / x⁶
-         = (3 G M Ṁ) / (8 π r_phys³) · Q
+F_one_face = (3 c⁶ Ṁ) / (8 π G² M²) · Q / (B √C x⁶)
+         = (3 G M Ṁ) / (8 π r_phys³) · Q / (B √C)
 ```
 
 with `x = √(r/M)`, `B = 1 + a*/x³`, `C = 1 − 3/x² + 2 a*/x³` (PT74; `a*` linear
-in `C`).
+in `C`). The factor `1/(B √C)` is mandatory for this `Q` convention.
 
 Conventions:
 
@@ -53,8 +53,8 @@ Conventions:
 Independent oracles:
 
 1. Newtonian zero-torque `F_N = (3GMṀ)/(8πr³)(1 − √(r_isco/r))` at large `r`.
-2. Numerical integral of the PT conservation-law integrand (different code path),
-   converted to `Q` and the same SI prefactor.
+2. Independent conservation-law **flux** quadrature (different code path):
+   `F ∝ (−Ω_,r)/(E−ΩL)² ∫(E−ΩL)L_,r dr` with SI conversion — compare flux, not `Q`.
 
 ## Temperature and Planck
 
@@ -65,19 +65,20 @@ I_ν,em(ν,r) = B_ν(ν, T_eff)
 ```
 
 Factor **π is mandatory** (isotropic Lambert emitter). Digests/tests fail if π
-is dropped. `σ_SB` is derived from exact `h`, `c`, `k_B`.
+is dropped. `σ_SB` is derived from exact `h`, `c`, `k_B`. Finite-grid truncation
+uses the analytic total `∫_0^∞ B_ν = σT⁴/π`, never another finite numerical band.
 
 Deferred: color correction `f_col`, limb darkening, atmosphere, returning
 radiation, Comptonization.
 
 ## Physical spectral grid + transport
 
-- New grid family `physical-spectral-grid-explore-{n}` (Hz, log-spaced).
-- Provisional band `[1e11, 1e17]` Hz for Gate 2C0 calibration — **bin count not
-  frozen** without convergence evidence.
+- Frozen gate grid: `physical-spectral-grid-v1` (256 log bins, `[1e11, 1e17]` Hz).
+- Explore family `physical-spectral-grid-explore-{n}` remains for ladder evidence only.
 - Vacuum transport reuses `transport_i_nu`: `I_ν,obs(ν_obs) = g³ I_ν,em(ν_obs/g)`.
-- Closures (separate families): emitter `π∫B ≈ σT⁴` (truncation-aware);
-  transport `∫I_obs ≈ g⁴ ∫I_em` on the mapped band.
+- Closures (separate families): emitter `π∫B ≈ σT⁴` (truncation-aware vs analytic
+  total); transport `∫I_obs ≈ g⁴ ∫I_em` on the mapped band. Absolute and relative
+  maxima are tracked independently (lowest raster index on ties).
 
 ## Artifacts (raw authority)
 
@@ -96,7 +97,7 @@ radiation, Comptonization.
 cargo run --release -p xtask -- render-physical-disk-spectrum \
   --preset presets/gargantua-physical-v1.toml --tier gate \
   --physical-emission page-thorne-blackbody-v1 \
-  --physical-spectral-grid physical-spectral-grid-explore-256 \
+  --physical-spectral-grid physical-spectral-grid-v1 \
   --output-dir artifacts/gate-2c0-physical-emission \
   --execution parallel --threads N --require-release
 

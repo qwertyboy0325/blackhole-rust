@@ -10,10 +10,11 @@ use relativity_core::{
 };
 use relativity_render::{
     independent_physical_i_nu_obs, integrate_pi_b_nu_log_grid, newtonian_zero_torque_flux,
-    page_thorne_one_face_flux, page_thorne_q, page_thorne_q_numerical,
-    parse_physical_spectral_grid_id, physical_spectral_grid_explore, planck_b_nu,
-    stefan_boltzmann_flux, teff_from_one_face_flux, PageThorneRoots, PHYSICAL_EMISSION_MODEL_ID,
-    PHYSICAL_GRID_EXPLORE_PREFIX,
+    page_thorne_one_face_flux, page_thorne_one_face_flux_numerical,
+    parse_physical_spectral_grid_id, physical_spectral_grid_explore, physical_spectral_grid_v1,
+    planck_b_nu, stefan_boltzmann_flux, teff_from_one_face_flux, PageThorneRoots,
+    PHYSICAL_EMISSION_MODEL_ID, PHYSICAL_GRID_EXPLORE_PREFIX, PHYSICAL_GRID_V1_ID,
+    PHYSICAL_GRID_V1_N_BINS,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -25,10 +26,14 @@ const REF_FREQ_2B0: &str = "65df7b55da2d8ed31935252e2907e8bf1bb686452aacf49bb9f2
 const REF_BOLO_2B1: &str = "d3721de712ddafb660513b482f6c089cfc79be087f78ef1592e46cfdec0746b2";
 const REF_GRID_2B2: &str = "0d7e4812dfba61635aaf00f486fcc23aebc63fbb2fb9d6a51ab8a4b8ed41474e";
 
-/// Provisional closure envelopes (calibrated from hermetic ladders; not loosened for green).
-const EMITTER_SB_REL_TOL: f64 = 5e-2;
+/// Frozen Gate 2C0 acceptance envelopes (calibrated after PT flux root fix).
+/// Gate / frozen-v1 emitter SB: measured max-rel ≈ 1.21e-4; freeze at 5e-4 (~4×).
+const EMITTER_SB_REL_TOL_GATE: f64 = 5e-4;
+/// Smoke explore-64 ladder peak ≈ 1.94e-3; freeze at 6e-3 (~3×). Not used for gate.
+const EMITTER_SB_REL_TOL_SMOKE: f64 = 6e-3;
 const TRANSPORT_G4_REL_TOL: f64 = 1e-10;
-const PT_NUMERICAL_REL_TOL: f64 = 2e-2;
+/// Algebraic vs independent conservation-law flux (domain worst under dense quad).
+const PT_NUMERICAL_REL_TOL: f64 = 5e-3;
 
 #[derive(Serialize, Clone)]
 struct Check {
@@ -212,8 +217,18 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "physical-spectral-grid-explore-64",
         true,
     )?;
-    check_report(&mut checks, "smoke_serial", &smoke_serial);
-    check_report(&mut checks, "smoke_parallel", &smoke_parallel);
+    check_report(
+        &mut checks,
+        "smoke_serial",
+        &smoke_serial,
+        EMITTER_SB_REL_TOL_SMOKE,
+    );
+    check_report(
+        &mut checks,
+        "smoke_parallel",
+        &smoke_parallel,
+        EMITTER_SB_REL_TOL_SMOKE,
+    );
     push(
         &mut checks,
         "smoke_serial_parallel_digest_identical",
@@ -245,10 +260,21 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         DiagnosticRenderTier::Gate,
         authoritative_threads,
         PHYSICAL_EMISSION_MODEL_ID,
-        "physical-spectral-grid-explore-256",
+        PHYSICAL_GRID_V1_ID,
         true,
     )?;
-    check_report(&mut checks, "gate0", &gate_run);
+    check_report(&mut checks, "gate0", &gate_run, EMITTER_SB_REL_TOL_GATE);
+    let frozen_grid = physical_spectral_grid_v1()?;
+    let frozen_grid_digest = relativity_render::physical_spectral_grid_digest(&frozen_grid)?;
+    push(
+        &mut checks,
+        "gate_uses_frozen_physical_spectral_grid_v1",
+        gate_run.physical_spectral_grid_digest == frozen_grid_digest,
+        format!(
+            "{} digest={}",
+            PHYSICAL_GRID_V1_ID, gate_run.physical_spectral_grid_digest
+        ),
+    );
     push(
         &mut checks,
         "gate_inherits_2b0_frequency_digest",
@@ -360,27 +386,32 @@ fn hermetic_physical_checks(checks: &mut Vec<Check>) -> Result<(), Box<dyn std::
         format!("rel={}", (f_pt - f_n).abs() / f_n),
     );
 
-    // Algebraic vs numerical Q
-    let k2 = KerrParams::new(1.0, 0.5)?;
-    let roots = PageThorneRoots::for_prograde(&k2)?;
-    let q_a = page_thorne_q((200.0_f64).sqrt(), &roots)?;
-    let q_n = page_thorne_q_numerical(&k2, 200.0, 8192)?;
+    // Algebraic vs independent numerical flux (not Q)
+    let k2 = KerrParams::new(1.0, 0.999)?;
+    let mut worst_pt = 0.0_f64;
+    for &r in &[1.5_f64, 3.0, 20.0, 200.0] {
+        let f_a = page_thorne_one_face_flux(&scale, mdot, &k2, r)?.value();
+        let f_n = page_thorne_one_face_flux_numerical(&scale, mdot, &k2, r, 16_384)?.value();
+        let rel = (f_a - f_n).abs() / f_a.max(f_n).max(1e-30);
+        worst_pt = worst_pt.max(rel);
+    }
     push(
         checks,
-        "hermetic_pt_algebraic_vs_numerical",
-        (q_a - q_n).abs() / q_a.max(q_n) < PT_NUMERICAL_REL_TOL,
-        format!("qa={q_a} qn={q_n}"),
+        "hermetic_pt_algebraic_vs_numerical_flux",
+        worst_pt < PT_NUMERICAL_REL_TOL,
+        format!("worst_rel={worst_pt} a*=0.999"),
     );
 
-    // F→0 at ISCO+, mdot→0
+    // F→0 as r→r_isco⁺ (high-spin: must approach closer than 1e-4 relative).
     let r_isco = prograde_isco_radius(&k2)?;
-    let f_near = page_thorne_one_face_flux(&scale, mdot, &k2, r_isco * 1.0001)?.value();
     let f_mid = page_thorne_one_face_flux(&scale, mdot, &k2, 20.0)?.value();
+    let f_near = page_thorne_one_face_flux(&scale, mdot, &k2, r_isco * (1.0 + 1e-4))?.value();
+    let f_eps = page_thorne_one_face_flux(&scale, mdot, &k2, r_isco * (1.0 + 1e-8))?.value();
     push(
         checks,
         "hermetic_pt_vanishes_near_isco",
-        f_near < 1e-3 * f_mid,
-        format!("near={f_near} mid={f_mid}"),
+        f_eps < 1e-4 * f_mid && f_eps < f_near && f_near < f_mid,
+        format!("eps={f_eps} near={f_near} mid={f_mid}"),
     );
     let f0 = page_thorne_one_face_flux(&scale, MdotKgPerS::new(0.0)?, &k2, 20.0)?.value();
     push(checks, "hermetic_mdot_zero", f0 == 0.0, format!("f={f0}"));
@@ -401,12 +432,22 @@ fn hermetic_physical_checks(checks: &mut Vec<Check>) -> Result<(), Box<dyn std::
         parse_physical_spectral_grid_id("spectral-grid-v1").is_err(),
         "diagnostic ν is not Hz".into(),
     );
-    let g = physical_spectral_grid_explore(128)?;
+    let g = physical_spectral_grid_v1()?;
+    push(
+        checks,
+        "hermetic_physical_grid_v1_frozen",
+        g.n_bins() == PHYSICAL_GRID_V1_N_BINS && g.grid_id() == PHYSICAL_GRID_V1_ID,
+        g.grid_id().into(),
+    );
+    let g_explore = physical_spectral_grid_explore(128)?;
     push(
         checks,
         "hermetic_physical_grid_explore",
-        g.n_bins() == 128 && g.grid_id().starts_with(PHYSICAL_GRID_EXPLORE_PREFIX),
-        g.grid_id().into(),
+        g_explore.n_bins() == 128
+            && g_explore
+                .grid_id()
+                .starts_with(PHYSICAL_GRID_EXPLORE_PREFIX),
+        g_explore.grid_id().into(),
     );
 
     // T_eff roundtrip
@@ -451,7 +492,12 @@ fn assert_frozen_2b_digests_untouched(
     Ok(())
 }
 
-fn check_report(checks: &mut Vec<Check>, label: &str, report: &PhysicalRenderReport) {
+fn check_report(
+    checks: &mut Vec<Check>,
+    label: &str,
+    report: &PhysicalRenderReport,
+    emitter_sb_rel_tol: f64,
+) {
     push(
         checks,
         &format!("{label}_gate_id"),
@@ -467,7 +513,7 @@ fn check_report(checks: &mut Vec<Check>, label: &str, report: &PhysicalRenderRep
     push(
         checks,
         &format!("{label}_emitter_sb_closure"),
-        report.closure.max_rel_emitter_sb_error <= EMITTER_SB_REL_TOL,
+        report.closure.max_rel_emitter_sb_error <= emitter_sb_rel_tol,
         format!("{}", report.closure.max_rel_emitter_sb_error),
     );
     push(

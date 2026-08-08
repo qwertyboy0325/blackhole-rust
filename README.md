@@ -6,14 +6,13 @@ Gargantua in *Interstellar*, not an exact reconstruction of Double Negative's
 proprietary assets, renderer, grading, camera, or undocumented production
 parameters.
 
-## Status: Gate 2C0 authoritative PASS (pending merge)
+## Status: Gate 2C0 blocked — physics root fix (closure 5225301622)
 
 Gate 0–2B2 and R1/E0 are complete on `main` (Gate 2B2 merge `95c4062`, PR #17).
-Gate 2B2 is diagnostic spectral `I_ν` transport (`g³`) on `SpectralFrame V1`.
-**Gate 2C0** physical Page–Thorne thin-disk emission, `T_eff`, Planck `B_ν`, and
-SI Hz `PhysicalSpectralFrame` evaluated **PASS** @ `551f69e` — pending owner
-merge. Gate 2C1 (CIE/RGB/OpenEXR), GPU, and GUI are not authorized. E1 research
-remains `PAUSE_RESEARCH_WEDGE`.
+Prior Gate 2C0 PASS @ `551f69e` is **invalidated** (Page–Thorne flux
+normalization + oracle). Fix in progress on `gate-2c0-physical-emission`. Gate
+2C1 (CIE/RGB/OpenEXR), GPU, and GUI are not authorized. E1 research remains
+`PAUSE_RESEARCH_WEDGE`.
 
 ![Gate evolution (diagnostic channels)](docs/media/blackhole-rust-evolution.gif)
 
@@ -63,7 +62,7 @@ cargo run --release -p xtask -- \
   --preset presets/gargantua-physical-v1.toml \
   --tier gate \
   --physical-emission page-thorne-blackbody-v1 \
-  --physical-spectral-grid physical-spectral-grid-explore-256 \
+  --physical-spectral-grid physical-spectral-grid-v1 \
   --output-dir artifacts/gate-2c0-physical-emission \
   --execution parallel --threads 16 \
   --require-release

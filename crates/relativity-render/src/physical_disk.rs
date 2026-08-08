@@ -133,7 +133,7 @@ impl PhysicalDiskEmissionConvention {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PhysicalDiskEmissionSample {
     pub radius_over_m: f64,
     pub radius_m: f64,
@@ -144,13 +144,86 @@ pub struct PhysicalDiskEmissionSample {
     pub inside_isco: bool,
 }
 
+impl PhysicalDiskEmissionSample {
+    pub fn validate(&self) -> Result<(), BolometricRenderError> {
+        if !self.radius_over_m.is_finite() || !(self.radius_over_m > 0.0) {
+            return Err(BolometricRenderError::InvalidEmissionSpec(
+                "radius_over_m must be finite and > 0".into(),
+            ));
+        }
+        if !self.radius_m.is_finite() || self.radius_m < 0.0 {
+            return Err(BolometricRenderError::InvalidEmissionSpec(
+                "radius_m must be finite and >= 0".into(),
+            ));
+        }
+        if !self.azimuth.is_finite() {
+            return Err(BolometricRenderError::InvalidEmissionSpec(
+                "azimuth must be finite".into(),
+            ));
+        }
+        if !self.g_factor.is_finite() || !(self.g_factor > 0.0) {
+            return Err(BolometricRenderError::InvalidEmissionSpec(
+                "g_factor must be finite and > 0".into(),
+            ));
+        }
+        if !self.f_one_face_w_m2.is_finite() || self.f_one_face_w_m2 < 0.0 {
+            return Err(BolometricRenderError::InvalidIntensity(
+                "f_one_face must be finite and >= 0".into(),
+            ));
+        }
+        if !self.t_eff_k.is_finite() || self.t_eff_k < 0.0 {
+            return Err(BolometricRenderError::InvalidIntensity(
+                "t_eff must be finite and >= 0".into(),
+            ));
+        }
+        if self.f_one_face_w_m2 > 0.0 && !(self.t_eff_k > 0.0) {
+            return Err(BolometricRenderError::InvalidIntensity(
+                "F>0 requires T_eff>0".into(),
+            ));
+        }
+        if self.inside_isco && self.f_one_face_w_m2 > 0.0 {
+            return Err(BolometricRenderError::InvalidIntensity(
+                "inside_isco samples cannot carry positive flux".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl<'de> Deserialize<'de> for PhysicalDiskEmissionSample {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Raw {
+            radius_over_m: f64,
+            radius_m: f64,
+            azimuth: f64,
+            g_factor: f64,
+            f_one_face_w_m2: f64,
+            t_eff_k: f64,
+            inside_isco: bool,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        let sample = Self {
+            radius_over_m: raw.radius_over_m,
+            radius_m: raw.radius_m,
+            azimuth: raw.azimuth,
+            g_factor: raw.g_factor,
+            f_one_face_w_m2: raw.f_one_face_w_m2,
+            t_eff_k: raw.t_eff_k,
+            inside_isco: raw.inside_isco,
+        };
+        sample.validate().map_err(serde::de::Error::custom)?;
+        Ok(sample)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PhysicalDiskEmissionPixel {
     DiskHit(PhysicalDiskEmissionSample),
     NotDiskHit { outcome_class: OutcomeClass },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PhysicalDiskEmissionFrame {
     pub grid: TraceGrid,
     pub pixels: Vec<PhysicalDiskEmissionPixel>,
@@ -174,6 +247,11 @@ impl PhysicalDiskEmissionFrame {
                 "r_isco/M must be finite and > 0".into(),
             ));
         }
+        for pix in &pixels {
+            if let PhysicalDiskEmissionPixel::DiskHit(s) = pix {
+                s.validate()?;
+            }
+        }
         Ok(Self {
             grid,
             pixels,
@@ -184,6 +262,21 @@ impl PhysicalDiskEmissionFrame {
 
     pub fn pixel_at(&self, col: u32, row: u32) -> &PhysicalDiskEmissionPixel {
         &self.pixels[pixel_index(self.grid, col, row)]
+    }
+}
+
+impl<'de> Deserialize<'de> for PhysicalDiskEmissionFrame {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Raw {
+            grid: TraceGrid,
+            pixels: Vec<PhysicalDiskEmissionPixel>,
+            r_isco_over_m: f64,
+            bounds: ResolvedDiskBounds,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        Self::try_new(raw.grid, raw.pixels, raw.r_isco_over_m, raw.bounds)
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -300,6 +393,11 @@ pub fn physical_disk_emission_digest(
     frequency_shift_digest: &str,
 ) -> Result<String, BolometricRenderError> {
     spec.validate()?;
+    for pix in &frame.pixels {
+        if let PhysicalDiskEmissionPixel::DiskHit(s) = pix {
+            s.validate()?;
+        }
+    }
     let mut h = Sha256::new();
     h.update(b"physical-disk-emission-digest-v1");
     h.update(convention.convention_id.as_bytes());

@@ -56,8 +56,8 @@ pub use lensed::{
 };
 pub use page_thorne::{
     newtonian_zero_torque_flux, page_thorne_one_face_flux, page_thorne_one_face_flux_numerical,
-    page_thorne_q, page_thorne_q_numerical, PageThorneRoots, ThinDiskFluxModel, FACE_POLICY,
-    FLUX_MODEL_ID, NEWTONIAN_ORACLE_ID,
+    page_thorne_q, PageThorneRoots, ThinDiskFluxModel, FACE_POLICY, FLUX_MODEL_ID,
+    NEWTONIAN_ORACLE_ID,
 };
 pub use physical_disk::{
     build_physical_disk_emission_frame, physical_disk_emission_digest,
@@ -70,10 +70,11 @@ pub use physical_disk::{
 pub use physical_spectral::{
     build_physical_spectral_frame, compute_physical_spectral_closure,
     independent_physical_i_nu_obs, parse_physical_spectral_grid_id, physical_spectral_digest,
-    physical_spectral_grid_digest, physical_spectral_grid_explore, PhysicalSpectralClosureMetrics,
-    PhysicalSpectralConvention, PhysicalSpectralDiskSample, PhysicalSpectralFrame,
-    PhysicalSpectralPixel, PHYSICAL_GRID_EXPLORE_PREFIX, PHYSICAL_GRID_NU_MAX_HZ,
-    PHYSICAL_GRID_NU_MIN_HZ, PHYSICAL_SPECTRAL_CONVENTION_ID, PHYSICAL_SPECTRAL_UNITS,
+    physical_spectral_grid_digest, physical_spectral_grid_explore, physical_spectral_grid_v1,
+    PhysicalSpectralClosureMetrics, PhysicalSpectralConvention, PhysicalSpectralDiskSample,
+    PhysicalSpectralFrame, PhysicalSpectralPixel, PHYSICAL_GRID_EXPLORE_PREFIX,
+    PHYSICAL_GRID_NU_MAX_HZ, PHYSICAL_GRID_NU_MIN_HZ, PHYSICAL_GRID_V1_ID, PHYSICAL_GRID_V1_N_BINS,
+    PHYSICAL_SPECTRAL_CONVENTION_ID, PHYSICAL_SPECTRAL_UNITS,
 };
 pub use planck::{
     integrate_pi_b_nu_log_grid, planck_b_lambda_from_b_nu, planck_b_nu, stefan_boltzmann_flux,

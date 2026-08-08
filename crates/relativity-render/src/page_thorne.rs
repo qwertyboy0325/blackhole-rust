@@ -161,11 +161,13 @@ pub fn page_thorne_q(x: f64, roots: &PageThorneRoots) -> Result<f64, BolometricR
 
 /// One-face Page–Thorne flux [W m⁻²] at geometrized radius `r_over_m` (units of `M`).
 ///
+/// With [`page_thorne_q`] (PT74 `Q` including `B C^{-1/2} x^{-1}`):
 /// ```text
-/// F = (3 c⁶ Ṁ) / (8 π G² M²) · Q / x⁶
-///   = (3 G M Ṁ) / (8 π r_phys³) · Q
+/// F = (3 c⁶ Ṁ) / (8 π G² M²) · Q / (B √C x⁶)
+///   = (3 G M Ṁ) / (8 π r_phys³) · Q / (B √C)
 /// ```
-/// with `x = √(r/M)`, `r_phys = (G M / c²) (r/M)`.
+/// The `1/(B √C)` factor is mandatory for this `Q` convention (vertical comoving
+/// one-face flux). Omitting it is a scientific-model error.
 pub fn page_thorne_one_face_flux(
     scale: &PhysicalScale,
     mdot: MdotKgPerS,
@@ -186,6 +188,14 @@ pub fn page_thorne_one_face_flux(
         .map_err(|e| BolometricRenderError::InvalidEmissionSpec(format!("physical mass: {e}")))?;
     let roots = PageThorneRoots::for_prograde(params)?;
     let x = r_over_m.sqrt();
+    let a = roots.a_star;
+    let b = metric_b(x, a);
+    let c_metric = metric_c(x, a);
+    if !(c_metric > 0.0) || !(b > 0.0) {
+        return Err(BolometricRenderError::InvalidEmissionSpec(
+            "Page-Thorne B or C non-positive at evaluation radius".into(),
+        ));
+    }
     let q = page_thorne_q(x, &roots)?;
     let m_kg = scale.mass_kg.value();
     let c = SPEED_OF_LIGHT_M_S;
@@ -196,7 +206,12 @@ pub fn page_thorne_one_face_flux(
     let pre = 3.0 * c6 * mdot.value() / (8.0 * std::f64::consts::PI * g2 * m_kg * m_kg);
     let x2 = x * x;
     let x6 = x2 * x2 * x2;
-    let f = pre * q / x6;
+    let f = pre * q / (b * c_metric.sqrt() * x6);
+    if !f.is_finite() || f < 0.0 {
+        return Err(BolometricRenderError::InvalidIntensity(
+            "Page-Thorne flux non-finite or negative".into(),
+        ));
+    }
     FluxWPerM2::new(f).map_err(|e| BolometricRenderError::InvalidIntensity(e.to_string()))
 }
 
@@ -234,11 +249,11 @@ pub fn newtonian_zero_torque_flux(
     FluxWPerM2::new(f).map_err(|e| BolometricRenderError::InvalidIntensity(e.to_string()))
 }
 
-// --- Independent numerical oracle (different code path from algebraic Q) ---
+// --- Independent numerical flux oracle (conservation law; not algebraic Q) ---
 
 #[inline]
-fn omega_over_c_geom(r_over_m: f64, a_star: f64) -> f64 {
-    // Ω M = 1 / (x³ + a*) with x² = r/M, in units where M=1 for derivatives wrt r/M.
+fn omega_m(r_over_m: f64, a_star: f64) -> f64 {
+    // Dimensionless Ω̃ = Ω M = 1 / (x³ + a*), x² = r/M.
     let x = r_over_m.sqrt();
     1.0 / (x * x * x + a_star)
 }
@@ -274,24 +289,27 @@ fn specific_angular_momentum_over_m(
     Ok(x * f / c.sqrt())
 }
 
-/// Independent numerical Page–Thorne `Q` via the conservation-law integrand.
+/// Independent numerical one-face Page–Thorne flux from the conservation law.
 ///
-/// Raw integral form (geometrized `M=1`):
+/// Geometrized (`M=1`) / continuum-fitting form (e.g. Penna+2012 B.11, C=0):
 /// ```text
-/// I = ∫_{r_ms}^r (E−ΩL) dL
-/// f_raw = −(dΩ/dr)⁻¹ (E−ΩL)⁻² I
+/// F̃ = (−Ω̃_,r̃) / (4 π r̃ (E−ΩL)²) · ∫_{r̃_ms}^{r̃} (E−ΩL) L̃_,r̃ dr̃
+/// F_SI = (c⁶ Ṁ) / (G² M²) · F̃
 /// ```
-/// Identity to algebraic [`page_thorne_q`] (PT74 eq. 35):
-/// ```text
-/// Q = (3/2) · f_raw / (r/M)³ = (3/2) · f_raw / x⁶
-/// ```
-/// (equivalent to absorbing the Kerr equatorial `e^{-(ν+ψ+μ)}` factor that
-/// converts `F = (Ṁ/4π) e f_raw` into `F = (3Ṁ)/(8π M²) Q / x⁶`).
-pub fn page_thorne_q_numerical(
+/// Uses `−Ω_,r` in the **numerator** (not its reciprocal) and compares **flux**
+/// to the algebraic path — never a self-defined intermediate `Q`.
+pub fn page_thorne_one_face_flux_numerical(
+    scale: &PhysicalScale,
+    mdot: MdotKgPerS,
     params: &KerrParams,
     r_over_m: f64,
     n_quad: usize,
-) -> Result<f64, BolometricRenderError> {
+) -> Result<FluxWPerM2, BolometricRenderError> {
+    if mdot.value() == 0.0 {
+        return FluxWPerM2::new(0.0).map_err(|e| {
+            BolometricRenderError::InvalidIntensity(format!("zero mdot numerical: {e}"))
+        });
+    }
     let a_star = params.spin_over_mass();
     if !(a_star >= 0.0) {
         return Err(BolometricRenderError::InvalidEmissionSpec(
@@ -307,25 +325,27 @@ pub fn page_thorne_q_numerical(
         ));
     }
     let n = n_quad.max(256);
-    // Integrate from just outside ISCO (dL/dr → 0 at ISCO; avoid endpoint noise).
     let r_start = r0 * (1.0 + 1e-8);
     if !(r_over_m > r_start) {
-        return Ok(0.0);
+        return FluxWPerM2::new(0.0).map_err(|e| {
+            BolometricRenderError::InvalidIntensity(format!("near-isco numerical: {e}"))
+        });
     }
+
+    // ∫ (E−ΩL) dL = ∫ (E−ΩL) L_,r dr  (trapezoid in L along a radius path).
     let mut integral = 0.0;
     let e0 = specific_energy(r_start, a_star)?;
     let l0 = specific_angular_momentum_over_m(r_start, a_star)?;
-    let omega0 = omega_over_c_geom(r_start, a_star);
+    let omega0 = omega_m(r_start, a_star);
     let mut prev_el = e0 - omega0 * l0;
     let mut prev_l = l0;
     for i in 1..=n {
         let t = i as f64 / n as f64;
-        // Cosine spacing densifies near ISCO (t=0 → r_start).
         let u = 0.5 * (1.0 - (std::f64::consts::PI * t).cos());
         let r = r_start + u * (r_over_m - r_start);
         let e = specific_energy(r, a_star)?;
         let l = specific_angular_momentum_over_m(r, a_star)?;
-        let omega = omega_over_c_geom(r, a_star);
+        let omega = omega_m(r, a_star);
         let el = e - omega * l;
         let dl = l - prev_l;
         integral += 0.5 * (el + prev_el) * dl;
@@ -335,7 +355,7 @@ pub fn page_thorne_q_numerical(
 
     let e = specific_energy(r_over_m, a_star)?;
     let l = specific_angular_momentum_over_m(r_over_m, a_star)?;
-    let omega = omega_over_c_geom(r_over_m, a_star);
+    let omega = omega_m(r_over_m, a_star);
     let el = e - omega * l;
     if !(el > 0.0) {
         return Err(BolometricRenderError::InvalidEmissionSpec(
@@ -343,52 +363,28 @@ pub fn page_thorne_q_numerical(
         ));
     }
     let h = (1e-6_f64).max(1e-8 * r_over_m);
-    let om_p = omega_over_c_geom(r_over_m + h, a_star);
-    let om_m = omega_over_c_geom((r_over_m - h).max(r_start), a_star);
+    let om_p = omega_m(r_over_m + h, a_star);
+    let om_m = omega_m((r_over_m - h).max(r_start), a_star);
     let domega_dr = (om_p - om_m) / (2.0 * h);
-    if !domega_dr.is_finite() || domega_dr >= 0.0 {
+    if !domega_dr.is_finite() || !(domega_dr < 0.0) {
         return Err(BolometricRenderError::InvalidEmissionSpec(
-            "dΩ/dr must be finite and < 0".into(),
+            "dΩ̃/dr̃ must be finite and < 0".into(),
         ));
     }
-    let f_raw = (-1.0 / domega_dr) / (el * el) * integral;
-    let x = r_over_m.sqrt();
-    let x2 = x * x;
-    let x6 = x2 * x2 * x2;
-    let q = 1.5 * f_raw / x6;
-    if !q.is_finite() || q < 0.0 {
+    // F̃ = (−Ω̃_,r̃) / (4π r̃ (E−ΩL)²) · Ĩ
+    let f_tilde = (-domega_dr) / (4.0 * std::f64::consts::PI * r_over_m * el * el) * integral;
+    if !f_tilde.is_finite() || f_tilde < 0.0 {
         return Err(BolometricRenderError::InvalidIntensity(
-            "numerical Page-Thorne Q non-finite or negative".into(),
+            "numerical Page-Thorne F̃ non-finite or negative".into(),
         ));
     }
-    Ok(q)
-}
-
-/// Numerical Page–Thorne one-face flux (integrand oracle + shared SI prefactor).
-pub fn page_thorne_one_face_flux_numerical(
-    scale: &PhysicalScale,
-    mdot: MdotKgPerS,
-    params: &KerrParams,
-    r_over_m: f64,
-    n_quad: usize,
-) -> Result<FluxWPerM2, BolometricRenderError> {
-    if mdot.value() == 0.0 {
-        return FluxWPerM2::new(0.0).map_err(|e| {
-            BolometricRenderError::InvalidIntensity(format!("zero mdot numerical: {e}"))
-        });
-    }
-    let q = page_thorne_q_numerical(params, r_over_m, n_quad)?;
-    let x = r_over_m.sqrt();
     let m_kg = scale.mass_kg.value();
     let c = SPEED_OF_LIGHT_M_S;
     let g = GRAVITATIONAL_G_M3_KG_S2;
     let c2 = c * c;
     let c6 = c2 * c2 * c2;
     let g2 = g * g;
-    let pre = 3.0 * c6 * mdot.value() / (8.0 * std::f64::consts::PI * g2 * m_kg * m_kg);
-    let x2 = x * x;
-    let x6 = x2 * x2 * x2;
-    let f = pre * q / x6;
+    let f = (c6 / (g2 * m_kg * m_kg)) * mdot.value() * f_tilde;
     FluxWPerM2::new(f).map_err(|e| BolometricRenderError::InvalidIntensity(e.to_string()))
 }
 
@@ -427,21 +423,56 @@ mod tests {
     }
 
     #[test]
-    fn algebraic_vs_numerical_moderate_r() {
-        let k = KerrParams::new(1.0, 0.5).unwrap();
+    fn algebraic_vs_numerical_flux_domain() {
         let scale = scale_1e8();
         let mdot = MdotKgPerS::new(1.0e14).unwrap();
-        let r = 200.0;
-        let f_a = page_thorne_one_face_flux(&scale, mdot, &k, r)
+        // Cover Schwarzschild / moderate / high-spin and near-ISCO / mid / outer.
+        let cases: &[(f64, &[f64])] = &[
+            (0.0, &[8.0, 20.0, 200.0]),
+            (0.5, &[6.0, 20.0, 200.0]),
+            (0.999, &[1.5, 3.0, 20.0, 200.0]),
+        ];
+        let mut worst = 0.0_f64;
+        for &(a, radii) in cases {
+            let k = KerrParams::new(1.0, a).unwrap();
+            let r_isco = prograde_isco_radius(&k).unwrap() / 1.0;
+            for &r in radii {
+                if !(r > r_isco) {
+                    continue;
+                }
+                let f_a = page_thorne_one_face_flux(&scale, mdot, &k, r)
+                    .unwrap()
+                    .value();
+                let f_n = page_thorne_one_face_flux_numerical(&scale, mdot, &k, r, 16_384)
+                    .unwrap()
+                    .value();
+                let rel = (f_a - f_n).abs() / f_a.max(f_n).max(1e-30);
+                worst = worst.max(rel);
+                assert!(
+                    rel < 5e-3,
+                    "a={a} r={r}: algebraic vs numerical flux rel {rel}: a={f_a} n={f_n}"
+                );
+            }
+        }
+        assert!(worst.is_finite());
+    }
+
+    #[test]
+    fn numerical_quad_converges_high_spin() {
+        let k = KerrParams::new(1.0, 0.999).unwrap();
+        let scale = scale_1e8();
+        let mdot = MdotKgPerS::new(1.0e14).unwrap();
+        let r = 3.0;
+        let f_lo = page_thorne_one_face_flux_numerical(&scale, mdot, &k, r, 1024)
             .unwrap()
             .value();
-        let f_n = page_thorne_one_face_flux_numerical(&scale, mdot, &k, r, 8192)
+        let f_hi = page_thorne_one_face_flux_numerical(&scale, mdot, &k, r, 16_384)
             .unwrap()
             .value();
-        let rel = (f_a - f_n).abs() / f_a.max(f_n);
+        let rel = (f_lo - f_hi).abs() / f_hi.max(1e-30);
         assert!(
-            rel < 2e-2,
-            "algebraic vs numerical rel {rel}: a={f_a} n={f_n}"
+            rel < 1e-2,
+            "quad convergence rel {rel}: lo={f_lo} hi={f_hi}"
         );
     }
 
@@ -472,5 +503,41 @@ mod tests {
             .unwrap()
             .value();
         assert!(f.is_finite() && f > 0.0);
+    }
+
+    #[test]
+    fn missing_b_sqrt_c_would_disagree_high_spin() {
+        // Regression: F∝Q (without /(B√C)) is wrong; near-ISCO high-spin C≪1.
+        let k = KerrParams::new(1.0, 0.999).unwrap();
+        let scale = scale_1e8();
+        let mdot = MdotKgPerS::new(1.0e14).unwrap();
+        let r = 2.0_f64;
+        let roots = PageThorneRoots::for_prograde(&k).unwrap();
+        let x = r.sqrt();
+        let q = page_thorne_q(x, &roots).unwrap();
+        let b = 1.0 + roots.a_star / (x * x * x);
+        let c = 1.0 - 3.0 / (x * x) + 2.0 * roots.a_star / (x * x * x);
+        let f_correct = page_thorne_one_face_flux(&scale, mdot, &k, r)
+            .unwrap()
+            .value();
+        let m_kg = scale.mass_kg.value();
+        let c_light = SPEED_OF_LIGHT_M_S;
+        let g = GRAVITATIONAL_G_M3_KG_S2;
+        let c2 = c_light * c_light;
+        let c6 = c2 * c2 * c2;
+        let pre = 3.0 * c6 * mdot.value() / (8.0 * std::f64::consts::PI * g * g * m_kg * m_kg);
+        let x6 = x * x * x * x * x * x;
+        let f_wrong = pre * q / x6;
+        let ratio = f_wrong / f_correct;
+        let expect = b * c.sqrt();
+        assert!(
+            (ratio - expect).abs() / expect < 1e-10,
+            "wrong/correct should be B√C={expect}, got {ratio}"
+        );
+        // Near-ISCO high spin: C≪1 ⇒ B√C≪1 ⇒ omitting the factor overstates F.
+        assert!(
+            expect < 0.95,
+            "high-spin near-ISCO must make B√C materially < 1, got {expect}"
+        );
     }
 }
