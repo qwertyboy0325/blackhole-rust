@@ -37,9 +37,10 @@ Y is luminance in **cd/m²**. No per-frame max-normalization or exposure.
 - md5 `17cca777db64b17170f06f67ce9d3ab7`
 - SHA-256 `fa663e3535a7e0763a745993a1f0a192eb0275ac46ad2d1befd7626841e713c1`
 - Vendored path: `assets/standards/cie1931-2deg-v1.csv`
+- Load mode: **runtime** from the vendored asset (`Cie1931Table::load_official_v1_from_path`); never `include_str!`.
 - License: **CC BY-SA 4.0** (see `assets/standards/LICENSE-CIE-CC-BY-SA-4.0.txt`).
-  Repository code remains MIT OR Apache-2.0; the table is **not** re-licensed.
-- Production nodes: 380–780 nm @ 1 nm (401 samples). Full official file is 360–830.
+  Repository code remains MIT OR Apache-2.0; the CIE table stays separately licensed and is not re-licensed into the crate.
+- Production nodes: 360–830 nm @ 1 nm (471 samples; `cie-1931-360-830-1nm-v1`).
 
 ## RGB
 

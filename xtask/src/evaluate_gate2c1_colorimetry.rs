@@ -5,9 +5,11 @@ use crate::build_meta::{
 };
 use crate::render_tier::DiagnosticRenderTier;
 use relativity_render::{
-    integrate_xyz_from_emission, physical_spectral_grid_v1, Cie1931Table, IntegrationMeasure,
-    XyzToRgbMatrix, CIE_OBSERVER_ID_V1, CIE_TABLE_MD5, CIE_TABLE_SHA256, PHYSICAL_GRID_V1_ID,
-    SCENE_LINEAR_RGB_SPACE_ID,
+    blackbody_planckian_direction_ok, integrate_xyz_from_emission, payload_sha256,
+    physical_spectral_grid_v1, Cie1931Table, IntegrationMeasure, XyzToRgbMatrix,
+    CIE_OBSERVER_ID_V1, CIE_RELATIVE_ASSET_PATH, CIE_TABLE_MD5, CIE_TABLE_SHA256,
+    PHYSICAL_GRID_V1_ID, PRODUCTION_BAND_ID, PRODUCTION_LAMBDA_MAX_NM, PRODUCTION_LAMBDA_MIN_NM,
+    PRODUCTION_N_SAMPLES, SCENE_LINEAR_RGB_SPACE_ID,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -41,6 +43,7 @@ struct ColorRenderReport {
     physical_spectral_grid_digest: Option<String>,
     physical_spectral_digest: Option<String>,
     physical_color_digest: String,
+    payload_sha256: String,
     cie_table_sha256: String,
     rgb_matrix_digest: String,
     color_disk_hit_count: u64,
@@ -138,7 +141,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             .args(["test", "--workspace", "--all-features"]),
     )?;
 
-    hermetic_color_checks(&mut checks)?;
+    hermetic_color_checks(&root, &mut checks)?;
 
     let available = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -205,7 +208,8 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "smoke_serial_parallel_digest_identical",
         smoke_serial.physical_color_digest == smoke_parallel.physical_color_digest
             && smoke_serial.physical_emission_digest == smoke_parallel.physical_emission_digest
-            && smoke_serial.frequency_shift_digest == smoke_parallel.frequency_shift_digest,
+            && smoke_serial.frequency_shift_digest == smoke_parallel.frequency_shift_digest
+            && smoke_serial.payload_sha256 == smoke_parallel.payload_sha256,
         smoke_serial.physical_color_digest.clone(),
     );
     push(
@@ -219,6 +223,20 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         )?,
         "physical-xyz-rgb.f64le".into(),
     );
+    verify_run_payload_meta(
+        &mut checks,
+        &root,
+        "artifacts/gate-2c1-colorimetry/smoke-serial",
+        &smoke_serial,
+        "smoke_serial",
+    )?;
+    verify_run_payload_meta(
+        &mut checks,
+        &root,
+        "artifacts/gate-2c1-colorimetry/smoke-parallel",
+        &smoke_parallel,
+        "smoke_parallel",
+    )?;
 
     let gate_run = run_color_cli(
         &root,
@@ -278,6 +296,39 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             .is_file(),
         "diagnostic-a-vs-b.json".into(),
     );
+    verify_run_payload_meta(
+        &mut checks,
+        &root,
+        "artifacts/gate-2c1-colorimetry/gate-run-0",
+        &gate_run,
+        "gate0",
+    )?;
+    // Explicit gate-run-0 authority closure: file hash ↔ meta ↔ report.
+    {
+        let gate_dir = root.join("artifacts/gate-2c1-colorimetry/gate-run-0");
+        let payload = std::fs::read(gate_dir.join("physical-xyz-rgb.f64le"))?;
+        let meta: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+            gate_dir.join("physical-colorimetry-meta.json"),
+        )?)?;
+        let computed = payload_sha256(&payload);
+        let meta_sha = meta
+            .get("payload_sha256")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let schema_ok = meta.get("payload_schema").and_then(|v| v.as_u64()) == Some(2);
+        let band_ok =
+            meta.get("production_band_id").and_then(|v| v.as_str()) == Some(PRODUCTION_BAND_ID);
+        push(
+            &mut checks,
+            "raw_payload_self_consistent",
+            !computed.is_empty()
+                && computed == meta_sha
+                && computed == gate_run.payload_sha256
+                && schema_ok
+                && band_ok,
+            format!("sha={computed} schema_ok={schema_ok} band_ok={band_ok}"),
+        );
+    }
     // Negatives are diagnostic, not failures.
     push(
         &mut checks,
@@ -315,8 +366,19 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn hermetic_color_checks(checks: &mut Vec<Check>) -> Result<(), Box<dyn std::error::Error>> {
-    let table = Cie1931Table::official_v1()?;
+fn hermetic_color_checks(
+    root: &Path,
+    checks: &mut Vec<Check>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let asset_path = root.join(CIE_RELATIVE_ASSET_PATH);
+    push(
+        checks,
+        "hermetic_cie_asset_present",
+        asset_path.is_file(),
+        asset_path.display().to_string(),
+    );
+
+    let table = Cie1931Table::load_official_v1_from_path(&asset_path)?;
     push(
         checks,
         "hermetic_cie_sha256",
@@ -329,12 +391,32 @@ fn hermetic_color_checks(checks: &mut Vec<Check>) -> Result<(), Box<dyn std::err
         CIE_TABLE_MD5 == "17cca777db64b17170f06f67ce9d3ab7",
         CIE_TABLE_MD5.into(),
     );
+    push(
+        checks,
+        "hermetic_cie_runtime_load_not_include_str",
+        table.content_sha256 == CIE_TABLE_SHA256 && asset_path.is_file(),
+        format!(
+            "mode=runtime-vendored-asset path={}",
+            CIE_RELATIVE_ASSET_PATH
+        ),
+    );
+
     let samples = table.production_subset()?;
     push(
         checks,
-        "hermetic_production_401",
-        samples.len() == 401,
+        "hermetic_production_471",
+        samples.len() == PRODUCTION_N_SAMPLES && samples.len() == 471,
         format!("{}", samples.len()),
+    );
+    push(
+        checks,
+        "hermetic_production_band_360_830",
+        PRODUCTION_LAMBDA_MIN_NM == 360
+            && PRODUCTION_LAMBDA_MAX_NM == 830
+            && samples.first().map(|s| s.lambda_nm) == Some(PRODUCTION_LAMBDA_MIN_NM)
+            && samples.last().map(|s| s.lambda_nm) == Some(PRODUCTION_LAMBDA_MAX_NM)
+            && PRODUCTION_BAND_ID == "cie-1931-360-830-1nm-v1",
+        PRODUCTION_BAND_ID.into(),
     );
 
     let xyz_nu =
@@ -391,6 +473,25 @@ fn hermetic_color_checks(checks: &mut Vec<Check>) -> Result<(), Box<dyn std::err
         format!("rel_L1={rt_rel} digest={}", m.digest()),
     );
 
+    match blackbody_planckian_direction_ok(&samples) {
+        Ok((pts, dxy)) => {
+            push(
+                checks,
+                "hermetic_blackbody_planckian_direction",
+                pts.len() == 4 && dxy < 1e-5,
+                format!("pts={} dxy={dxy}", pts.len()),
+            );
+        }
+        Err(e) => {
+            push(
+                checks,
+                "hermetic_blackbody_planckian_direction",
+                false,
+                e.to_string(),
+            );
+        }
+    }
+
     // Blackbody luminance increases with T at g=1.
     let y3 = integrate_xyz_from_emission(3000.0, 1.0, &samples, IntegrationMeasure::FrequencyNu)?.y;
     let y6 = integrate_xyz_from_emission(6500.0, 1.0, &samples, IntegrationMeasure::FrequencyNu)?.y;
@@ -403,6 +504,44 @@ fn hermetic_color_checks(checks: &mut Vec<Check>) -> Result<(), Box<dyn std::err
         format!("Y(3k)={y3} Y(6.5k)={y6} Y(10k)={y10}"),
     );
 
+    Ok(())
+}
+
+fn verify_run_payload_meta(
+    checks: &mut Vec<Check>,
+    root: &Path,
+    output_dir: &str,
+    report: &ColorRenderReport,
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let dir = root.join(output_dir);
+    let payload = std::fs::read(dir.join("physical-xyz-rgb.f64le"))?;
+    let meta: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        dir.join("physical-colorimetry-meta.json"),
+    )?)?;
+    let computed = payload_sha256(&payload);
+    let meta_sha = meta
+        .get("payload_sha256")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    push(
+        checks,
+        &format!("{label}_payload_sha256_matches_file"),
+        computed == meta_sha && computed == report.payload_sha256,
+        format!(
+            "file={computed} meta={meta_sha} report={}",
+            report.payload_sha256
+        ),
+    );
+    push(
+        checks,
+        &format!("{label}_payload_meta_schema_v2"),
+        meta.get("payload_schema").and_then(|v| v.as_u64()) == Some(2)
+            && meta.get("cie_load_mode").and_then(|v| v.as_str()) == Some("runtime-vendored-asset")
+            && meta.get("cie_license").and_then(|v| v.as_str()) == Some("CC-BY-SA-4.0")
+            && meta.get("production_band_id").and_then(|v| v.as_str()) == Some(PRODUCTION_BAND_ID),
+        "payload_schema/cie_load_mode/cie_license/production_band_id".into(),
+    );
     Ok(())
 }
 
@@ -430,6 +569,12 @@ fn check_report(checks: &mut Vec<Check>, label: &str, report: &ColorRenderReport
         &format!("{label}_cie_digest"),
         report.cie_table_sha256 == CIE_TABLE_SHA256,
         report.cie_table_sha256.clone(),
+    );
+    push(
+        checks,
+        &format!("{label}_payload_sha256_present"),
+        report.payload_sha256.len() == 64,
+        report.payload_sha256.clone(),
     );
 }
 

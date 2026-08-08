@@ -40,7 +40,7 @@ impl SceneLinearRgbSpace {
 }
 
 /// Unclamped scene-linear RGB. Finite negatives and values > 1 are allowed.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct SceneLinearRgb {
     pub r: f64,
     pub g: f64,

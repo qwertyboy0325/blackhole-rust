@@ -14,22 +14,21 @@ use relativity_render::{
     build_disk_frequency_shift_frame, build_physical_color_frame,
     build_physical_disk_emission_frame, build_physical_spectral_frame,
     compute_colorimetric_metrics, diagnostic_a_vs_b, disk_frequency_shift_digest,
-    parse_physical_spectral_grid_id, physical_color_digest, physical_disk_emission_digest,
+    encode_physical_color_payload, outcome_class_code, parse_physical_spectral_grid_id,
+    payload_sha256, physical_color_digest, physical_disk_emission_digest,
     physical_disk_emission_spec_digest, physical_spectral_digest, physical_spectral_grid_digest,
-    validate_physical_emission_provenance, verify_observer_unit_frequency, Cie1931Table,
-    CieObserverId, DiskFrequencyShiftConvention, DiskVelocityModel, IntegrationMeasure,
-    PhysicalColorPixel, PhysicalDiskEmissionConvention, PhysicalDiskEmissionSpec,
-    PhysicalSpectralConvention, SceneLinearRgbSpace, XyzToRgbMatrix, CIE_OBSERVER_ID_V1,
-    OBSERVER_UNIT_FREQUENCY_TOLERANCE, PHYSICAL_EMISSION_MODEL_ID, PHYSICAL_GRID_V1_ID,
-    SCENE_LINEAR_RGB_SPACE_ID,
+    validate_physical_emission_provenance, verify_observer_unit_frequency,
+    verify_payload_matches_frame, Cie1931Table, CieObserverId, DiskFrequencyShiftConvention,
+    DiskVelocityModel, IntegrationMeasure, PhysicalColorPixel, PhysicalDiskEmissionConvention,
+    PhysicalDiskEmissionSpec, PhysicalSpectralConvention, SceneLinearRgbSpace, XyzToRgbMatrix,
+    CIE_OBSERVER_ID_V1, CIE_RELATIVE_ASSET_PATH, OBSERVER_UNIT_FREQUENCY_TOLERANCE,
+    PHYSICAL_EMISSION_MODEL_ID, PHYSICAL_GRID_V1_ID, PRODUCTION_BAND_ID, SCENE_LINEAR_RGB_SPACE_ID,
 };
 use relativity_trace::{trace_grid_with_execution_and_surface_set, TraceGrid, TraceSurfaceSet};
 use serde::Serialize;
 use smallvec::smallvec;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-
-const MAGIC_XYZRGB: &[u8; 8] = b"BHRXYZR1";
 
 #[derive(Serialize)]
 struct ColorRenderReport {
@@ -43,6 +42,7 @@ struct ColorRenderReport {
     physical_spectral_grid_digest: Option<String>,
     physical_spectral_digest: Option<String>,
     physical_color_digest: String,
+    payload_sha256: String,
     cie_table_sha256: String,
     rgb_matrix_digest: String,
     disk_hit_count: u64,
@@ -99,6 +99,9 @@ pub fn run(
 
     std::fs::create_dir_all(&out_dir)?;
 
+    let cie = Cie1931Table::load_official_v1_from_path(&root.join(CIE_RELATIVE_ASSET_PATH))
+        .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+
     let (scene, _) = build_diagnostic_trace_scene(
         &preset,
         TraceGrid {
@@ -146,7 +149,7 @@ pub fn run(
     )
     .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
 
-    let (spectral_grid_digest, spectral_digest, a_vs_b) = if include_spectral_diagnostic {
+    let (spectral_grid_digest, spectral_digest) = if include_spectral_diagnostic {
         let spectral_grid = parse_physical_spectral_grid_id(PHYSICAL_GRID_V1_ID)
             .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
         let spectral = build_physical_spectral_frame(&emission, &spectral_grid)
@@ -157,16 +160,11 @@ pub fn run(
             &PhysicalSpectralConvention::v1(),
             &emission_digest,
         )?;
-        let cie = Cie1931Table::official_v1()
-            .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
-        // Color frame built below; A-vs-B after color.
-        (Some(gdigest), Some((sdigest, spectral)), Some(cie))
+        (Some(gdigest), Some((sdigest, spectral)))
     } else {
-        (None, None, None)
+        (None, None)
     };
 
-    let cie = Cie1931Table::official_v1()
-        .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
     let rgb_matrix = XyzToRgbMatrix::rec709_d65_linear_v1();
 
     let t_color = Instant::now();
@@ -183,11 +181,17 @@ pub fn run(
     )
     .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
     let color_wall = t_color.elapsed().as_secs_f64();
-    let color_digest = physical_color_digest(&color);
+    let color_digest = physical_color_digest(&color)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+    let payload = encode_physical_color_payload(&color)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+    verify_payload_matches_frame(&payload, &color)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+    let payload_digest = payload_sha256(&payload);
     let metrics = compute_colorimetric_metrics(&color);
 
-    if let (Some(cie_avsb), Some((_, spectral))) = (a_vs_b, spectral_digest.as_ref()) {
-        let report = diagnostic_a_vs_b(&color, spectral, &cie_avsb)
+    if let Some((_, spectral)) = spectral_digest.as_ref() {
+        let report = diagnostic_a_vs_b(&color, spectral, &cie)
             .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
         std::fs::write(
             out_dir.join("diagnostic-a-vs-b.json"),
@@ -195,8 +199,8 @@ pub fn run(
         )?;
     }
 
-    write_colorimetry_meta(&out_dir, &color, &color_digest, &metrics)?;
-    write_xyz_rgb_payload(&out_dir, &color)?;
+    write_colorimetry_meta(&out_dir, &color, &color_digest, &payload_digest, &metrics)?;
+    std::fs::write(out_dir.join("physical-xyz-rgb.f64le"), &payload)?;
     write_selected_pixels_csv(&out_dir, &color)?;
     write_physical_color_exr(&out_dir.join("physical-color.exr"), &color)?;
     verify_exr_roundtrip(&out_dir.join("physical-color.exr"), &color)?;
@@ -213,6 +217,7 @@ pub fn run(
         physical_spectral_grid_digest: spectral_grid_digest,
         physical_spectral_digest: spectral_digest.map(|(d, _)| d),
         physical_color_digest: color_digest,
+        payload_sha256: payload_digest,
         cie_table_sha256: color.provenance.cie_table_sha256.clone(),
         rgb_matrix_digest: color.provenance.rgb_matrix_digest.clone(),
         disk_hit_count: counts.disk_hit,
@@ -240,6 +245,7 @@ fn write_colorimetry_meta(
     out: &Path,
     frame: &relativity_render::PhysicalColorFrame,
     digest: &str,
+    payload_digest: &str,
     metrics: &relativity_render::ColorimetricMetrics,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let meta = serde_json::json!({
@@ -255,6 +261,11 @@ fn write_colorimetry_meta(
         "convention": frame.convention,
         "provenance": frame.provenance,
         "physical_color_digest": digest,
+        "payload_sha256": payload_digest,
+        "payload_schema": 2,
+        "production_band_id": PRODUCTION_BAND_ID,
+        "cie_license": "CC-BY-SA-4.0",
+        "cie_load_mode": "runtime-vendored-asset",
         "metrics": metrics,
         "payload": "physical-xyz-rgb.f64le",
         "exr": "physical-color.exr",
@@ -270,35 +281,6 @@ fn write_colorimetry_meta(
         out.join("physical-colorimetry-meta.json"),
         serde_json::to_vec_pretty(&meta)?,
     )?;
-    Ok(())
-}
-
-fn write_xyz_rgb_payload(
-    out: &Path,
-    frame: &relativity_render::PhysicalColorFrame,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(MAGIC_XYZRGB);
-    bytes.extend_from_slice(&1u32.to_le_bytes());
-    bytes.extend_from_slice(&frame.grid.width.to_le_bytes());
-    bytes.extend_from_slice(&frame.grid.height.to_le_bytes());
-    for pixel in &frame.pixels {
-        match pixel {
-            PhysicalColorPixel::DiskHit(s) => {
-                bytes.push(1);
-                for v in [s.xyz.x, s.xyz.y, s.xyz.z, s.rgb.r, s.rgb.g, s.rgb.b] {
-                    bytes.extend_from_slice(&v.to_bits().to_le_bytes());
-                }
-            }
-            PhysicalColorPixel::Absent { .. } => {
-                bytes.push(0);
-                for _ in 0..6 {
-                    bytes.extend_from_slice(&0f64.to_bits().to_le_bytes());
-                }
-            }
-        }
-    }
-    std::fs::write(out.join("physical-xyz-rgb.f64le"), bytes)?;
     Ok(())
 }
 
@@ -411,7 +393,7 @@ pub fn write_physical_color_exr(
                 ch_t[i] = f64_to_f32_checked(s.t_eff_k, "T")?;
                 ch_rom[i] = f64_to_f32_checked(s.radius_over_m, "r/M")?;
                 ch_mask[i] = 1;
-                ch_outcome[i] = 1;
+                ch_outcome[i] = outcome_class_u32(relativity_trace::OutcomeClass::DiskHit);
             }
             PhysicalColorPixel::Absent { outcome_class } => {
                 ch_mask[i] = 0;
@@ -454,15 +436,7 @@ pub fn write_physical_color_exr(
 }
 
 fn outcome_class_u32(c: relativity_trace::OutcomeClass) -> u32 {
-    use relativity_trace::OutcomeClass::*;
-    match c {
-        Escaped => 2,
-        HorizonEvent => 3,
-        HorizonApproach => 4,
-        DiskHit => 1,
-        AffineLimit => 5,
-        Failed => 6,
-    }
+    u32::from(outcome_class_code(c))
 }
 
 pub fn verify_exr_roundtrip(
@@ -513,32 +487,72 @@ pub fn verify_exr_roundtrip(
     let r = get_f32("R")?;
     let g = get_f32("G")?;
     let b = get_f32("B")?;
+    let gf = get_f32("phys.g")?;
+    let ff = get_f32("phys.F")?;
+    let tt = get_f32("phys.T")?;
+    let rom = get_f32("phys.r_over_m")?;
     let mask = get_u32("disk.mask")?;
+    let outcome = get_u32("outcome")?;
+
+    let assert_f32 =
+        |name: &str, i: usize, expect: f32, got: f32| -> Result<(), Box<dyn std::error::Error>> {
+            if expect.to_bits() != got.to_bits() {
+                return Err(
+                    format!("EXR f32 mismatch {name}@{i}: expect={expect} got={got}").into(),
+                );
+            }
+            Ok(())
+        };
+
     for (i, pixel) in frame.pixels.iter().enumerate() {
         match pixel {
             PhysicalColorPixel::DiskHit(s) => {
                 if mask[i] != 1 {
                     return Err(format!("mask mismatch at {i}").into());
                 }
-                let expect = [
-                    ("X", s.xyz.x as f32, x[i]),
-                    ("Y", s.xyz.y as f32, y[i]),
-                    ("Z", s.xyz.z as f32, z[i]),
-                    ("R", s.rgb.r as f32, r[i]),
-                    ("G", s.rgb.g as f32, g[i]),
-                    ("B", s.rgb.b as f32, b[i]),
-                ];
-                for (name, e, got) in expect {
-                    if e.to_bits() != got.to_bits() {
-                        return Err(
-                            format!("EXR f32 mismatch {name}@{i}: expect={e} got={got}").into()
-                        );
-                    }
+                if outcome[i] != outcome_class_u32(relativity_trace::OutcomeClass::DiskHit) {
+                    return Err(format!(
+                        "outcome mismatch at {i}: expect DiskHit got {}",
+                        outcome[i]
+                    )
+                    .into());
                 }
+                assert_f32("X", i, s.xyz.x as f32, x[i])?;
+                assert_f32("Y", i, s.xyz.y as f32, y[i])?;
+                assert_f32("Z", i, s.xyz.z as f32, z[i])?;
+                assert_f32("R", i, s.rgb.r as f32, r[i])?;
+                assert_f32("G", i, s.rgb.g as f32, g[i])?;
+                assert_f32("B", i, s.rgb.b as f32, b[i])?;
+                assert_f32("phys.g", i, s.g_factor as f32, gf[i])?;
+                assert_f32("phys.F", i, s.f_one_face_w_m2 as f32, ff[i])?;
+                assert_f32("phys.T", i, s.t_eff_k as f32, tt[i])?;
+                assert_f32("phys.r_over_m", i, s.radius_over_m as f32, rom[i])?;
             }
-            PhysicalColorPixel::Absent { .. } => {
+            PhysicalColorPixel::Absent { outcome_class } => {
                 if mask[i] != 0 {
                     return Err(format!("mask expected 0 at {i}").into());
+                }
+                let expect_outcome = outcome_class_u32(*outcome_class);
+                if outcome[i] != expect_outcome {
+                    return Err(format!(
+                        "outcome mismatch at {i}: expect {expect_outcome} got {}",
+                        outcome[i]
+                    )
+                    .into());
+                }
+                for (name, got) in [
+                    ("X", x[i]),
+                    ("Y", y[i]),
+                    ("Z", z[i]),
+                    ("R", r[i]),
+                    ("G", g[i]),
+                    ("B", b[i]),
+                    ("phys.g", gf[i]),
+                    ("phys.F", ff[i]),
+                    ("phys.T", tt[i]),
+                    ("phys.r_over_m", rom[i]),
+                ] {
+                    assert_f32(name, i, 0.0, got)?;
                 }
             }
         }
@@ -568,7 +582,8 @@ mod tests {
     use super::*;
     use relativity_render::{
         CieObserverId, ColorDiskHit, ColorPixelProvenance, ColorimetricConvention, ColorimetricXyz,
-        PhysicalColorFrame, SceneLinearRgb, SceneLinearRgbSpace,
+        PhysicalColorFrame, SceneLinearRgb, SceneLinearRgbSpace, CIE_TABLE_SHA256,
+        COLORIMETRIC_CONVENTION_ID,
     };
     use relativity_trace::{OutcomeClass, TraceGrid};
     use tempfile::tempdir;
@@ -579,6 +594,7 @@ mod tests {
             width: 2,
             height: 2,
         };
+        let fake = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         let hit = ColorDiskHit {
             xyz: ColorimetricXyz::new(1.0, 2.0, 3.0).unwrap(),
             rgb: SceneLinearRgb::new(-0.25, 1.5, 0.0).unwrap(),
@@ -605,13 +621,13 @@ mod tests {
             grid,
             pixels,
             ColorPixelProvenance {
-                source_physical_emission_digest: "e".into(),
-                source_frequency_digest: "f".into(),
-                cie_table_sha256: "c".into(),
+                source_physical_emission_digest: fake.into(),
+                source_frequency_digest: fake.into(),
+                cie_table_sha256: CIE_TABLE_SHA256.into(),
                 cie_observer_id: CIE_OBSERVER_ID_V1.into(),
-                colorimetric_convention_id: "conv".into(),
+                colorimetric_convention_id: COLORIMETRIC_CONVENTION_ID.into(),
                 rgb_space_id: SCENE_LINEAR_RGB_SPACE_ID.into(),
-                rgb_matrix_digest: "m".into(),
+                rgb_matrix_digest: fake.into(),
                 source_physical_spectral_digest: None,
             },
             ColorimetricConvention::v1(),
@@ -619,6 +635,7 @@ mod tests {
             SceneLinearRgbSpace::Rec709D65LinearV1,
         )
         .unwrap();
+        let _ = physical_color_digest(&frame).unwrap();
         let dir = tempdir().unwrap();
         let path = dir.path().join("t.exr");
         write_physical_color_exr(&path, &frame).unwrap();

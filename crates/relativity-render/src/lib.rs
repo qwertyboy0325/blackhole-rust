@@ -45,15 +45,18 @@ pub use color_space::{
     SCENE_LINEAR_RGB_SPACE_ID,
 };
 pub use colorimetry::{
-    build_physical_color_frame, compute_colorimetric_metrics, diagnostic_a_vs_b,
-    integrate_xyz_from_emission, integrate_xyz_from_spectral_cube_diagnostic,
-    physical_color_digest, synthetic_cmf_for_tests, Cie1931Table, CieObserverId, CieSample,
-    ColorDiskHit, ColorPixelProvenance, ColorimetricConvention, ColorimetricMetrics,
+    blackbody_planckian_direction_ok, build_physical_color_frame, compute_colorimetric_metrics,
+    decode_physical_color_pixels, diagnostic_a_vs_b, encode_physical_color_payload,
+    integrate_xyz_from_emission, integrate_xyz_from_spectral_cube_diagnostic, outcome_class_code,
+    outcome_class_from_code, payload_sha256, physical_color_digest, synthetic_cmf_for_tests,
+    verify_payload_matches_frame, BlackbodyChromaticitySample, Cie1931Table, CieObserverId,
+    CieSample, ColorDiskHit, ColorPixelProvenance, ColorimetricConvention, ColorimetricMetrics,
     ColorimetricXyz, IntegrationMeasure, PhysicalColorFrame, PhysicalColorPixel,
-    CIE_OBSERVER_ID_V1, CIE_TABLE_MD5, CIE_TABLE_SHA256, CIE_TABLE_SOURCE_DOI,
-    COLORIMETRIC_CONVENTION_ID, KM_LM_PER_W, KM_REVISION, OFFICIAL_CIE_CSV,
-    PHYSICAL_COLOR_FRAME_SCHEMA, PRODUCTION_LAMBDA_MAX_NM, PRODUCTION_LAMBDA_MIN_NM,
-    PRODUCTION_N_SAMPLES,
+    CIE_OBSERVER_ID_V1, CIE_RELATIVE_ASSET_PATH, CIE_TABLE_MD5, CIE_TABLE_SHA256,
+    CIE_TABLE_SOURCE_DOI, COLORIMETRIC_CONVENTION_ID, KM_LM_PER_W, KM_REVISION,
+    PHYSICAL_COLOR_FRAME_SCHEMA, PRODUCTION_BAND_ID, PRODUCTION_LAMBDA_MAX_NM,
+    PRODUCTION_LAMBDA_MIN_NM, PRODUCTION_N_SAMPLES, RAW_COLOR_PAYLOAD_MAGIC,
+    RAW_COLOR_PAYLOAD_SCHEMA,
 };
 pub use error::{
     BolometricRenderError, CelestialRenderError, ColorimetryError, FrequencyShiftError,
