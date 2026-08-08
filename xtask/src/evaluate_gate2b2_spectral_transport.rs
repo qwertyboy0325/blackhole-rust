@@ -22,11 +22,11 @@ const REF_BOLO: &str = "d3721de712ddafb660513b482f6c089cfc79be087f78ef1592e46cfd
 const REF_EMISSION_SPEC: &str = "95347496d2ade139a6002bb5d2ef70a4ba4b77085eac4a7b6232a49f9fd1c0db";
 const APPROVED_BASE: &str = "2f41bfecc2b04729c0205953585110b3274fabe9";
 
-/// Frozen Gate 2B2 error budget (owner closure `5203577417`).
+/// Frozen Gate 2B2 error budget (owner closures `5203577417`, `5224835191`).
 ///
-/// Derived from clean PASS evidence at `07c5111`: gate 128² × 64-bin max rel
-/// closure ≈ `6.32e-4`. Envelope is ~3× that observed peak — not loosened for
-/// float noise.
+/// Relative: gate/smoke 64-bin max rel ≈ `6.32e-4` → envelope `2e-3` (~3×).
+/// Absolute: gate 128² true max abs observed ≈ `1.988e-3` → same `2e-3` ceiling
+/// (documented headroom ≈ 0.6%; not loosened for float noise).
 const CLOSURE_REL_TOL: f64 = 2e-3;
 const CLOSURE_ABS_TOL: f64 = 2e-3;
 
@@ -304,67 +304,43 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     if convergence.len() >= 4 {
-        let e32 = convergence[0].max_rel_observed_closure_error;
-        let e64 = convergence[1].max_rel_observed_closure_error;
-        let e128 = convergence[2].max_rel_observed_closure_error;
-        let e256 = convergence[3].max_rel_observed_closure_error;
-        let r32_64 = if e64 > 0.0 { e32 / e64 } else { f64::INFINITY };
-        let r64_128 = if e128 > 0.0 {
-            e64 / e128
-        } else {
-            f64::INFINITY
-        };
-        let r128_256 = if e256 > 0.0 {
-            e128 / e256
-        } else {
-            f64::INFINITY
-        };
-        push(
+        push_ladder_checks(
             &mut checks,
-            "convergence_32_to_64_at_least_2x",
-            e64 <= e32 / 2.0 + 1e-15,
-            format!("32={e32:.6e} 64={e64:.6e} ratio={r32_64:.3}"),
+            "observed",
+            convergence[0].max_rel_observed_closure_error,
+            convergence[1].max_rel_observed_closure_error,
+            convergence[2].max_rel_observed_closure_error,
+            convergence[3].max_rel_observed_closure_error,
         );
-        push(
+        push_ladder_checks(
             &mut checks,
-            "convergence_64_to_128_improves",
-            e128 <= e64 + 1e-15,
-            format!("64={e64:.6e} 128={e128:.6e}"),
+            "emitted",
+            convergence[0].max_rel_emitted_closure_error,
+            convergence[1].max_rel_emitted_closure_error,
+            convergence[2].max_rel_emitted_closure_error,
+            convergence[3].max_rel_emitted_closure_error,
         );
-        push(
-            &mut checks,
-            "convergence_64_to_128_not_accelerating",
-            r64_128 <= r32_64 * 1.25 + 1e-12,
-            format!("r32_64={r32_64:.3} r64_128={r64_128:.3}"),
+        let o64 = convergence[1].max_rel_observed_closure_error;
+        let e64 = convergence[1].max_rel_emitted_closure_error;
+        let o_ok = ladder_freeze_ok(
+            convergence[0].max_rel_observed_closure_error,
+            o64,
+            convergence[2].max_rel_observed_closure_error,
+            convergence[3].max_rel_observed_closure_error,
         );
-        push(
-            &mut checks,
-            "convergence_128_to_256_improves",
-            e256 <= e128 + 1e-15,
-            format!("128={e128:.6e} 256={e256:.6e}"),
-        );
-        push(
-            &mut checks,
-            "convergence_128_to_256_not_accelerating",
-            r128_256 <= r64_128 * 1.25 + 1e-12,
-            format!("r64_128={r64_128:.3} r128_256={r128_256:.3}"),
-        );
-        // Grid selection / error-budget freeze: coarsest grid meeting budget with
-        // required 32→64 improvement is spectral-grid-v1 (64 bins).
-        push(
-            &mut checks,
-            "grid_selection_64_meets_error_budget",
-            e64 <= CLOSURE_REL_TOL,
-            format!("e64={e64:.6e} tol={CLOSURE_REL_TOL:.3e}"),
+        let e_ok = ladder_freeze_ok(
+            convergence[0].max_rel_emitted_closure_error,
+            e64,
+            convergence[2].max_rel_emitted_closure_error,
+            convergence[3].max_rel_emitted_closure_error,
         );
         push(
             &mut checks,
             "grid_freeze_spectral_grid_v1_64",
-            e64 <= e32 / 2.0 + 1e-15
-                && e64 <= CLOSURE_REL_TOL
-                && e128 <= e64 + 1e-15
-                && e256 <= e128 + 1e-15,
-            "authoritative spectral-grid-v1 = 64 bins".into(),
+            o_ok && e_ok,
+            format!(
+                "authoritative spectral-grid-v1 = 64 bins (obs_e64={o64:.6e} em_e64={e64:.6e})"
+            ),
         );
     }
 
@@ -738,6 +714,78 @@ fn push(checks: &mut Vec<Check>, name: &str, ok: bool, detail: String) {
         status: if ok { "PASS" } else { "FAIL" },
         detail,
     });
+}
+
+fn ladder_ratios(e32: f64, e64: f64, e128: f64, e256: f64) -> (f64, f64, f64) {
+    let r32_64 = if e64 > 0.0 { e32 / e64 } else { f64::INFINITY };
+    let r64_128 = if e128 > 0.0 {
+        e64 / e128
+    } else {
+        f64::INFINITY
+    };
+    let r128_256 = if e256 > 0.0 {
+        e128 / e256
+    } else {
+        f64::INFINITY
+    };
+    (r32_64, r64_128, r128_256)
+}
+
+fn ladder_freeze_ok(e32: f64, e64: f64, e128: f64, e256: f64) -> bool {
+    let (r32_64, r64_128, r128_256) = ladder_ratios(e32, e64, e128, e256);
+    e64 <= e32 / 2.0 + 1e-15
+        && e64 <= CLOSURE_REL_TOL
+        && e128 <= e64 + 1e-15
+        && r64_128 <= r32_64 * 1.25 + 1e-12
+        && e256 <= e128 + 1e-15
+        && r128_256 <= r64_128 * 1.25 + 1e-12
+}
+
+fn push_ladder_checks(
+    checks: &mut Vec<Check>,
+    channel: &str,
+    e32: f64,
+    e64: f64,
+    e128: f64,
+    e256: f64,
+) {
+    let (r32_64, r64_128, r128_256) = ladder_ratios(e32, e64, e128, e256);
+    push(
+        checks,
+        &format!("convergence_{channel}_32_to_64_at_least_2x"),
+        e64 <= e32 / 2.0 + 1e-15,
+        format!("32={e32:.6e} 64={e64:.6e} ratio={r32_64:.3}"),
+    );
+    push(
+        checks,
+        &format!("convergence_{channel}_64_to_128_improves"),
+        e128 <= e64 + 1e-15,
+        format!("64={e64:.6e} 128={e128:.6e}"),
+    );
+    push(
+        checks,
+        &format!("convergence_{channel}_64_to_128_not_accelerating"),
+        r64_128 <= r32_64 * 1.25 + 1e-12,
+        format!("r32_64={r32_64:.3} r64_128={r64_128:.3}"),
+    );
+    push(
+        checks,
+        &format!("convergence_{channel}_128_to_256_improves"),
+        e256 <= e128 + 1e-15,
+        format!("128={e128:.6e} 256={e256:.6e}"),
+    );
+    push(
+        checks,
+        &format!("convergence_{channel}_128_to_256_not_accelerating"),
+        r128_256 <= r64_128 * 1.25 + 1e-12,
+        format!("r64_128={r64_128:.3} r128_256={r128_256:.3}"),
+    );
+    push(
+        checks,
+        &format!("grid_selection_{channel}_64_meets_error_budget"),
+        e64 <= CLOSURE_REL_TOL,
+        format!("e64={e64:.6e} tol={CLOSURE_REL_TOL:.3e}"),
+    );
 }
 
 fn run_check(

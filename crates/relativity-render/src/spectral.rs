@@ -444,10 +444,14 @@ pub struct SpectralClosureMetrics {
     pub max_rel_observed_closure_error: f64,
     pub rmse_emitted: f64,
     pub rmse_observed: f64,
-    /// Source index of the disk-hit with maximum relative emitted error.
-    pub worst_emitted_source_index: u64,
-    /// Source index of the disk-hit with maximum relative observed error.
-    pub worst_observed_source_index: u64,
+    /// Lowest source index attaining `max_abs_emitted_closure_error` (ties → min index).
+    pub worst_abs_emitted_source_index: u64,
+    /// Lowest source index attaining `max_rel_emitted_closure_error` (ties → min index).
+    pub worst_rel_emitted_source_index: u64,
+    /// Lowest source index attaining `max_abs_observed_closure_error` (ties → min index).
+    pub worst_abs_observed_source_index: u64,
+    /// Lowest source index attaining `max_rel_observed_closure_error` (ties → min index).
+    pub worst_rel_observed_source_index: u64,
 }
 
 pub fn compute_bolometric_closure(
@@ -460,8 +464,10 @@ pub fn compute_bolometric_closure(
     let mut max_rel_o = 0.0;
     let mut sse_e = 0.0;
     let mut sse_o = 0.0;
-    let mut worst_e_idx = 0u64;
-    let mut worst_o_idx = 0u64;
+    let mut worst_abs_e_idx = 0u64;
+    let mut worst_rel_e_idx = 0u64;
+    let mut worst_abs_o_idx = 0u64;
+    let mut worst_rel_o_idx = 0u64;
 
     for (idx, pixel) in frame.pixels().iter().enumerate() {
         let SpectralPixel::DiskHit(s) = pixel else {
@@ -496,20 +502,23 @@ pub fn compute_bolometric_closure(
         }
         sse_e += err_e * err_e;
         sse_o += err_o * err_o;
-        // Absolute and relative maxima are independent authorities.
+        let i = idx as u64;
+        // Strict `>` keeps the lowest source index on exact ties.
         if err_e > max_abs_e {
             max_abs_e = err_e;
+            worst_abs_e_idx = i;
         }
         if err_o > max_abs_o {
             max_abs_o = err_o;
+            worst_abs_o_idx = i;
         }
         if rel_e > max_rel_e {
             max_rel_e = rel_e;
-            worst_e_idx = idx as u64;
+            worst_rel_e_idx = i;
         }
         if rel_o > max_rel_o {
             max_rel_o = rel_o;
-            worst_o_idx = idx as u64;
+            worst_rel_o_idx = i;
         }
     }
 
@@ -532,8 +541,10 @@ pub fn compute_bolometric_closure(
         max_rel_observed_closure_error: max_rel_o,
         rmse_emitted: rmse_e,
         rmse_observed: rmse_o,
-        worst_emitted_source_index: worst_e_idx,
-        worst_observed_source_index: worst_o_idx,
+        worst_abs_emitted_source_index: worst_abs_e_idx,
+        worst_rel_emitted_source_index: worst_rel_e_idx,
+        worst_abs_observed_source_index: worst_abs_o_idx,
+        worst_rel_observed_source_index: worst_rel_o_idx,
     })
 }
 
@@ -831,8 +842,59 @@ mod tests {
         let m = compute_bolometric_closure(&frame).unwrap();
         assert!((m.max_abs_emitted_closure_error - 1.0).abs() < 1e-14);
         assert!((m.max_rel_emitted_closure_error - 0.5).abs() < 1e-14);
-        assert_eq!(m.worst_emitted_source_index, 1);
+        assert_eq!(m.worst_abs_emitted_source_index, 0);
+        assert_eq!(m.worst_rel_emitted_source_index, 1);
         assert!((m.max_abs_observed_closure_error - 1.0).abs() < 1e-14);
         assert!((m.max_rel_observed_closure_error - 0.5).abs() < 1e-14);
+        assert_eq!(m.worst_abs_observed_source_index, 0);
+        assert_eq!(m.worst_rel_observed_source_index, 1);
+    }
+
+    #[test]
+    fn closure_worst_index_tie_keeps_lowest_source() {
+        use relativity_core::EquatorialAngularDirection;
+        use relativity_trace::{OutcomeClass, TraceGrid};
+
+        fn sample(integ: f64) -> SpectralDiskSample {
+            SpectralDiskSample {
+                continuum_spectrum_id: CONTINUUM_SPECTRUM_ID.into(),
+                radius: 10.0,
+                azimuth: 0.0,
+                g_factor: 1.0,
+                emitted_bolometric_intensity: 1.0,
+                observed_bolometric_intensity: 1.0,
+                integrated_emitted_i_nu: integ,
+                integrated_observed_i_nu: integ,
+                truncated_emitted_energy_fraction: 0.0,
+                truncated_observed_energy_fraction: 0.0,
+                velocity_model: DiskVelocityModel::ProgradeCircularGeodesic,
+                resolved_direction: EquatorialAngularDirection::PositivePhi,
+                disk_event_value: 0.0,
+                i_nu_obs: vec![0.0; 2],
+            }
+        }
+
+        // Identical absolute/relative errors at indices 0 and 2 → keep 0.
+        let pixels = vec![
+            SpectralPixel::DiskHit(sample(1.1)),
+            SpectralPixel::NotDiskHit {
+                outcome_class: OutcomeClass::Escaped,
+            },
+            SpectralPixel::DiskHit(sample(1.1)),
+        ];
+        let frame = SpectralFrame::try_new(
+            TraceGrid {
+                width: 3,
+                height: 1,
+            },
+            SpectralGrid::log_spaced("tie", 0.25, 4.0, 2).unwrap(),
+            pixels,
+        )
+        .unwrap();
+        let m = compute_bolometric_closure(&frame).unwrap();
+        assert_eq!(m.worst_abs_emitted_source_index, 0);
+        assert_eq!(m.worst_rel_emitted_source_index, 0);
+        assert_eq!(m.worst_abs_observed_source_index, 0);
+        assert_eq!(m.worst_rel_observed_source_index, 0);
     }
 }

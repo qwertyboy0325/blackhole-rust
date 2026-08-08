@@ -35,7 +35,8 @@ weights: Δν = edge[i+1] − edge[i]  (rectangle rule on centers)
 
 ### Grid-selection / error-budget rule
 
-Freeze `spectral-grid-v1` at 64 bins when all hold on the smoke corpus:
+Freeze `spectral-grid-v1` at 64 bins when **both** observed and emitted relative
+ladders satisfy (smoke corpus):
 
 ```text
 e64 ≤ e32 / 2                 (≥2× improvement 32→64)
@@ -45,6 +46,9 @@ e128 ≤ e64                    (64→128 improves)
 e256 ≤ e128                   (128→256 improves)
 (e128/e256) ≤ 1.25 (e64/e128) (128→256 not accelerating)
 ```
+
+Absolute budget `CLOSURE_ABS_TOL = 2e-3` is calibrated to the measured gate
+max abs observed ≈ `1.988e-3` (see final report cost/rationale section).
 
 Exploratory grids (32 / 128 / 256) remain non-authoritative convergence probes only.
 
