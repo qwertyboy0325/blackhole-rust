@@ -17,9 +17,9 @@ E1 is experimental:
 - research recommendation remains `PAUSE_RESEARCH_WEDGE` until owner authorizes estimator iteration.
 
 **Gate 2C0** physical thin-disk emission: authoritative evaluate **PASS** on
-`gate-2c0-physical-emission` @ `a760427` after closure `5225301622` root fix
-(prior `551f69e` PASS invalidated). Gate 2C1 is **not** authorized. Do not begin
-E2 ray differentials, E3 ray bundles, GPU, wgpu, egui or GUI work.
+`gate-2c0-physical-emission` @ `7542144` after closures `5225301622` +
+`5225371466`. Gate 2C1 is **not** authorized. Do not begin E2 ray differentials,
+E3 ray bundles, GPU, wgpu, egui or GUI work.
 
 When a gate or research package produces new reviewable image artifacts,
 regenerate `docs/media/blackhole-rust-evolution.gif` and keep it embedded in
