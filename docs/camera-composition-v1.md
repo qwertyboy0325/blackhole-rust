@@ -36,12 +36,18 @@ presentation_frame_digest =
 
 ## Search (D3A-A3…A6)
 
-Frozen spec: `presets/camera/camera-search-spec-v1.toml` → `camera_search_spec_digest`.
+Frozen spec: `presets/camera/camera-search-spec-v1.toml` → exact
+`camera_search_spec_digest` pin (D3A-A3 / D3A-C1):
+
+```text
+bc5b9257492310c612e2ac26d58926b761d31ff4acbd3fe5f2e77d98a3d9191b
+```
 
 - 48 candidates (4×3×2×2), fully deterministic
 - Smoke 32² coarse invalidity only
 - Gate 128² applies final hard filters + lex shortlist key (not unfrozen cinematic score)
-- Class-fraction midpoints are `SEARCH_GUIDANCE_NOT_GATE_TRUTH`
+- Class-fraction midpoints are `SEARCH_GUIDANCE_NOT_GATE_TRUTH` (D3A-A6 / D3A-C2:
+  recorded as evaluator `DIAGNOSTIC` evidence; never authoritative PASS/FAIL)
 
 ## Workflow
 

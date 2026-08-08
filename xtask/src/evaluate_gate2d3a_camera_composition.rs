@@ -17,13 +17,15 @@ const REF_PRESENTATION_SPEC: &str =
     "e6639e75d67156852f8f064e7ef9f4f2b82ab8018b707399c851522780a6dd49";
 const REF_SCENE_2D1: &str = "68b555442c277c8eb95c1562568c24746fb2489c174730350671d5567cf43cd0";
 const REF_IDENTITY_2D0: &str = "f8e103239a331796bd474ff121627eecd0781f31c840f46d9f2d3a85c8d1e87b";
+/// Frozen Phase A search spec (D3A-A3 / D3A-C1) — exact pin, not merely hex-shaped.
+const REF_CAMERA_SEARCH_SPEC: &str =
+    "bc5b9257492310c612e2ac26d58926b761d31ff4acbd3fe5f2e77d98a3d9191b";
 
 /// Frozen hero digests (gate 128²; CAMERA_DERIVED — not 2C1 scientific authority).
 const REF_HERO_PRESENTATION_FRAME: &str =
     "fae0afdd2b16a1ff8c086303edbf633e675595f6e81620dde483e690e7266544";
 const REF_HERO_SCENE_APPEARANCE: &str =
     "b3c8f30afd3575215a8c75d2c5e82a0710f739e4d330a88e575de7880ccede84";
-/// Filled after first hero preset digest computation; updated if schema changes.
 const REF_HERO_CAMERA_SPEC: &str =
     "42d3e3f8cc5d7b11950439ab46a850d6f5e2865f8e37a29ba6570f01b9ad2578";
 
@@ -131,8 +133,8 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
     push(
         &mut checks,
         "camera_search_spec_digest_stable",
-        spec_digest.len() == 64,
-        spec_digest.clone(),
+        spec_digest == REF_CAMERA_SEARCH_SPEC,
+        format!("got={spec_digest} want={REF_CAMERA_SEARCH_SPEC}"),
     );
 
     // Baseline beauty with camera overlay (scientific pins — D3A-A2).
@@ -452,13 +454,13 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             let esc = c["gate_metrics"]["escaped_fraction"]
                 .as_f64()
                 .unwrap_or(0.0);
-            // Baseline D1-V1: disk≈0.751 / esc≈0.149. Hero must reduce disk occupancy and raise env.
-            let improved = disk < 0.72 && esc > 0.20;
-            push(
+            // D3A-A6 / D3A-C2: class fractions are SEARCH_GUIDANCE evidence only — never gate truth.
+            push_diagnostic(
                 &mut checks,
-                "hero_class_fractions_materially_improved_vs_baseline",
-                improved,
-                format!("disk={disk:.4} esc={esc:.4} (baseline ~0.751/0.149)"),
+                "hero_class_fractions_vs_baseline_diagnostic",
+                format!(
+                    "disk={disk:.4} esc={esc:.4} (baseline ~0.751/0.149); SEARCH_GUIDANCE_NOT_GATE_TRUTH"
+                ),
             );
             let failed = c["gate_metrics"]["failed_count"].as_u64().unwrap_or(1);
             let affine = c["gate_metrics"]["affine_limit_count"]
@@ -471,9 +473,14 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
                 format!("failed={failed} affine_limit={affine}"),
             );
         } else {
+            push_diagnostic(
+                &mut checks,
+                "hero_class_fractions_vs_baseline_diagnostic",
+                "missing shortlist-contact metrics; SEARCH_GUIDANCE_NOT_GATE_TRUTH".into(),
+            );
             push(
                 &mut checks,
-                "hero_class_fractions_materially_improved_vs_baseline",
+                "hero_numerical_failures_zero",
                 false,
                 "missing shortlist-contact metrics".into(),
             );
@@ -508,7 +515,11 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
             .filter(|c| c.name.starts_with("phase_a_"))
             .all(|c| c.status == "PASS");
 
-    let all_pass = checks.iter().all(|c| c.status == "PASS");
+    // DIAGNOSTIC rows (D3A-A6 guidance evidence) must not veto authoritative PASS (D3A-C2).
+    let all_pass = checks
+        .iter()
+        .filter(|c| c.status != "DIAGNOSTIC")
+        .all(|c| c.status == "PASS");
 
     let (phase, result, authoritative, pending) = if hero_frozen {
         let auth = all_pass && !dirty && build.is_optimized_release_execution();
@@ -638,6 +649,14 @@ fn push(checks: &mut Vec<Check>, name: &str, ok: bool, detail: String) {
     checks.push(Check {
         name: name.into(),
         status: if ok { "PASS" } else { "FAIL" }.into(),
+        detail,
+    });
+}
+
+fn push_diagnostic(checks: &mut Vec<Check>, name: &str, detail: String) {
+    checks.push(Check {
+        name: name.into(),
+        status: "DIAGNOSTIC".into(),
         detail,
     });
 }
