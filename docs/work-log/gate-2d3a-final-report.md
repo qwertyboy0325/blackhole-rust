@@ -3,13 +3,14 @@
 ## Result
 
 **Authoritative evaluate PASS** on clean worktree after owner selection
-**`c024`**. Merge still requires owner authorization (not authorized here).
+**`c024`**, including D3A-C1/C2 evaluator closures. Merge still requires
+owner authorization (not authorized here).
 
 | Field | Value |
 | --- | --- |
-| Hero freeze tip | `825bb80a70578ea8854d9a5c9403eb62c1c8021a` |
-| Report tip | `f6914886524db2b993ec0d2c04eeff6a80647c77` |
-| Evaluation content digest (@ `825bb80`) | `a8fe240f1a345bc75cfb50fb5af06c1d65d5a1f400cabd7a9b162d12a55ccf4d` |
+| Authoritative evaluated tip | `1687f154cd56fd4b92e0d799b9c749b81ce6bcee` |
+| Evaluation content digest | `d442904347fc180dcfc246b67685c781bc12176f1be226aeb00481eb7e8afce8` |
+| Prior hero-freeze tip (pre–C1/C2) | `825bb80a70578ea8854d9a5c9403eb62c1c8021a` |
 | `result` | `PASS` |
 | `authoritative` | `true` |
 | `dirty` | `false` |
@@ -17,11 +18,18 @@
 | Phase | `PHASE_B` |
 | Owner selection | `c024` |
 | Hero preset | `presets/camera/gargantua-hero-v1.toml` |
-| Search spec digest | `bc5b9257492310c612e2ac26d58926b761d31ff4acbd3fe5f2e77d98a3d9191b` |
+| Search spec digest (exact pin) | `bc5b9257492310c612e2ac26d58926b761d31ff4acbd3fe5f2e77d98a3d9191b` |
 | Scientific inheritance | `SCIENTIFIC_INHERITANCE_PASS_BASELINE_PATH` |
 | Presentation inheritance | `PRESENTATION_INHERITANCE_PASS_BASELINE_PATH` |
 | Camera pipeline | `CAMERA_PIPELINE_PHASE_B_PASS` |
-| Amendments | D3A-A1…A8 binding |
+| Amendments | D3A-A1…A8; closures D3A-C1, D3A-C2 |
+
+## Closures
+
+| ID | Fix |
+| --- | --- |
+| **D3A-C1** | `camera_search_spec_digest_stable` requires exact equality to frozen digests |
+| **D3A-C2** | Class-fraction bands recorded as `DIAGNOSTIC` / `SEARCH_GUIDANCE_NOT_GATE_TRUTH`; excluded from authoritative PASS/FAIL |
 
 ## Frozen inheritance (baseline path only — D3A-A2)
 
@@ -49,6 +57,6 @@
 | θ (deg) | 85 |
 | φ (deg) | 0 |
 | HFOV (deg) | 65 |
-| disk / escaped / horizon (128²) | ≈0.657 / 0.290 / 0.054 |
+| disk / escaped / horizon (128², diagnostic) | ≈0.657 / 0.290 / 0.054 |
 
 Authority label: `CAMERA_DERIVED_PRODUCTION_OUTPUT_NOT_SCIENTIFIC_AUTHORITY`.
