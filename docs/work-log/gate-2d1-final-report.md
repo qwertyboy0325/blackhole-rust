@@ -2,21 +2,23 @@
 
 ## Result
 
-**Authoritative evaluate PASS** on clean worktree.
+**Authoritative evaluate PASS** on clean worktree after D1-V1 visual-semantic
+closure. Merge still requires owner final review (not authorized here).
 
 | Field | Value |
 | --- | --- |
-| Evaluated tip | `8d7e13ac2dd8c7eeb7f12026aa942e746ff68334` |
-| Evaluation content digest | `3b027403fc9ccc59d120b053520f30cdb203a17a2adaa567e95be58d0c302b08` |
+| D1-V1 implementation / evaluated tip | `345c560ab978b7ac8e00a57af0519441579c2068` |
+| Evaluation content digest | `c146210d5914a9d8b3b429d03b4d5ca1936ff7b7d65682cc0355ca404b4b9e67` |
+| Prior implementation tip (pre–D1-V1) | `8d7e13ac2dd8c7eeb7f12026aa942e746ff68334` |
 | `result` | `PASS` |
 | `authoritative` | `true` |
 | `dirty` | `false` |
 | Scope | `gate-2d1-scene-appearance` |
 | Scientific inheritance | `SCIENTIFIC_INHERITANCE_PASS` |
 | Presentation inheritance | `PRESENTATION_INHERITANCE_PASS` |
-| Appearance pipeline | `APPEARANCE_PIPELINE_PASS` |
+| Appearance pipeline | `APPEARANCE_PIPELINE_PASS` (includes 6× `d1_v1_*`) |
 | Planning / merge base | `b832e4778cdfad9f061970c71dbb1b82fdb31188` |
-| Architecture | D1-B + E1-B + S2 (one package) |
+| Architecture | D1-B + E1-B + S2 (one package) + D1-V1 diagnostics |
 | Owner amendments | A1–A6 binding |
 
 ## Frozen inheritance (exact)
@@ -50,8 +52,29 @@
 | `environment_spec_digest` | `4ebc941b35c7d472c354074ab994af848ab81c6a6c4452034eeca3ee0aadc759` |
 | serial ≡ parallel | PASS |
 
-`APPEARANCE_REPRODUCIBILITY_DIGEST` — not scientific authority.
+`APPEARANCE_REPRODUCIBILITY_DIGEST` — not scientific authority. Unchanged by D1-V1.
+
+## D1-V1 visual-semantic closure
+
+Owner product-review evidence; **not** beauty/scientific authority. Six checks
+are required members of `APPEARANCE_PIPELINE_PASS`.
+
+| Check | Result (gate 128) |
+| --- | --- |
+| `d1_v1_diagnostic_artifacts_present` | PASS |
+| `d1_v1_source_mask_matches_bundle` | PASS |
+| `d1_v1_disk_dominates_pixel_fraction` | PASS — DiskHit **0.7512**, Escaped **0.1490**, Horizon **0.0998** |
+| `d1_v1_modulation_visible_on_disk` | PASS — `std≈0.0628`, `|m−1|>0.05` on **37.49%** lit disk |
+| `d1_v1_bright_arc_candidates_recorded` | PASS — top hit `(90,65)` `g≈1.529`, `m≈1.000` (Doppler / inner-disk) |
+| `d1_v1_resolution_consistency_evidence` | PASS — 128↔512 box MSE recorded (diagnostic; no frozen IQ threshold) |
+
+Counts (gate 128 / 16384 px): DiskHit **12307**, Escaped **2442**, Horizon **1635**,
+AffineLimit/Failed **0**.
+
+Conclusion for prior visual blocker: large gray mass is opaque DiskHit
+occlusion (~¾ frame), not environment/composition domain mix-up.
 
 ## Scope exclusions honored
 
 Bloom / glare / E2 / E3 / GPU / wgpu / egui / GUI / 2D2 / 2D3 — not started.
+Merge — **not authorized** pending owner final PR review.

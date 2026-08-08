@@ -6,17 +6,18 @@ Gargantua in *Interstellar*, not an exact reconstruction of Double Negative's
 proprietary assets, renderer, grading, camera, or undocumented production
 parameters.
 
-## Status: Gate 2D1 authoritative PASS (pending merge)
+## Status: Gate 2D1 authoritative PASS (pending owner final review)
 
 Gate 0–2D0 are complete on `main` (Gate 2D0 merge `b832e47`, PR #20).
-Gate 2D1 scene appearance evaluated **PASS** @ `8d7e13a` (eval content
-`3b027403…`): D1-B derived disk modulation + E1-B procedural finite-boundary
-environment + S2 composition; A1–A6 binding. Identity
-`presentation_frame_digest` `f8e10323…` exact; scene beauty
-`presentation_frame_digest` `68b55544…`. Inherited 2C1
-`physical_color_digest` `16663188…` exact.
-GPU and GUI remain deferred. E1 research remains `PAUSE_RESEARCH_WEDGE`.
-Do not begin Gate 2D2/2D3, E2, E3, GPU, wgpu, or GUI.
+Gate 2D1 scene appearance evaluated **PASS** @ `345c560` (eval content
+`c146210d…`) after D1-V1 visual-semantic closure: D1-B derived disk
+modulation + E1-B procedural finite-boundary environment + S2 composition;
+A1–A6 binding. Identity `presentation_frame_digest` `f8e10323…` exact;
+scene beauty `presentation_frame_digest` `68b55544…` unchanged. Inherited
+2C1 `physical_color_digest` `16663188…` exact. D1-V1: DiskHit ≈75%
+occlusion (not sky domain error). **Do not merge** without owner
+authorization. GPU and GUI remain deferred. E1 research remains
+`PAUSE_RESEARCH_WEDGE`. Do not begin Gate 2D2/2D3, E2, E3, GPU, wgpu, or GUI.
 
 ![Gate evolution (diagnostic + presentation)](docs/media/blackhole-rust-evolution.gif)
 

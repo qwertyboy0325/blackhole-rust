@@ -31,10 +31,13 @@ after owner closures `5225581548` (C1–C4) + `5225636038` (C2b); merged to
 PR #20 @ `b832e47`.
 
 **Gate 2D1** production scene appearance: authoritative evaluate **PASS** @
-`8d7e13a` (eval content `3b027403…`); D1-B + E1-B + S2 with A1–A6;
-identity `presentation_frame_digest` `f8e10323…` exact; scene beauty
-`68b55544…`. Pending owner merge review. Do not begin Gate 2D2/2D3, E2 ray
-differentials, E3 ray bundles, GPU, wgpu, egui or GUI work.
+`345c560` (eval content `c146210d…`) after D1-V1 visual-semantic closure;
+D1-B + E1-B + S2 with A1–A6; identity `presentation_frame_digest`
+`f8e10323…` exact; scene beauty `68b55544…` unchanged. D1-V1 confirms
+DiskHit ≈75% occlusion geometry (not sky domain error). Pending owner final
+PR #21 review — **do not merge** without owner authorization. Do not begin
+Gate 2D2/2D3, E2 ray differentials, E3 ray bundles, GPU, wgpu, egui or GUI
+work.
 
 When a gate or research package produces new reviewable image artifacts,
 regenerate `docs/media/blackhole-rust-evolution.gif` and keep it embedded in
