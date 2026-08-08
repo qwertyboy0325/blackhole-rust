@@ -16,6 +16,21 @@ pub const DISPLAY_LINEAR_EPS: f64 = 1e-12;
 
 const SRGB_BREAKPOINT: f64 = 0.003_130_8;
 
+/// Independent IEC 61966-2-1 sRGB OETF numeric oracle (D0-C1).
+///
+/// Expected encoded values are hard-coded from the published piecewise definition;
+/// they must **not** be recomputed from the production expression at test time.
+pub const SRGB_OETF_NUMERIC_ORACLE_V1: &[(f64, f64)] = &[
+    (0.000_000_0, 0.000_000_000_000_000_0),
+    (0.003_130_8, 0.040_449_936_000_000_0),
+    (0.180_000_0, 0.461_356_129_500_441_6),
+    (0.500_000_0, 0.735_356_983_052_449_5),
+    (1.000_000_0, 1.000_000_000_000_000_0),
+];
+
+/// Absolute tolerance for oracle vector comparison (tight f64 near unit scale).
+pub const SRGB_OETF_ORACLE_ABS_TOL: f64 = 1e-15;
+
 /// Exact piecewise sRGB OETF on normalized linear display RGB in `[0,1]`.
 pub fn srgb_oetf(x: f64) -> Result<f64, PresentationError> {
     if !x.is_finite() {
@@ -88,9 +103,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn srgb_zero_and_one() {
-        assert!((srgb_oetf(0.0).unwrap() - 0.0).abs() < 1e-15);
-        assert!((srgb_oetf(1.0).unwrap() - 1.0).abs() < 1e-15);
+    fn srgb_oetf_independent_numeric_oracle() {
+        for &(x, expect) in SRGB_OETF_NUMERIC_ORACLE_V1 {
+            let y = srgb_oetf(x).unwrap();
+            assert!(
+                (y - expect).abs() <= SRGB_OETF_ORACLE_ABS_TOL,
+                "sRGB OETF oracle mismatch at x={x}: got {y}, expect {expect}"
+            );
+        }
     }
 
     #[test]
@@ -101,24 +121,11 @@ mod tests {
         let y_below = srgb_oetf(below).unwrap();
         let y_at = srgb_oetf(at).unwrap();
         let y_above = srgb_oetf(above).unwrap();
-        assert!((y_below - 12.92 * below).abs() < 1e-15);
-        assert!((y_at - 12.92 * at).abs() < 1e-15);
-        let expect_above = 1.055 * above.powf(1.0 / 2.4) - 0.055;
-        assert!((y_above - expect_above).abs() < 1e-14);
-        // Branches are continuous to ~1e-4 absolute at the published breakpoint.
-        let power_at = 1.055 * at.powf(1.0 / 2.4) - 0.055;
-        assert!((y_at - power_at).abs() < 2e-4);
+        // Branch selection only — expected magnitudes come from oracle / linear branch.
+        assert!((y_at - 0.040_449_936_000_000_0).abs() <= SRGB_OETF_ORACLE_ABS_TOL);
+        assert!(y_below < y_at);
         assert!(y_above > y_at);
-    }
-
-    #[test]
-    fn srgb_middle_gray_and_half() {
-        let y18 = srgb_oetf(0.18).unwrap();
-        let expect18 = 1.055 * 0.18_f64.powf(1.0 / 2.4) - 0.055;
-        assert!((y18 - expect18).abs() < 1e-14);
-        let y05 = srgb_oetf(0.5).unwrap();
-        let expect05 = 1.055 * 0.5_f64.powf(1.0 / 2.4) - 0.055;
-        assert!((y05 - expect05).abs() < 1e-14);
+        assert!(y_below.is_finite() && y_above.is_finite());
     }
 
     #[test]

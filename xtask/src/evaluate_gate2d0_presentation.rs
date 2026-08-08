@@ -9,7 +9,8 @@ use relativity_render::{
     apply_exposure, authored_rgb16_bytes, khronos_pbr_neutral, luminance_axis_desat_v1,
     presentation_spec_digest, quantize_u16, srgb_oetf, DisplayEncodedRgb16, ExposureSpec,
     LinearRgb, PresentationMetrics, BIT_DEPTH_RGB16, CIE_TABLE_SHA256,
-    GAMUT_MAPPER_ID_LUMINANCE_AXIS_DESAT_V1, PNG_GAMA_SRGB, TONE_MAPPER_ID_KHRONOS_PBR_NEUTRAL_V1,
+    GAMUT_MAPPER_ID_LUMINANCE_AXIS_DESAT_V1, PNG_GAMA_SRGB, SRGB_OETF_NUMERIC_ORACLE_V1,
+    SRGB_OETF_ORACLE_ABS_TOL, TONE_MAPPER_ID_KHRONOS_PBR_NEUTRAL_V1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -353,7 +354,7 @@ pub fn evaluate() -> Result<(), Box<dyn std::error::Error>> {
         "hermetic_exposure_middle_gray",
         "hermetic_gamut_hdr_identity",
         "hermetic_pbr_neutral_bounded",
-        "hermetic_srgb_oetf",
+        "hermetic_srgb_oetf_numeric_vectors",
         "hermetic_quantize",
         "scope_exclusions_preset",
     ];
@@ -439,13 +440,34 @@ fn push_hermetic_presentation_checks(checks: &mut Vec<Check>) {
         format!("r={}", tm.r),
     );
 
-    let y = srgb_oetf(0.18).unwrap();
-    let expect = 1.055 * 0.18_f64.powf(1.0 / 2.4) - 0.055;
+    let mut srgb_oracle_ok = true;
+    let mut srgb_oracle_detail = String::new();
+    for &(x, expect) in SRGB_OETF_NUMERIC_ORACLE_V1 {
+        match srgb_oetf(x) {
+            Ok(y) if (y - expect).abs() <= SRGB_OETF_ORACLE_ABS_TOL => {}
+            Ok(y) => {
+                srgb_oracle_ok = false;
+                srgb_oracle_detail = format!("x={x} got={y} expect={expect}");
+                break;
+            }
+            Err(e) => {
+                srgb_oracle_ok = false;
+                srgb_oracle_detail = format!("x={x} err={e}");
+                break;
+            }
+        }
+    }
+    if srgb_oracle_ok {
+        srgb_oracle_detail = format!(
+            "{} vectors ≤ {SRGB_OETF_ORACLE_ABS_TOL} abs",
+            SRGB_OETF_NUMERIC_ORACLE_V1.len()
+        );
+    }
     push(
         checks,
-        "hermetic_srgb_oetf",
-        (y - expect).abs() < 1e-14,
-        format!("y={y}"),
+        "hermetic_srgb_oetf_numeric_vectors",
+        srgb_oracle_ok,
+        srgb_oracle_detail,
     );
 
     push(

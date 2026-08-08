@@ -65,7 +65,7 @@ pub use colorimetry::{
 pub use display_encoding::{
     quantize_u16, srgb_oetf, DisplayEncodedRgb16, DISPLAY_LINEAR_EPS, DISPLAY_TARGET_SRGB_V1,
     OETF_ID_SRGB_IEC61966_2_1_V1, PNG_FORMAT_RGB16_SRGB_V1, PNG_GAMA_SRGB,
-    PNG_SRGB_INTENT_PERCEPTUAL,
+    PNG_SRGB_INTENT_PERCEPTUAL, SRGB_OETF_NUMERIC_ORACLE_V1, SRGB_OETF_ORACLE_ABS_TOL,
 };
 pub use error::{
     BolometricRenderError, CelestialRenderError, ColorimetryError, FrequencyShiftError,
