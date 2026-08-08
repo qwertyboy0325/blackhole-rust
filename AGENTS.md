@@ -35,11 +35,11 @@ PR #20 @ `b832e47`.
 merged to `main` via PR #21 @ `2d97988`. Identity `presentation_frame_digest`
 `f8e10323…` exact; scene beauty `68b55544…` unchanged.
 
-**Gate 2D3A** camera composition: Phase A complete; owner selected **`c024`**;
-hero frozen as `presets/camera/gargantua-hero-v1.toml`. Baseline path keeps
-2C1/2D0/2D1 pins; hero digests are camera-derived production outputs
-(D3A-A2). Pending clean authoritative evaluate + owner PR review — **do not
-merge** without owner authorization. Do not begin Gate 2D2/2D3B, E2 ray
+**Gate 2D3A** camera composition: authoritative evaluate **PASS** @
+`825bb80` (eval content `a8fe240f…`) after owner hero selection **`c024`**.
+Baseline path keeps 2C1/2D0/2D1 pins; hero digests are camera-derived
+production outputs (D3A-A2). Pending owner PR review — **do not merge**
+without owner authorization. Do not begin Gate 2D2/2D3B, E2 ray
 differentials, E3 ray bundles, GPU, wgpu, egui or GUI work.
 
 When a gate or research package produces new reviewable image artifacts,

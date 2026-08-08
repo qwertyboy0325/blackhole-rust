@@ -6,15 +6,16 @@ Gargantua in *Interstellar*, not an exact reconstruction of Double Negative's
 proprietary assets, renderer, grading, camera, or undocumented production
 parameters.
 
-## Status: Gate 2D3A Phase B (hero c024; pending authoritative PASS / owner review)
+## Status: Gate 2D3A authoritative PASS (pending owner PR review)
 
 Gate 0–2D1 are complete on `main` (Gate 2D1 merge `2d97988`, PR #21).
-Gate 2D3A camera composition: owner selected shortlist **`c024`**; hero
-preset `gargantua-hero-v1` frozen. Baseline path keeps 2C1/2D0/2D1 digests
-exact; hero beauty is camera-derived (`fae0afdd…`), not a new scientific
-authority. **Do not merge** without owner authorization. GPU and GUI remain
-deferred. E1 research remains `PAUSE_RESEARCH_WEDGE`. Do not begin Gate
-2D2/2D3B, E2, E3, GPU, wgpu, or GUI.
+Gate 2D3A camera composition evaluated **PASS** @ `825bb80` (eval content
+`a8fe240f…`) after owner selected **`c024`**. Baseline path keeps
+2C1/2D0/2D1 digests exact; hero beauty is camera-derived (`fae0afdd…`),
+not a new scientific authority. **Do not merge** without owner
+authorization. GPU and GUI remain deferred. E1 research remains
+`PAUSE_RESEARCH_WEDGE`. Do not begin Gate 2D2/2D3B, E2, E3, GPU, wgpu, or
+GUI.
 
 ![Gate evolution (diagnostic + presentation)](docs/media/blackhole-rust-evolution.gif)
 
