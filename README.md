@@ -6,13 +6,14 @@ Gargantua in *Interstellar*, not an exact reconstruction of Double Negative's
 proprietary assets, renderer, grading, camera, or undocumented production
 parameters.
 
-## Status: Gate 2C0 in progress (physical emission)
+## Status: Gate 2C0 authoritative PASS (pending merge)
 
 Gate 0–2B2 and R1/E0 are complete on `main` (Gate 2B2 merge `95c4062`, PR #17).
 Gate 2B2 is diagnostic spectral `I_ν` transport (`g³`) on `SpectralFrame V1`.
-**Gate 2C0** adds physical Page–Thorne thin-disk emission, `T_eff`, Planck
-`B_ν`, and SI Hz `PhysicalSpectralFrame` — not CIE/RGB/OpenEXR (Gate 2C1), GPU,
-wgpu, egui, or GUI. E1 research remains `PAUSE_RESEARCH_WEDGE`.
+**Gate 2C0** physical Page–Thorne thin-disk emission, `T_eff`, Planck `B_ν`, and
+SI Hz `PhysicalSpectralFrame` evaluated **PASS** @ `551f69e` — pending owner
+merge. Gate 2C1 (CIE/RGB/OpenEXR), GPU, and GUI are not authorized. E1 research
+remains `PAUSE_RESEARCH_WEDGE`.
 
 ![Gate evolution (diagnostic channels)](docs/media/blackhole-rust-evolution.gif)
 
@@ -24,6 +25,7 @@ See [diagnostic bolometric emission V1](docs/diagnostic-bolometric-emission-v1.m
 [diagnostic spectral emission V1](docs/diagnostic-spectral-emission-v1.md), and
 [physical disk emission V1](docs/physical-disk-emission-v1.md).
 Gate 2B2 report: [gate-2b2-final-report](docs/work-log/gate-2b2-final-report.md).
+Gate 2C0 report: [gate-2c0-final-report](docs/work-log/gate-2c0-final-report.md).
 
 Selected path remains:
 
