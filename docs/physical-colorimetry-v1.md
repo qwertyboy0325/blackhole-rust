@@ -54,7 +54,7 @@ Y is luminance in **cd/m²**. No per-frame max-normalization or exposure.
 AUTHORITATIVE: physical-colorimetry-meta.json + physical-xyz-rgb.f64le + digests
 DERIVED_SCIENTIFIC: physical-color.exr (FLOAT XYZ/RGB + phys.* + disk.mask)
 DIAGNOSTIC: selected-pixels.csv, diagnostic-a-vs-b.json
-PRESENTATION_ONLY: DEFER (no tone-map / PNG beauty)
+PRESENTATION_ONLY: Gate 2D0 (`docs/presentation-pipeline-v1.md`) — does not mutate this authority
 ```
 
 ## CLI
@@ -79,7 +79,7 @@ cargo run --release -p xtask -- evaluate --scope gate-2c1-colorimetry
 | spectral | `136b1fbc…aa8dd1` |
 | `physical-spectral-grid-v1` | `ceb3db28…1162d5` |
 
-## Non-goals
+## Non-goals (scientific path)
 
-ACEScg, CAT, exposure/tone-map/OETF/PNG beauty, HALF/DWA EXR, 256 spectral EXR
-channels, GPU color, E2/E3/GUI.
+ACEScg, CAT, exposure/tone-map/OETF inside scientific authority, HALF/DWA EXR, 256 spectral EXR
+channels, GPU color, E2/E3/GUI. Presentation beauty lives in Gate 2D0.
