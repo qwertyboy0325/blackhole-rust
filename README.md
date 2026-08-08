@@ -6,13 +6,13 @@ Gargantua in *Interstellar*, not an exact reconstruction of Double Negative's
 proprietary assets, renderer, grading, camera, or undocumented production
 parameters.
 
-## Status: Gate 2B2 PASS (owner review)
+## Status: Gate 2B2 PASS (owner merge review)
 
 Gate 0–2B2 and R1/E0 are complete at evaluated commit
-`07c51116db0dd35b2092fd69418e7de51ae0bce1`. Gate 2B2 is diagnostic spectral
-`I_ν` transport (`g³`) on `SpectralFrame V1` — not temperature, physical RGB,
-OpenEXR, GPU, wgpu, egui, or GUI. E1 research remains `PAUSE_RESEARCH_WEDGE`.
-Awaiting owner merge decision.
+`aa28e7d555d6fb0f38d64bf2d5a6d1a6bef449d4` (closure `5203577417`). Gate 2B2 is
+diagnostic spectral `I_ν` transport (`g³`) on `SpectralFrame V1` — not
+temperature, physical RGB, OpenEXR, GPU, wgpu, egui, or GUI. E1 research remains
+`PAUSE_RESEARCH_WEDGE`. Awaiting owner merge decision on PR #17.
 
 ![Gate evolution (diagnostic channels)](docs/media/blackhole-rust-evolution.gif)
 
